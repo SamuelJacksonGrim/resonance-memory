@@ -1,0 +1,9 @@
+# Normalize to LF in the repo; check out platform-appropriate line endings.
+* text=auto eol=lf
+
+# Windows launcher must stay CRLF to run correctly.
+*.bat text eol=crlf
+
+# macOS/Unix launcher must stay LF.
+*.command text eol=lf
+*.sh text eol=lf
