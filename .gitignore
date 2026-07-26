@@ -1,0 +1,20 @@
+# Built artifact — distributed as a GitHub Release asset, not tracked in history (90 MB).
+memory.exe
+memory
+*.exe
+
+# Build intermediates
+build/
+*.blob
+
+# Node
+node_modules/
+
+# Runtime / user state (created on first run, machine-specific)
+config.json
+*.jsonl
+*.jsonl.assoc.json
+
+# Local backups
+*.bak
+*.bak-*

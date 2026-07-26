@@ -1,0 +1,138 @@
+#!/usr/bin/env node
+/*
+ * inspect_sidecar.js - telemetry for the Hebbian association ledger (Phase 2b).
+ *
+ * Answers the four field-hardening questions before we drop the SIMPLE_MEMORY_FIELD
+ * flag and make the associative field the default:
+ *   1. Is the ledger breathing (decaying/pruning) or growing a hairball?
+ *   2. Are the threshold-crossers genuine semantic leaps (HIGH weight, LOW cosine)
+ *      or just filler that co-fired? -> we resolve edge ids to memory TEXT and
+ *      recompute base cosine from the stored vectors so you can actually judge.
+ *   3. Do the top-weight edges reflect deliberate, repeated intent (good) or the
+ *      graph slowly validating its own noise (bad)?
+ *   4. (perf) Ledger size, so you can see whether the on-recall save could stutter.
+ *
+ * Reads the REAL sidecar shape: { recalls, edges: { "a:b": weight } }, and joins
+ * ids back to the JSONL store. Standard library + local field.js only, no deps.
+ *
+ *   node inspect_sidecar.js [path_to_.assoc.json]
+ */
+
+const fs = require("fs");
+const path = require("path");
+
+// Inlined (identical to field.js) so this script is standalone and portable -
+// drop it next to any simple-memory store and it runs with zero dependencies.
+function cosine(a, b) {
+  if (!a || !b) return 0;
+  let dot = 0, na = 0, nb = 0;
+  for (let i = 0; i < a.length; i++) { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; }
+  return na && nb ? dot / (Math.sqrt(na) * Math.sqrt(nb)) : 0;
+}
+
+const STORE_PATH = process.env.MEMORY_FILE_PATH ||
+  path.join(process.env.USERPROFILE || process.env.HOME || ".", ".lmstudio", "simple-memory.jsonl");
+const SIDECAR_PATH = process.argv[2] || STORE_PATH + ".assoc.json";
+
+function loadStore() {
+  const byId = new Map();
+  try {
+    for (const line of fs.readFileSync(STORE_PATH, "utf8").split("\n")) {
+      if (!line.trim()) continue;
+      let r; try { r = JSON.parse(line); } catch { continue; }
+      if (r && r.id != null) byId.set(String(r.id), r);
+    }
+  } catch { /* no store yet */ }
+  return byId;
+}
+
+function snippet(rec, n = 60) {
+  if (!rec) return "(deleted or unknown id)";
+  const t = (rec.text || "").replace(/\s+/g, " ").trim();
+  return t.length > n ? t.slice(0, n - 1) + "…" : t;
+}
+
+function baseCosine(store, a, b) {
+  const ra = store.get(String(a)), rb = store.get(String(b));
+  if (!ra || !rb || !ra.embedding || !rb.embedding) return null;
+  return cosine(ra.embedding, rb.embedding);
+}
+
+function main() {
+  console.log("\n========================================");
+  console.log("   SIMPLE-MEMORY ASSOCIATION TELEMETRY  ");
+  console.log("========================================\n");
+  console.log(`store:   ${STORE_PATH}`);
+  console.log(`sidecar: ${SIDECAR_PATH}\n`);
+
+  if (!fs.existsSync(SIDECAR_PATH)) {
+    console.log("No sidecar yet. The ledger is created on the first recall with the");
+    console.log("field ON (SIMPLE_MEMORY_FIELD=1 or config.json field:true). Nothing to");
+    console.log("inspect until the field has actually been used. This is expected early on.");
+    return;
+  }
+
+  let j;
+  try { j = JSON.parse(fs.readFileSync(SIDECAR_PATH, "utf8")); }
+  catch (e) { console.error(`[!] cannot parse sidecar: ${e.message}`); process.exit(1); }
+
+  const edgesObj = j.edges || {};
+  const recalls = j.recalls || 0;
+  const store = loadStore();
+
+  const edges = Object.entries(edgesObj).map(([key, w]) => {
+    const weight = typeof w === "number" ? w : (w && w.weight) || 0;
+    const [a, b] = key.split(":");
+    return { key, a, b, weight, baseCos: baseCosine(store, a, b) };
+  }).sort((x, y) => y.weight - x.weight);
+
+  const total = edges.length;
+
+  // --- 1. Equilibrium / breathing -------------------------------------------
+  const nearFloor = edges.filter(e => e.weight < 0.1).length;       // about to be pruned
+  const consolidated = edges.filter(e => e.weight >= 0.5).length;   // strongly learned
+  console.log("### 1. Equilibrium & breathing");
+  console.log(`- recall counter (decay clock): ${recalls}  (decay fires every 10)`);
+  console.log(`- total active edges:           ${total}`);
+  console.log(`- near prune floor (<0.1):      ${nearFloor}`);
+  console.log(`- consolidated (>=0.5):         ${consolidated}`);
+  console.log(`  watch: total should rise in a session, then fall as recalls tick.`);
+  console.log(`  red flag: total climbs day over day and never falls -> hairball.\n`);
+  if (total === 0) { console.log("Ledger is empty. Nothing more to report.\n"); return; }
+
+  // --- 2. Semantic leaps: HIGH weight, LOW base cosine ----------------------
+  console.log("### 2. Semantic leaps (high learned weight, low base cosine)");
+  const leaps = edges.filter(e => e.baseCos != null && e.baseCos < 0.55)
+    .sort((x, y) => y.weight - x.weight).slice(0, 5);
+  if (leaps.length === 0) {
+    console.log("  (none yet - no low-cosine pair has been co-activated enough to matter)\n");
+  } else {
+    for (const e of leaps) {
+      console.log(`  w=${e.weight.toFixed(3)}  cos=${e.baseCos.toFixed(3)}  [${e.key}]`);
+      console.log(`     A: ${snippet(store.get(e.a))}`);
+      console.log(`     B: ${snippet(store.get(e.b))}`);
+    }
+    console.log(`  judge: are these intuitive links, or filler that co-fired?\n`);
+  }
+
+  // --- 3. Provenance dominance: strongest edges overall ---------------------
+  console.log("### 3. Strongest edges (should reflect deliberate, repeated intent)");
+  for (const e of edges.slice(0, 5)) {
+    const c = e.baseCos == null ? "  n/a" : e.baseCos.toFixed(3);
+    console.log(`  w=${e.weight.toFixed(3)}  cos=${c}  [${e.key}]`);
+    console.log(`     A: ${snippet(store.get(e.a))}`);
+    console.log(`     B: ${snippet(store.get(e.b))}`);
+  }
+  console.log(`  red flag: top weights between obscure pairs you didn't type recently\n`);
+
+  // --- 4. Distribution / perf ----------------------------------------------
+  const ws = edges.map(e => e.weight);
+  const sum = ws.reduce((a, w) => a + w, 0);
+  const bytes = fs.statSync(SIDECAR_PATH).size;
+  console.log("### 4. Distribution & size");
+  console.log(`- max / avg / min weight: ${ws[0].toFixed(3)} / ${(sum / total).toFixed(3)} / ${ws[ws.length - 1].toFixed(3)}`);
+  console.log(`- sidecar file size:      ${bytes} bytes  (saved every 10th recall)`);
+  console.log(`  perf is only a concern if this grows large; decay is what keeps it small.\n`);
+}
+
+main();
