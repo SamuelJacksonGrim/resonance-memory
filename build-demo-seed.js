@@ -1,0 +1,58 @@
+#!/usr/bin/env node
+/*
+ * build-demo-seed.js - generates demo-seed.jsonl: a small, 100% SYNTHETIC memory set
+ * (fictional person "Alex Rivera") pre-embedded with the nomic embedder, so the demo
+ * graph lights up on first launch with NO endpoint and NO real data. The clusters
+ * (game dev / running / jazz / dog) are wired with deliberate non-obvious cross-links
+ * so the association graph shows bridges, not just piles.
+ *
+ * Run once with LM Studio + the embedding model up:  node build-demo-seed.js
+ * Never contains real memories. Safe to ship in a public repo.
+ */
+const fs = require("fs");
+const path = require("path");
+
+const EMBED_URL = process.env.EMBED_ENDPOINT || "http://localhost:1234/v1/embeddings";
+const EMBED_MODEL = process.env.EMBED_MODEL || "text-embedding-nomic-embed-text-v1.5";
+const OUT = path.join(__dirname, "demo-seed.jsonl");
+
+const MEMORIES = [
+  "I'm building an indie game called Nightfall, a moody detective RPG set in a rain-soaked city.",
+  "Nightfall's combat system keeps crashing whenever the third act loads.",
+  "I decided to rewrite Nightfall's save system in Rust because the old one corrupts files.",
+  "I go for a 5am run along the river most mornings to clear my head before work.",
+  "My left knee flares up if I run more than 10k, so I'm keeping my distances short this month.",
+  "I do my best debugging on a run — I actually figured out the Nightfall third-act crash mid-jog.",
+  "I collect jazz vinyl; Coltrane's Blue Train is my most-played record by far.",
+  "I always code to jazz. Something about it keeps me in flow for hours.",
+  "My dog Biscuit, a scruffy little terrier, sleeps under my desk while I work.",
+  "Biscuit needs a long walk at lunch or he chews through my controller cables.",
+  "I switched to decaf after 2pm — otherwise my sleep falls apart the week before a deadline.",
+  "I named Nightfall's detective 'Coltrane' after the jazz musician I listen to while writing him.",
+];
+
+async function embed(texts) {
+  const res = await fetch(EMBED_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model: EMBED_MODEL, input: texts }),
+    signal: AbortSignal.timeout(60000),
+  });
+  if (!res.ok) throw new Error("embed HTTP " + res.status + " - is the embedding model loaded?");
+  const body = await res.json();
+  if (!body.data || !body.data.length) throw new Error("no vectors returned");
+  return body.data.map((d) => d.embedding);
+}
+
+(async () => {
+  console.log("Embedding " + MEMORIES.length + " synthetic demo memories via " + EMBED_MODEL + " ...");
+  const vecs = await embed(MEMORIES);
+  const now = new Date().toISOString();
+  const lines = MEMORIES.map((text, i) => JSON.stringify({
+    id: 1000 + i, created: now, modified: now, text,
+    embedding: vecs[i], importance: 0, access_count: 0, last_access: null, deleted: false,
+  }));
+  fs.writeFileSync(OUT, lines.join("\n") + "\n", "utf8");
+  console.log("Wrote " + MEMORIES.length + " demo memories -> " + OUT +
+    "  (" + (vecs[0] ? vecs[0].length : 0) + "-dim vectors)");
+})().catch((e) => { console.error("FAILED: " + e.message); process.exit(1); });
