@@ -14,6 +14,8 @@ node_modules/
 config.json
 *.jsonl
 *.jsonl.assoc.json
+# ...but the synthetic demo seed DOES ship (it's the first-launch showcase).
+!demo-seed.jsonl
 
 # Local backups
 *.bak

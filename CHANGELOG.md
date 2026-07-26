@@ -8,7 +8,21 @@ stable; sophistication grows in the substrate, not in the API.
 
 ## [Unreleased]
 
-_Nothing yet — new changes land here before the next tagged release._
+Beta-readiness pass:
+
+### Added
+- **Association graph view** in the panel — a live force-directed constellation of your
+  memories; hover a dot to read it, line thickness = similarity, reinforced-by-use edges
+  highlighted. Refreshes as the graph learns.
+- **Demo graph** — a one-click, 100% synthetic sample (a fictional game dev's notes,
+  pre-embedded in `demo-seed.jsonl`) so the panel shows non-obvious associative links on
+  first launch with no setup and no real data. View-only; never written to your store.
+- **"Support the Architect"** footer — Ko-fi + PayPal links.
+- **`start-panel.vbs`** — launches the panel with **no console window**; the background
+  process **shuts itself down ~12s after you close the tab** (heartbeat), so nothing lingers.
+- **`uninstall.bat`** — disconnects from LM Studio / Claude Desktop and points you to your
+  data file (never auto-deletes your memories).
+- **`build-demo-seed.js`** — regenerates the demo seed from synthetic text via the embedder.
 
 ## [0.1.0] - 2026-07-26
 
