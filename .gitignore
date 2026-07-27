@@ -21,3 +21,6 @@ config.json
 # Local backups
 *.bak
 *.bak-*
+
+# Generated at build time (assets baked into the exe)
+embedded-assets.js
