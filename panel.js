@@ -17,6 +17,7 @@ const path = require("path");
 const { exec } = require("child_process");
 const install = require("./install.js");
 const field = require("./field.js");
+const engine = require("./engine.js");
 const { Ledger } = require("./ledger.js");
 
 function baseDir() {
@@ -98,9 +99,14 @@ const PAGE = `<!doctype html>
   input:checked + .slider::before { transform: translateX(26px); }
   .pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-weight: 600; font-size: 12px; }
   .on { background: #dcf5e8; color: #1c7a4f; } .off { background: #eceef1; color: #6b7280; }
+  .warn { background: #fceccb; color: #8a5a00; }
+  .label .pill { margin-left: 7px; vertical-align: middle; }
   .sec { margin-top: 20px; }
   .sechead { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
   .ctitle { font-weight: 600; } .clients { margin-bottom: 4px; }
+  .linkish { background: none; border: none; padding: 0; margin: 0; font: inherit; font-weight: 600;
+    color: inherit; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+  .linkish:hover { color: var(--acc); } #caret { font-size: 11px; color: #9aa1ab; }
   .client { display: flex; align-items: center; justify-content: space-between; gap: 12px;
     padding: 12px 14px; border-radius: 12px; background: #f7f8fa; border: 1px solid rgba(0,0,0,.05); margin-bottom: 8px; }
   .cname { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
@@ -127,6 +133,7 @@ const PAGE = `<!doctype html>
     .row, .client, .cap, .graphwrap { background: #171a1e; border-color: rgba(255,255,255,.06); }
     .sub, .hint, .foot, .support .why, .cap { color: #9aa1ab; }
     .off { background: #2a2e35; color: #9aa1ab; }
+    .warn { background: #4a3a12; color: #f0c674; }
     button { background: #2a2e35; color: #e6e8eb; border-color: rgba(255,255,255,.12); }
     button.primary { background: var(--acc); border-color: var(--acc); color: #fff; }
     .support a { background: #2a2e35; color: #e6e8eb; border-color: rgba(255,255,255,.12); }
@@ -140,6 +147,14 @@ const PAGE = `<!doctype html>
 
     <div id="clients" class="clients sec"></div>
 
+    <div class="row" id="engineRow" style="margin-bottom:10px">
+      <div>
+        <div class="label">Meaning engine <span id="enginePill" class="pill off">checking&hellip;</span></div>
+        <div class="hint" id="engineHint">The model that lets recall match by meaning, not just exact words.</div>
+      </div>
+      <button id="engineBtn" style="display:none"></button>
+    </div>
+
     <div class="row">
       <div>
         <div class="label">Associative field</div>
@@ -150,17 +165,19 @@ const PAGE = `<!doctype html>
 
     <div class="sec">
       <div class="sechead">
-        <span class="ctitle">Association graph</span>
+        <button id="graphToggle" class="linkish" aria-expanded="true">Association graph <span id="caret">&#9662;</span></button>
         <button id="demoBtn">Show demo graph</button>
       </div>
-      <div class="graphwrap">
-        <canvas id="cv"></canvas>
-        <div class="cap" id="cap">Hover a dot to read the memory. Lines connect related ideas &mdash; thicker means more similar.</div>
-      </div>
-      <div class="legend">
-        <span><span class="dot" style="background:var(--acc)"></span>related (meaning)</span>
-        <span><span class="dot" style="background:var(--heb)"></span>reinforced by use</span>
-        <span id="counts"></span>
+      <div id="graphBody">
+        <div class="graphwrap">
+          <canvas id="cv"></canvas>
+          <div class="cap" id="cap">Hover a dot to read the memory. Lines connect related ideas &mdash; thicker means more similar.</div>
+        </div>
+        <div class="legend">
+          <span><span class="dot" style="background:var(--acc)"></span>related (meaning)</span>
+          <span><span class="dot" style="background:var(--heb)"></span>reinforced by use</span>
+          <span id="counts"></span>
+        </div>
       </div>
     </div>
 
@@ -187,7 +204,7 @@ const PAGE = `<!doctype html>
   }
   tog.addEventListener('change', async function(){
     await fetch('/api/toggle', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ field: tog.checked }) });
-    if(!showDemo) loadGraph();
+    if(!showDemo && !graphCollapsed) loadGraph();
   });
 
   async function loadClients(){
@@ -215,6 +232,63 @@ const PAGE = `<!doctype html>
     demoBtn.textContent = showDemo ? 'Show my memories' : 'Show demo graph';
     demoBtn.className = showDemo ? 'primary' : '';
     loadGraph();
+  });
+
+  // --- collapsible graph section (remembers your choice) ---
+  var graphToggle = document.getElementById('graphToggle');
+  var graphBody = document.getElementById('graphBody');
+  var caret = document.getElementById('caret');
+  var graphCollapsed = localStorage.getItem('rm_graph_collapsed') === '1';
+  function applyGraphCollapsed(){
+    graphBody.style.display = graphCollapsed ? 'none' : '';
+    demoBtn.style.display = graphCollapsed ? 'none' : '';
+    caret.innerHTML = graphCollapsed ? '&#9656;' : '&#9662;'; // right when hidden, down when shown
+    graphToggle.setAttribute('aria-expanded', String(!graphCollapsed));
+    if(!graphCollapsed) loadGraph();
+  }
+  graphToggle.addEventListener('click', function(){
+    graphCollapsed = !graphCollapsed;
+    localStorage.setItem('rm_graph_collapsed', graphCollapsed ? '1' : '0');
+    applyGraphCollapsed();
+  });
+
+  // --- meaning engine (embedding model) setup ---
+  var enginePill = document.getElementById('enginePill');
+  var engineHint = document.getElementById('engineHint');
+  var engineBtn = document.getElementById('engineBtn');
+  var engineBusy = false;
+
+  function renderEngine(s){
+    if(engineBusy) return;
+    if(s.state === 'ready'){
+      enginePill.className = 'pill on'; enginePill.textContent = 'ready';
+      engineHint.textContent = 'Recall matches by meaning. You\\u2019re all set.';
+      engineBtn.style.display = 'none';
+    } else if(s.state === 'needs-setup'){
+      enginePill.className = 'pill warn'; enginePill.textContent = 'not set up';
+      engineHint.innerHTML = 'Recall is matching on exact words only. One click downloads &amp; loads the embedding model in LM Studio.';
+      engineBtn.style.display = ''; engineBtn.className = 'primary'; engineBtn.textContent = 'Set up'; engineBtn.disabled = false;
+    } else {
+      enginePill.className = 'pill off'; enginePill.textContent = 'LM Studio needed';
+      engineHint.innerHTML = 'Install <a href="https://lmstudio.ai" target="_blank" rel="noopener">LM Studio</a> (free), then reopen this page to finish setup in one click.';
+      engineBtn.style.display = 'none';
+    }
+  }
+  async function loadEngine(){
+    if(engineBusy) return;
+    try { renderEngine(await (await fetch('/api/engine')).json()); } catch(e){}
+  }
+  engineBtn.addEventListener('click', async function(){
+    engineBusy = true; engineBtn.disabled = true; engineBtn.textContent = 'Setting up\\u2026';
+    enginePill.className = 'pill warn'; enginePill.textContent = 'working';
+    engineHint.textContent = 'Downloading and loading the model. The first time this can take a minute or two\\u2026';
+    var r; try { r = await (await fetch('/api/engine/setup', { method:'POST' })).json(); } catch(e){ r = { ok:false }; }
+    engineBusy = false;
+    if(r && r.ok){ renderEngine({ state:'ready' }); if(!graphCollapsed) loadGraph(); }
+    else {
+      renderEngine({ state:'needs-setup' });
+      engineHint.textContent = (r && r.message) ? r.message : 'Setup didn\\u2019t complete. Make sure LM Studio is installed, then try again.';
+    }
   });
 
   // --- graph rendering (lightweight force layout) ---
@@ -321,8 +395,8 @@ const PAGE = `<!doctype html>
   function ping(){ fetch('/api/ping', { method:'POST' }).catch(function(){}); }
   setInterval(ping, 4000); ping();
 
-  loadState(); loadClients(); loadGraph();
-  setInterval(function(){ loadState(); if(!showDemo) loadGraph(); }, 8000);
+  loadState(); loadClients(); loadEngine(); applyGraphCollapsed();
+  setInterval(function(){ loadState(); loadEngine(); if(!showDemo && !graphCollapsed) loadGraph(); }, 8000);
 </script>
 </body></html>`;
 
@@ -362,6 +436,18 @@ const server = http.createServer((req, res) => {
   }
   if (req.method === "GET" && url === "/api/clients") {
     res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(install.detect())); return;
+  }
+  if (req.method === "GET" && url === "/api/engine") {
+    engine.status().then((s) => {
+      res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(s));
+    }).catch(() => { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ state: "no-lmstudio" })); });
+    return;
+  }
+  if (req.method === "POST" && url === "/api/engine/setup") {
+    engine.setup().then((r) => {
+      res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(r));
+    }).catch((e) => { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ ok: false, state: "needs-setup", message: String(e && e.message || e) })); });
+    return;
   }
   if (req.method === "POST" && (url === "/api/connect" || url === "/api/disconnect")) {
     body(req, (b) => {

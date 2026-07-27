@@ -25,7 +25,11 @@ an opaque `id`.
   sidecar at `<store>.assoc.json`.
 - Embeddings via an OpenAI-compatible `/v1/embeddings` endpoint (default LM Studio on
   `localhost:1234`, `text-embedding-nomic-embed-text-v1.5`, 768-dim). Keyword-overlap fallback
-  if the endpoint is down.
+  if the endpoint is down. The embedder is **not bundled** — the user downloads it via LM Studio;
+  we depend on the `/v1/embeddings` *interface*, not a specific model (`EMBED_MODEL` env var).
+- **Third-party attribution:** `nomic-embed-text-v1.5` is © Nomic AI, **Apache 2.0**
+  (<https://huggingface.co/nomic-ai/nomic-embed-text-v1.5>). Not redistributed by this project.
+  Apache 2.0 is one-way compatible with our GPL-3.0, so bundling it later would be license-clean.
 - Embed **once** at save; recall embeds only the query, then cosine vs stored vectors.
 
 ## Build
