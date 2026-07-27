@@ -33,23 +33,35 @@ const PORT = Number(process.env.RESONANCE_MEMORY_PANEL_PORT || 9090);
 const KOFI = "https://ko-fi.com/thearchitectofresonance";
 const PAYPAL = "https://paypal.me/SamuelGrim91";
 
+// Runtime assets baked into the exe by build-exe.js (single-file distribution).
+// Absent when running from source (node panel.js) - then we just read from disk.
+let EMBEDDED = { demoSeed: "", systemPrompt: "" };
+try { EMBEDDED = require("./embedded-assets.js"); } catch { }
+
 function readConfig() { try { return JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8")); } catch { return {}; } }
 function writeConfig(c) { fs.writeFileSync(CONFIG_PATH, JSON.stringify(c, null, 2), "utf8"); }
 function fieldOn() { const c = readConfig(); return typeof c.field === "boolean" ? c.field : false; }
 
+function parseJsonl(text) {
+  return String(text).split("\n").filter(Boolean)
+    .map((l) => { try { return JSON.parse(l); } catch { return null; } })
+    .filter((r) => r && !r.deleted);
+}
 function loadRecords(file) {
-  try {
-    return fs.readFileSync(file, "utf8").split("\n").filter(Boolean)
-      .map((l) => { try { return JSON.parse(l); } catch { return null; } })
-      .filter((r) => r && !r.deleted);
-  } catch { return []; }
+  try { return parseJsonl(fs.readFileSync(file, "utf8")); } catch { return []; }
+}
+// Demo: prefer a loose demo-seed.jsonl (dev) but fall back to the embedded copy so a
+// bare, single-file exe still draws the demo graph with nothing beside it.
+function loadDemo() {
+  const disk = loadRecords(DEMO_PATH);
+  return disk.length ? disk : parseJsonl(EMBEDDED.demoSeed);
 }
 function memCount() { return loadRecords(STORE_PATH).length; }
 
 // Build the association graph for the view: nodes = memories, edges = kNN semantic links,
 // annotated with any learned Hebbian weight so the UI can highlight what use has reinforced.
 function graphData(demo) {
-  const recs = loadRecords(demo ? DEMO_PATH : STORE_PATH).filter((r) => Array.isArray(r.embedding));
+  const recs = (demo ? loadDemo() : loadRecords(STORE_PATH)).filter((r) => Array.isArray(r.embedding));
   const byId = new Map(recs.map((r) => [String(r.id), r]));
   let ledger = null;
   if (!demo && fieldOn()) { try { ledger = new Ledger(STORE_PATH + ".assoc.json"); } catch { } }
