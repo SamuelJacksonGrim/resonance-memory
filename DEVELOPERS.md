@@ -15,7 +15,8 @@ an opaque `id`.
 | `panel.js` | Local 127.0.0.1 control panel: field toggle, Connect/Disconnect, association graph view, heartbeat auto-shutdown. |
 | `install.js` | Detect + wire into LM Studio / Claude Desktop MCP config (preserves other servers, leaves `.bak`). |
 | `entry.js` | Bundle dispatch: `--mcp` → server, `--install`/`--uninstall` → installer, else → panel. |
-| `build-exe.js` | esbuild → Node SEA blob → postject → flip PE subsystem to GUI → stage `dist/`. |
+| `build-exe.js` | Embed runtime assets → esbuild → Node SEA blob → postject → flip PE subsystem to GUI → stage `dist/`. |
+| `embedded-assets.js` | **Generated** each build (gitignored): `demo-seed.jsonl` + `system-prompt.md` baked in as strings so the shipped exe is one self-contained file. |
 | `inspect_sidecar.js` | Dependency-free telemetry for the Hebbian ledger. |
 | `build-demo-seed.js` | Regenerates `demo-seed.jsonl` (synthetic, pre-embedded) via the embedder. |
 
@@ -38,10 +39,13 @@ an opaque `id`.
 node build-exe.js
 ```
 
-Produces `resonance-memory.exe` (Windows; ~88 MB, no Node needed) and stages a clean `dist/`
-with only the shippable files. The build flips the exe's PE subsystem console→GUI so a
-double-click opens the panel with no console window; MCP mode is unaffected because the client
-pipes stdio. The macOS binary must be built on a Mac (SEA is per-platform).
+Produces a **single self-contained** `resonance-memory.exe` (Windows; ~89 MB, no Node needed):
+the demo seed and system prompt are baked in, so `dist/` is just the exe — nothing loose to
+ship, unzip, or place beside it. The source files stay the editable truth; only the *output* is
+one file. Edit anything, re-run `node build-exe.js`, get a new exe. The build flips the exe's PE
+subsystem console→GUI so a double-click opens the panel with no console window; MCP mode is
+unaffected because the client pipes stdio. The macOS binary must be built on a Mac (SEA is
+per-platform).
 
 ## Design invariants (do not violate)
 

@@ -134,6 +134,9 @@ const PAGE = `<!doctype html>
   .legend { font-size: 11.5px; color: #9aa1ab; margin-top: 6px; display: flex; gap: 14px; flex-wrap: wrap; }
   .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; vertical-align: middle; margin-right: 4px; }
   .foot { margin-top: 20px; font-size: 12px; color: #9aa1ab; line-height: 1.5; }
+  .foot a { color: var(--acc); } #spMsg { color: var(--acc); font-weight: 600; }
+  .foot code { font-family: ui-monospace, Consolas, monospace; font-size: 11.5px;
+    background: rgba(0,0,0,.06); padding: 1px 5px; border-radius: 5px; word-break: break-all; }
   .support { margin-top: 18px; text-align: center; font-size: 13px; }
   .support a { display: inline-block; margin: 6px 5px 0; padding: 8px 16px; border-radius: 10px;
     text-decoration: none; font-weight: 600; border: 1px solid rgba(0,0,0,.12); color: #1c1e21; }
@@ -146,6 +149,7 @@ const PAGE = `<!doctype html>
     .sub, .hint, .foot, .support .why, .cap { color: #9aa1ab; }
     .off { background: #2a2e35; color: #9aa1ab; }
     .warn { background: #4a3a12; color: #f0c674; }
+    .foot code { background: rgba(255,255,255,.08); }
     button { background: #2a2e35; color: #e6e8eb; border-color: rgba(255,255,255,.12); }
     button.primary { background: var(--acc); border-color: var(--acc); color: #fff; }
     .support a { background: #2a2e35; color: #e6e8eb; border-color: rgba(255,255,255,.12); }
@@ -200,7 +204,11 @@ const PAGE = `<!doctype html>
       <a href="${PAYPAL}" target="_blank" rel="noopener">PayPal</a>
     </div>
 
-    <div class="foot">Turn the whole system on or off in your AI app's MCP server list. The field switch above applies instantly &mdash; no restart. This panel closes itself a few seconds after you close the tab.</div>
+    <div class="foot">
+      <div><b>For weaker models</b> that forget to save or recall: <a href="#" id="spBtn">copy a ready-made system prompt</a> and paste it into your app's system-prompt box. <span id="spMsg"></span></div>
+      <div style="margin-top:11px"><b>Removing it?</b> Click <b>Disconnect</b> next to each app above, then delete <code>resonance-memory.exe</code> &mdash; that's the whole app. Your memories live at <code id="storePath">&hellip;</code> and stay put unless you delete that file too.</div>
+      <div style="margin-top:11px">The field switch applies instantly &mdash; no restart. This panel closes itself a few seconds after you close the tab.</div>
+    </div>
   </div>
 <script>
   var tog = document.getElementById('tog');
@@ -213,7 +221,20 @@ const PAGE = `<!doctype html>
   async function loadState(){
     var s = await (await fetch('/api/state')).json();
     tog.checked = s.field;
+    if(s.store){ var sp = document.getElementById('storePath'); if(sp) sp.textContent = s.store; }
   }
+
+  var spBtn = document.getElementById('spBtn'), spMsg = document.getElementById('spMsg');
+  spBtn.addEventListener('click', async function(ev){
+    ev.preventDefault();
+    try {
+      var t = (await (await fetch('/api/system-prompt')).json()).text || '';
+      if(!t){ spMsg.textContent = '(none available)'; return; }
+      await navigator.clipboard.writeText(t);
+      spMsg.textContent = 'copied to clipboard \\u2713';
+    } catch(e){ spMsg.textContent = 'copy failed \\u2014 select the text in system-prompt.md instead'; }
+    setTimeout(function(){ spMsg.textContent=''; }, 4000);
+  });
   tog.addEventListener('change', async function(){
     await fetch('/api/toggle', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ field: tog.checked }) });
     if(!showDemo && !graphCollapsed) loadGraph();
@@ -432,7 +453,12 @@ const server = http.createServer((req, res) => {
   }
   if (req.method === "GET" && url === "/api/state") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ field: fieldOn(), memories: memCount() })); return;
+    res.end(JSON.stringify({ field: fieldOn(), memories: memCount(), store: STORE_PATH })); return;
+  }
+  if (req.method === "GET" && url === "/api/system-prompt") {
+    let text = "";
+    try { text = fs.readFileSync(path.join(baseDir(), "system-prompt.md"), "utf8"); } catch { text = EMBEDDED.systemPrompt || ""; }
+    res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ text })); return;
   }
   if (req.method === "GET" && url.startsWith("/api/graph")) {
     const demo = /[?&]demo=1/.test(url);

@@ -98,13 +98,15 @@ memory.
   Studio running in the background for meaning-based recall.
 - **How do I turn the extra smarts off?** The **associative field** has a switch in the app.
   Off by default; flip it whenever. The memory itself works either way.
-- **How do I remove it?** Double-click `uninstall.bat`. It disconnects from your apps and tells
-  you where your memory file is (it will **not** delete your memories unless you do). Then delete
-  the folder.
+- **How do I remove it?** In the app, click **Disconnect** next to each connected app — that
+  unhooks it cleanly (leaving a backup of each config). Then just delete `resonance-memory.exe`.
+  That's the whole app; there's nothing else installed. Your memories live in a separate file
+  under your user folder (the app shows you where) and are **never** deleted unless you delete
+  that file yourself.
 - **A note on saving:** your AI decides when to save and recall on its own, nudged by how the
   tools are described to it. Smaller models sometimes need a reminder — a simple *"remember
-  this"* or *"check your memory"* always works. There's an optional `system-prompt.md` in this
-  folder that makes weaker models do it more reliably.
+  this"* or *"check your memory"* always works. For weaker models, the app has a built-in
+  **system prompt** you can copy in one click to make them do it more reliably.
 
 ## Support the Architect
 
