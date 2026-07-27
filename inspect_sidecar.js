@@ -2,7 +2,7 @@
 /*
  * inspect_sidecar.js - telemetry for the Hebbian association ledger (Phase 2b).
  *
- * Answers the four field-hardening questions before we drop the SIMPLE_MEMORY_FIELD
+ * Answers the four field-hardening questions before we drop the RESONANCE_MEMORY_FIELD
  * flag and make the associative field the default:
  *   1. Is the ledger breathing (decaying/pruning) or growing a hairball?
  *   2. Are the threshold-crossers genuine semantic leaps (HIGH weight, LOW cosine)
@@ -22,7 +22,7 @@ const fs = require("fs");
 const path = require("path");
 
 // Inlined (identical to field.js) so this script is standalone and portable -
-// drop it next to any simple-memory store and it runs with zero dependencies.
+// drop it next to any resonance-memory store and it runs with zero dependencies.
 function cosine(a, b) {
   if (!a || !b) return 0;
   let dot = 0, na = 0, nb = 0;
@@ -31,7 +31,7 @@ function cosine(a, b) {
 }
 
 const STORE_PATH = process.env.MEMORY_FILE_PATH ||
-  path.join(process.env.USERPROFILE || process.env.HOME || ".", ".lmstudio", "simple-memory.jsonl");
+  path.join(process.env.USERPROFILE || process.env.HOME || ".", ".lmstudio", "resonance-memory.jsonl");
 const SIDECAR_PATH = process.argv[2] || STORE_PATH + ".assoc.json";
 
 function loadStore() {
@@ -60,14 +60,14 @@ function baseCosine(store, a, b) {
 
 function main() {
   console.log("\n========================================");
-  console.log("   SIMPLE-MEMORY ASSOCIATION TELEMETRY  ");
+  console.log("  RESONANCE MEMORY ASSOCIATION TELEMETRY ");
   console.log("========================================\n");
   console.log(`store:   ${STORE_PATH}`);
   console.log(`sidecar: ${SIDECAR_PATH}\n`);
 
   if (!fs.existsSync(SIDECAR_PATH)) {
     console.log("No sidecar yet. The ledger is created on the first recall with the");
-    console.log("field ON (SIMPLE_MEMORY_FIELD=1 or config.json field:true). Nothing to");
+    console.log("field ON (RESONANCE_MEMORY_FIELD=1 or config.json field:true). Nothing to");
     console.log("inspect until the field has actually been used. This is expected early on.");
     return;
   }

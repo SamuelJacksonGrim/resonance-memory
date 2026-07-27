@@ -6,7 +6,7 @@
  *     node build-exe.js
  *
  * Pipeline: esbuild (bundle to one file) -> Node SEA blob -> copy node runtime ->
- * postject (inject blob). Produces memory.exe (Windows) / memory (mac/linux) that
+ * postject (inject blob). Produces resonance-memory.exe (Windows) / memory (mac/linux) that
  * needs NO Node installed on the user's machine.
  */
 const { execSync } = require("child_process");
@@ -17,7 +17,7 @@ const dir = __dirname;
 const build = path.join(dir, "build");
 fs.mkdirSync(build, { recursive: true });
 
-const exeName = process.platform === "win32" ? "memory.exe" : "memory";
+const exeName = process.platform === "win32" ? "resonance-memory.exe" : "memory";
 const outExe = path.join(dir, exeName);
 const run = (cmd) => execSync(cmd, { stdio: "inherit", cwd: dir });
 
@@ -39,4 +39,18 @@ run(inject);
 
 const mb = (fs.statSync(outExe).size / 1048576).toFixed(0);
 console.log("\nDone -> " + outExe + "  (" + mb + " MB)");
-console.log('Test:  "' + outExe + '" --mcp   (MCP server)   |   "' + outExe + '"   (control panel)');
+
+// Stage the clean, ship-ready bundle: ONLY what a user needs, nothing else. This is
+// the folder you zip and hand out - no source, no build scripts, no sprawl.
+console.log("[5/5] staging dist/ (the shippable bundle) ...");
+const dist = path.join(dir, "dist");
+fs.rmSync(dist, { recursive: true, force: true });
+fs.mkdirSync(dist, { recursive: true });
+const ship = [exeName, "demo-seed.jsonl", "start-panel.vbs", "start-panel.bat", "uninstall.bat", "README.md", "system-prompt.md"];
+let staged = 0;
+for (const f of ship) {
+  const src = path.join(dir, f);
+  if (fs.existsSync(src)) { fs.copyFileSync(src, path.join(dist, f)); staged++; }
+}
+console.log("Staged " + staged + " files -> " + dist + "  (zip this folder to distribute)");
+console.log('\nTest:  "' + outExe + '" --mcp   (MCP server)   |   "' + outExe + '"   (control panel)');

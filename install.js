@@ -3,7 +3,7 @@
  * terminal knowledge required. Used by both the panel's "Connect" button and the
  * `--install` CLI flag.
  *
- * It adds an `mcpServers["simple-memory"]` entry that launches THIS executable in
+ * It adds an `mcpServers["resonance-memory"]` entry that launches THIS executable in
  * --mcp mode, preserving any other servers already configured, and leaves a .bak.
  */
 
@@ -22,8 +22,8 @@ function selfLaunch() {
 
 // Known MCP clients and where their config lives (overridable for tests via env).
 function clientConfigs() {
-  if (process.env.SIMPLE_MEMORY_CONFIGS_JSON) {
-    try { return JSON.parse(process.env.SIMPLE_MEMORY_CONFIGS_JSON); } catch { /* fall through */ }
+  if (process.env.RESONANCE_MEMORY_CONFIGS_JSON) {
+    try { return JSON.parse(process.env.RESONANCE_MEMORY_CONFIGS_JSON); } catch { /* fall through */ }
   }
   const home = os.homedir();
   const appdata = process.env.APPDATA || path.join(home, "AppData", "Roaming");
@@ -45,7 +45,7 @@ function detect() {
     const fileExists = fs.existsSync(c.file);
     const present = fileExists || fs.existsSync(path.dirname(c.file));
     let installed = false;
-    if (fileExists) { try { installed = !!(readJson(c.file).mcpServers || {})["simple-memory"]; } catch { } }
+    if (fileExists) { try { installed = !!(readJson(c.file).mcpServers || {})["resonance-memory"]; } catch { } }
     return { id: c.id, name: c.name, file: c.file, present, installed };
   });
 }
@@ -53,7 +53,7 @@ function detect() {
 function installOne(c) {
   const cfg = readJson(c.file);
   if (!cfg.mcpServers || typeof cfg.mcpServers !== "object") cfg.mcpServers = {};
-  cfg.mcpServers["simple-memory"] = selfLaunch();
+  cfg.mcpServers["resonance-memory"] = selfLaunch();
   fs.mkdirSync(path.dirname(c.file), { recursive: true });
   if (fs.existsSync(c.file)) fs.copyFileSync(c.file, c.file + ".bak");
   fs.writeFileSync(c.file, JSON.stringify(cfg, null, 2), "utf8");
@@ -63,9 +63,9 @@ function installOne(c) {
 function uninstallOne(c) {
   if (!fs.existsSync(c.file)) return { id: c.id, name: c.name, action: "not-present" };
   const cfg = readJson(c.file);
-  if (cfg.mcpServers && cfg.mcpServers["simple-memory"]) {
+  if (cfg.mcpServers && cfg.mcpServers["resonance-memory"]) {
     fs.copyFileSync(c.file, c.file + ".bak");
-    delete cfg.mcpServers["simple-memory"];
+    delete cfg.mcpServers["resonance-memory"];
     fs.writeFileSync(c.file, JSON.stringify(cfg, null, 2), "utf8");
     return { id: c.id, name: c.name, action: "disconnected" };
   }

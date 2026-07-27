@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Simple Memory are recorded here. Format follows
+All notable changes to Resonance Memory are recorded here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project aims to follow
 [Semantic Versioning](https://semver.org/). The public tool surface — the four verbs
 `save_memory` / `recall_memory` / `edit_memory` / `delete_memory` — is intended to stay
@@ -51,8 +51,8 @@ First packaged, double-click build. Everything below is the baseline going forwa
   for the associative field and one-click Connect/Disconnect for your AI app.
 - **Auto-installer** (`install.js`) — detects LM Studio and Claude Desktop, wires the
   server into their MCP config, preserves other servers, and leaves a `.bak`.
-- **Single executable** (`memory.exe`, Node SEA via `build-exe.js`) — no Node install
-  required. `memory.exe` opens the panel; `memory.exe --mcp` runs the server;
+- **Single executable** (`resonance-memory.exe`, Node SEA via `build-exe.js`) — no Node install
+  required. `resonance-memory.exe` opens the panel; `resonance-memory.exe --mcp` runs the server;
   `--install` / `--uninstall` are also available on the CLI.
 - **Proactive save/recall nudge** — the four tool descriptions now encode *when* to act
   (save durable facts proactively with anti-spam guards; recall at conversation start and

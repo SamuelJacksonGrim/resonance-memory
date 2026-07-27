@@ -1,4 +1,4 @@
-# simple-memory
+# resonance-memory
 
 A minimal MCP memory server a small local model cannot misuse. Two cognitive verbs today
 (`save_memory`, `recall_memory`), growing to four (`edit_memory`, `delete_memory`). The
@@ -6,7 +6,7 @@ graph is the substrate, never the interface — the model never sees embeddings,
 timestamps, or any storage internals.
 
 - Server: `server.js` (Node stdlib + built-in fetch, no SDK).
-- Store: flat JSONL at `MEMORY_FILE_PATH` (default `~/.lmstudio/simple-memory.jsonl`).
+- Store: flat JSONL at `MEMORY_FILE_PATH` (default `~/.lmstudio/resonance-memory.jsonl`).
 - Recall: local embeddings via LM Studio `/v1/embeddings`, cosine ranking, keyword-overlap
   fallback if the endpoint is down.
 - Wired into LM Studio via `~/.lmstudio/mcp.json` as the `memory` server.
