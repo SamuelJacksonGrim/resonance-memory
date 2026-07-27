@@ -257,20 +257,25 @@ const PAGE = `<!doctype html>
     for(var i=0;i<n.length;i++){
       for(var j=i+1;j<n.length;j++){
         var dx=n[j].x-n[i].x, dy=n[j].y-n[i].y, d2=dx*dx+dy*dy+0.01, d=Math.sqrt(d2);
-        var rep = 2600*devicePixelRatio*devicePixelRatio/d2; var fx=dx/d*rep, fy=dy/d*rep;
+        var rep = 1500*devicePixelRatio*devicePixelRatio/d2; var fx=dx/d*rep, fy=dy/d*rep;
         n[i].vx-=fx; n[i].vy-=fy; n[j].vx+=fx; n[j].vy+=fy;
       }
     }
     e.forEach(function(ed){
       var a=n[ed.ai], b=n[ed.bi]; if(!a||!b) return;
       var dx=b.x-a.x, dy=b.y-a.y, d=Math.sqrt(dx*dx+dy*dy)+0.01;
-      var rest = 70*devicePixelRatio, k=0.012*(0.5+(ed.w-0.5));
+      var rest = 62*devicePixelRatio, k=0.02*(0.5+(ed.w-0.5));
       var f=(d-rest)*k; var fx=dx/d*f, fy=dy/d*f;
       a.vx+=fx; a.vy+=fy; b.vx-=fx; b.vy-=fy;
     });
+    // Radial containment: pull toward center, and push back softly near the walls so
+    // nodes settle into a centered cloud instead of pinning to the corners.
+    var cx=W/2, cy=H/2, rad=Math.min(W,H)*0.42;
     for(var i=0;i<n.length;i++){
-      n[i].vx+=(W/2-n[i].x)*0.001; n[i].vy+=(H/2-n[i].y)*0.001;
-      n[i].vx*=0.86; n[i].vy*=0.86;
+      var dx=n[i].x-cx, dy=n[i].y-cy, dist=Math.sqrt(dx*dx+dy*dy)+0.01;
+      n[i].vx+=(cx-n[i].x)*0.004; n[i].vy+=(cy-n[i].y)*0.004;
+      if(dist>rad){ var pull=(dist-rad)*0.06; n[i].vx-=dx/dist*pull; n[i].vy-=dy/dist*pull; }
+      n[i].vx*=0.85; n[i].vy*=0.85;
       n[i].x+=n[i].vx; n[i].y+=n[i].vy;
       var m=14*devicePixelRatio; n[i].x=Math.max(m,Math.min(W-m,n[i].x)); n[i].y=Math.max(m,Math.min(H-m,n[i].y));
     }
