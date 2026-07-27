@@ -12,6 +12,10 @@ START HERE (3 steps):
 That's it. Your AI can now remember things across conversations —
 and nothing ever leaves your computer.
 
+One-time: on that page, if "Meaning engine" says "not set up," click
+"Set up" (it downloads a small helper model in LM Studio, one click).
+Without it, memory still works but matches on exact words, not meaning.
+
 Curious what it does before connecting? Click "Show demo graph" on that page.
 
 Full guide: open  README.md
