@@ -38,7 +38,12 @@ function baseDir() {
   try { const sea = require("node:sea"); if (sea.isSea()) return path.dirname(process.execPath); } catch { }
   return __dirname;
 }
-const CONFIG_PATH = process.env.RESONANCE_MEMORY_CONFIG || path.join(baseDir(), "config.json");
+const STORE_PATH = process.env.MEMORY_FILE_PATH ||
+  path.join(process.env.USERPROFILE || process.env.HOME || ".", ".lmstudio", "resonance-memory.jsonl");
+// Runtime state lives WITH the data (not next to the exe), matching panel.js so the
+// panel toggle and the server read the same file.
+const CONFIG_PATH = process.env.RESONANCE_MEMORY_CONFIG ||
+  path.join(path.dirname(STORE_PATH), "resonance-memory.config.json");
 const ENV_FIELD = ["1", "true", "yes"].includes(String(process.env.RESONANCE_MEMORY_FIELD || "").toLowerCase());
 function fieldEnabled() {
   try {
@@ -47,9 +52,6 @@ function fieldEnabled() {
   } catch { /* no config yet -> fall back to env */ }
   return ENV_FIELD;
 }
-
-const STORE_PATH = process.env.MEMORY_FILE_PATH ||
-  path.join(process.env.USERPROFILE || process.env.HOME || ".", ".lmstudio", "resonance-memory.jsonl");
 const EMBED_URL = process.env.EMBED_ENDPOINT || "http://localhost:1234/v1/embeddings";
 const EMBED_MODEL = process.env.EMBED_MODEL || "text-embedding-nomic-embed-text-v1.5";
 

@@ -25,9 +25,12 @@ function baseDir() {
   try { const sea = require("node:sea"); if (sea.isSea()) return path.dirname(process.execPath); } catch { }
   return __dirname;
 }
-const CONFIG_PATH = process.env.RESONANCE_MEMORY_CONFIG || path.join(baseDir(), "config.json");
 const STORE_PATH = process.env.MEMORY_FILE_PATH ||
   path.join(process.env.USERPROFILE || process.env.HOME || ".", ".lmstudio", "resonance-memory.jsonl");
+// Keep runtime state WITH the data (not next to the exe) so the downloaded exe leaves
+// nothing beside itself, and the field on/off setting survives moving the exe.
+const CONFIG_PATH = process.env.RESONANCE_MEMORY_CONFIG ||
+  path.join(path.dirname(STORE_PATH), "resonance-memory.config.json");
 const DEMO_PATH = path.join(baseDir(), "demo-seed.jsonl");
 const PORT = Number(process.env.RESONANCE_MEMORY_PANEL_PORT || 9090);
 const KOFI = "https://ko-fi.com/thearchitectofresonance";
@@ -39,7 +42,7 @@ let EMBEDDED = { demoSeed: "", systemPrompt: "" };
 try { EMBEDDED = require("./embedded-assets.js"); } catch { }
 
 function readConfig() { try { return JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8")); } catch { return {}; } }
-function writeConfig(c) { fs.writeFileSync(CONFIG_PATH, JSON.stringify(c, null, 2), "utf8"); }
+function writeConfig(c) { fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true }); fs.writeFileSync(CONFIG_PATH, JSON.stringify(c, null, 2), "utf8"); }
 function fieldOn() { const c = readConfig(); return typeof c.field === "boolean" ? c.field : false; }
 
 function parseJsonl(text) {
