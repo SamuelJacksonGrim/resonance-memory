@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /*
- * panel.js - the zero-terminal control panel for Simple Memory.
+ * panel.js - the zero-terminal control panel for Resonance Memory.
  *
  * A tiny local web server (127.0.0.1 only) that:
  *   - toggles the associative field (writes the shared config.json the MCP server reads live),
@@ -24,11 +24,11 @@ function baseDir() {
   try { const sea = require("node:sea"); if (sea.isSea()) return path.dirname(process.execPath); } catch { }
   return __dirname;
 }
-const CONFIG_PATH = process.env.SIMPLE_MEMORY_CONFIG || path.join(baseDir(), "config.json");
+const CONFIG_PATH = process.env.RESONANCE_MEMORY_CONFIG || path.join(baseDir(), "config.json");
 const STORE_PATH = process.env.MEMORY_FILE_PATH ||
-  path.join(process.env.USERPROFILE || process.env.HOME || ".", ".lmstudio", "simple-memory.jsonl");
+  path.join(process.env.USERPROFILE || process.env.HOME || ".", ".lmstudio", "resonance-memory.jsonl");
 const DEMO_PATH = path.join(baseDir(), "demo-seed.jsonl");
-const PORT = Number(process.env.SIMPLE_MEMORY_PANEL_PORT || 9090);
+const PORT = Number(process.env.RESONANCE_MEMORY_PANEL_PORT || 9090);
 const KOFI = "https://ko-fi.com/thearchitectofresonance";
 const PAYPAL = "https://paypal.me/SamuelGrim91";
 
@@ -76,7 +76,7 @@ function graphData(demo) {
 const PAGE = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Simple Memory</title>
+<title>Resonance Memory</title>
 <style>
   :root { color-scheme: light dark; --acc: #2f9e6b; --heb: #d9873b; }
   * { box-sizing: border-box; }
@@ -135,7 +135,7 @@ const PAGE = `<!doctype html>
 </style></head>
 <body>
   <div class="card">
-    <h1>&#128220; Simple Memory</h1>
+    <h1>&#128220; Resonance Memory</h1>
     <p class="sub">A local memory for your AI. Nothing leaves this machine.</p>
 
     <div id="clients" class="clients sec"></div>
@@ -375,8 +375,8 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, "127.0.0.1", () => {
   const url = "http://127.0.0.1:" + PORT + "/";
-  process.stdout.write("Simple Memory control panel running at " + url + "\n");
-  if (process.env.SIMPLE_MEMORY_NO_OPEN !== "1") {
+  process.stdout.write("Resonance Memory control panel running at " + url + "\n");
+  if (process.env.RESONANCE_MEMORY_NO_OPEN !== "1") {
     const cmd = process.platform === "win32" ? 'start "" "' + url + '"'
       : process.platform === "darwin" ? 'open "' + url + '"' : 'xdg-open "' + url + '"';
     exec(cmd, () => { });

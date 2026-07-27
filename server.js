@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /*
- * simple-memory - an MCP memory server a small model cannot misuse.
+ * resonance-memory - an MCP memory server a small model cannot misuse.
  *
  * Four cognitive verbs, each dead simple:
  *   save_memory({ content })        -> embed once, store, confirm
@@ -29,7 +29,7 @@ const path = require("path");
 const field = require("./field.js");
 const { Ledger } = require("./ledger.js");
 
-// Associative field (Phase 2a/2b). Enabled by the SIMPLE_MEMORY_FIELD env var (default/
+// Associative field (Phase 2a/2b). Enabled by the RESONANCE_MEMORY_FIELD env var (default/
 // fallback) OR, live, by a shared config.json that the control-panel dashboard writes.
 // fieldEnabled() is read per recall, so the browser toggle takes effect without restarting
 // the client. Primary cosine results are byte-identical whenever the field is off.
@@ -38,8 +38,8 @@ function baseDir() {
   try { const sea = require("node:sea"); if (sea.isSea()) return path.dirname(process.execPath); } catch { }
   return __dirname;
 }
-const CONFIG_PATH = process.env.SIMPLE_MEMORY_CONFIG || path.join(baseDir(), "config.json");
-const ENV_FIELD = ["1", "true", "yes"].includes(String(process.env.SIMPLE_MEMORY_FIELD || "").toLowerCase());
+const CONFIG_PATH = process.env.RESONANCE_MEMORY_CONFIG || path.join(baseDir(), "config.json");
+const ENV_FIELD = ["1", "true", "yes"].includes(String(process.env.RESONANCE_MEMORY_FIELD || "").toLowerCase());
 function fieldEnabled() {
   try {
     const c = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
@@ -49,7 +49,7 @@ function fieldEnabled() {
 }
 
 const STORE_PATH = process.env.MEMORY_FILE_PATH ||
-  path.join(process.env.USERPROFILE || process.env.HOME || ".", ".lmstudio", "simple-memory.jsonl");
+  path.join(process.env.USERPROFILE || process.env.HOME || ".", ".lmstudio", "resonance-memory.jsonl");
 const EMBED_URL = process.env.EMBED_ENDPOINT || "http://localhost:1234/v1/embeddings";
 const EMBED_MODEL = process.env.EMBED_MODEL || "text-embedding-nomic-embed-text-v1.5";
 
@@ -310,7 +310,7 @@ async function handle(req) {
     return { jsonrpc: "2.0", id, result: {
       protocolVersion: (params && params.protocolVersion) || "2024-11-05",
       capabilities: { tools: {} },
-      serverInfo: { name: "simple-memory", version: "2.0.0" },
+      serverInfo: { name: "resonance-memory", version: "2.0.0" },
     } };
   }
   if (method === "tools/list") {
@@ -348,4 +348,4 @@ process.stdin.on("data", async (chunk) => {
   }
 });
 
-process.stderr.write("simple-memory MCP server (v2) running on stdio (store: " + STORE_PATH + ")\n");
+process.stderr.write("resonance-memory MCP server (v2) running on stdio (store: " + STORE_PATH + ")\n");

@@ -1,5 +1,5 @@
 /*
- * field.js - the associative layer for simple-memory (Phase 2a, Node prototype).
+ * field.js - the associative layer for resonance-memory (Phase 2a, Node prototype).
  *
  * Builds a semantic association graph over stored memories from the vectors we
  * ALREADY store at save time - no new embedding calls, no LLM extraction. Edges
