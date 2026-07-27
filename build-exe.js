@@ -37,6 +37,22 @@ let inject = `npx --yes postject "${outExe}" NODE_SEA_BLOB "${path.join(build, "
 if (process.platform === "darwin") inject += " --macho-segment-name NODE_SEA";
 run(inject);
 
+// Flip the Windows PE subsystem console(3) -> GUI(2) so double-clicking the exe opens
+// NO console window. MCP mode is unaffected: LM Studio pipes stdin/stdout, and a GUI-
+// subsystem process uses those redirected handles fine - it just doesn't auto-allocate
+// a console when launched interactively. This makes the exe the single, clean thing to
+// double-click (no separate launcher, no stray terminal).
+if (process.platform === "win32") {
+  const buf = fs.readFileSync(outExe);
+  const peOff = buf.readUInt32LE(0x3c);
+  const subOff = peOff + 92; // PE sig(4) + COFF header(20) + optional-header Subsystem field(0x44)
+  if (buf.readUInt16LE(subOff) === 3) {
+    buf.writeUInt16LE(2, subOff);
+    fs.writeFileSync(outExe, buf);
+    console.log("      subsystem flipped console -> GUI (no console window on double-click)");
+  }
+}
+
 const mb = (fs.statSync(outExe).size / 1048576).toFixed(0);
 console.log("\nDone -> " + outExe + "  (" + mb + " MB)");
 
@@ -46,7 +62,7 @@ console.log("[5/5] staging dist/ (the shippable bundle) ...");
 const dist = path.join(dir, "dist");
 fs.rmSync(dist, { recursive: true, force: true });
 fs.mkdirSync(dist, { recursive: true });
-const ship = [exeName, "demo-seed.jsonl", "start-panel.vbs", "start-panel.bat", "uninstall.bat", "README.md", "system-prompt.md"];
+const ship = [exeName, "demo-seed.jsonl", "uninstall.bat", "README.md", "system-prompt.md", "READ ME FIRST.txt"];
 let staged = 0;
 for (const f of ship) {
   const src = path.join(dir, f);

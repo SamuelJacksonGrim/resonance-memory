@@ -375,7 +375,8 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, "127.0.0.1", () => {
   const url = "http://127.0.0.1:" + PORT + "/";
-  process.stdout.write("Resonance Memory control panel running at " + url + "\n");
+  // Guarded: as a windowless (GUI-subsystem) exe there's no console to write to.
+  try { process.stdout.write("Resonance Memory control panel running at " + url + "\n"); } catch { }
   if (process.env.RESONANCE_MEMORY_NO_OPEN !== "1") {
     const cmd = process.platform === "win32" ? 'start "" "' + url + '"'
       : process.platform === "darwin" ? 'open "' + url + '"' : 'xdg-open "' + url + '"';

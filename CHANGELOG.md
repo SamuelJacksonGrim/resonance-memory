@@ -18,8 +18,10 @@ Beta-readiness pass:
   pre-embedded in `demo-seed.jsonl`) so the panel shows non-obvious associative links on
   first launch with no setup and no real data. View-only; never written to your store.
 - **"Support the Architect"** footer — Ko-fi + PayPal links.
-- **`start-panel.vbs`** — launches the panel with **no console window**; the background
-  process **shuts itself down ~12s after you close the tab** (heartbeat), so nothing lingers.
+- **Windowless single-click** — `resonance-memory.exe` opens the control panel with **no
+  console window** (the build flips the Windows PE subsystem to GUI). One thing to click,
+  no separate launcher, no stray terminal. The background process **shuts itself down ~12s
+  after you close the tab** (heartbeat), so nothing lingers. MCP mode is unaffected.
 - **`uninstall.bat`** — disconnects from LM Studio / Claude Desktop and points you to your
   data file (never auto-deletes your memories).
 - **`build-demo-seed.js`** — regenerates the demo seed from synthetic text via the embedder.
