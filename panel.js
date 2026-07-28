@@ -240,7 +240,7 @@ const PAGE = `<!doctype html>
   });
   tog.addEventListener('change', async function(){
     await fetch('/api/toggle', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ field: tog.checked }) });
-    if(!showDemo && !graphCollapsed) loadGraph();
+    if(!showDemo && !graphCollapsed) loadGraph(true);
   });
 
   async function loadClients(){
@@ -267,7 +267,7 @@ const PAGE = `<!doctype html>
     showDemo = !showDemo;
     demoBtn.textContent = showDemo ? 'Show my memories' : 'Show demo graph';
     demoBtn.className = showDemo ? 'primary' : '';
-    loadGraph();
+    loadGraph(true);
   });
 
   // --- collapsible graph section (remembers your choice) ---
@@ -280,7 +280,7 @@ const PAGE = `<!doctype html>
     demoBtn.style.display = graphCollapsed ? 'none' : '';
     caret.innerHTML = graphCollapsed ? '&#9656;' : '&#9662;'; // right when hidden, down when shown
     graphToggle.setAttribute('aria-expanded', String(!graphCollapsed));
-    if(!graphCollapsed) loadGraph();
+    if(!graphCollapsed) loadGraph(true);
   }
   graphToggle.addEventListener('click', function(){
     graphCollapsed = !graphCollapsed;
@@ -329,7 +329,7 @@ const PAGE = `<!doctype html>
 
   // --- graph rendering (lightweight force layout) ---
   var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
-  var G = { nodes: [], edges: [] }, hover = -1, raf = null, W = 0, H = 0;
+  var G = { nodes: [], edges: [] }, hover = -1, raf = null, W = 0, H = 0, lastKey = '';
   function fit(){ var r = cv.getBoundingClientRect(); W = cv.width = r.width * devicePixelRatio; H = cv.height = r.height * devicePixelRatio; }
   window.addEventListener('resize', fit);
 
@@ -344,9 +344,14 @@ const PAGE = `<!doctype html>
       } comp++; });
   }
 
-  async function loadGraph(){
+  async function loadGraph(force){
     var g = await (await fetch('/api/graph?demo=' + (showDemo?1:0))).json();
     counts.textContent = g.nodes.length + ' memories, ' + g.edges.length + ' links';
+    // Only re-lay-out when the graph actually changed. Otherwise the poll would
+    // re-randomize positions and restart the physics every few seconds (the bounce).
+    var key = g.nodes.map(function(n){ return n.id; }).sort().join(',') + '|' + g.edges.length;
+    if(!force && key === lastKey){ return; }
+    lastKey = key;
     if(!g.nodes.length){
       cap.innerHTML = showDemo ? 'Demo unavailable.' : 'No memories yet. Click <b>Show demo graph</b> to see what this looks like in action.';
       G = { nodes: [], edges: [] }; draw(); return;
