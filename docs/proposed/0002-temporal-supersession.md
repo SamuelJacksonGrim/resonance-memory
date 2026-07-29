@@ -4,7 +4,14 @@
 
 ## Problem
 
-The store has no concept of *when a fact was true* — only `created` / `modified`. So:
+> **Status:** the schema half (`RM-04`) **shipped** — `valid_from` / `valid_to` /
+> `last_confirmed` / `superseded_by` / `supersedes` / `revision` are live in `record.js`,
+> recall filters to currently-true memories, and `supersedePatches()` + `updateMany()` apply a
+> supersession atomically. What is still missing is `RM-03`: the *detection* logic that decides
+> **when** to call them. The problem statement below describes the situation before `RM-04`.
+
+Before this work, the store had no concept of *when a fact was true* — only `created` /
+`modified`. So:
 
 - "I work at Acme" and "I work at Globex" both sit in the store, both match "where do I work",
   and recall returns whichever embeds closer to the query. **The answer is arbitrary.**

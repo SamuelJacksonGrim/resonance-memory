@@ -112,6 +112,55 @@ private memories," an "unknown publisher" dialog is a real adoption tax.
 
 ---
 
+## `BUG-006` — Design docs asserted system behaviour without re-checking the code
+**Severity:** high (misleads every future decision) · **Status:** ✅ **audited and fixed**
+
+### What
+Several design documents made confident claims about how the system currently behaves that
+were either **never verified against the source**, or were **true when written and silently
+falsified by later commits in the same session**. Found by audit after a reviewer challenged
+one of them and it collapsed.
+
+Two distinct failure modes, both worth naming:
+
+**(a) Reasoned from a mental model instead of the code.** `0006`'s problem statement was
+rewritten three times, each draft arguing that constraints can't surface — while
+`server.js: recallMemory()` already implements a `Related:` channel (four extra slots reached
+by association, not competing with the ranked five), applies the Hebbian bonus *before* the
+`minSim` gate, and reinforces the edge on every co-recall so the path strengthens with use.
+The mechanism the document proposed building was already built, and the built version learns.
+The files had been read earlier in the same session; reading is not checking.
+
+**(b) Shipped a change, left the docs describing the old state.** Six claims went stale this
+way, every one of them from work in this same branch:
+
+| Doc | Claim | Reality |
+|---|---|---|
+| `0001` | "`saveMemory()` today is: trim → embed → append" | also confirms exact restatements (`RM-04`) |
+| `0002` | "the store has no concept of when a fact was true" | temporal schema shipped |
+| `0005` | "every recall rewrites the entire store" | fixed — sidecar, zero writes on read |
+| `0005` | "kill-9 leaves an unreadable store" | fixed — atomic writes |
+| `COMPETITIVE-ANALYSIS` | temporal metadata ❌ | ✅ shipped |
+| `COMPETITIVE-ANALYSIS` | deduplication ❌ | 🟡 exact-match ships |
+
+### Why it matters more than a typo
+Every one of these feeds a build decision. `0006` alone would have had someone implement a
+static domain model to replace a dynamic one that already exists and is better. A stale
+capability matrix distorts the roadmap it was written to justify.
+
+### Rules going forward
+1. **Any sentence describing current behaviour must cite the file and be re-read at the time
+   of writing.** Not "I read this earlier" — open it.
+2. **A behaviour change is not done until the docs describing that behaviour are updated in
+   the same commit.** Grep for the thing you changed before pushing.
+3. **Where a doc describes a pre-change state deliberately, say so in a status banner** (see
+   the ones now at the top of `0002` and in `0005`'s "urgent part") rather than leaving the
+   reader to guess.
+4. **Prefer "unverified" to a confident guess.** Every claim in this repo that turned out
+   wrong was stated confidently; none was hedged.
+
+---
+
 ## Watch list — suspected, not yet confirmed
 
 | | Concern | Next step |
