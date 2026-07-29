@@ -29,7 +29,7 @@ aspirational rather than real:
 > rather than a correctness one.
 
 ```js
-// server.js:159-172
+// what applyRecall() used to do, when it lived in server.js
 applyRecall(returnedIds, embeddingById) {
   const recs = this.all();          // parse the WHOLE file
   for (const r of recs) { /* bump access_count on ~5 rows */ }
@@ -37,17 +37,19 @@ applyRecall(returnedIds, embeddingById) {
 }
 ```
 
-**Every recall rewrites the entire store.** At 200 memories that's invisible. At 50,000 it's a
-multi-hundred-millisecond stall on a *read* operation, plus:
+**Every recall rewrote the entire store.** At 200 memories that was invisible. At 50,000 it
+would have been a multi-hundred-millisecond stall on a *read* operation, plus:
 
 - **A data-loss window.** `fs.writeFileSync` on the live file is not atomic; power loss or a
-  crash mid-write truncates the user's entire memory. There is no `.bak` on this path.
-- **Unbounded memory.** The whole store, embeddings included (768 floats × N), sits in a JS
+  crash mid-write truncated the user's entire memory, with no `.bak` on that path.
+- **Unbounded memory.** The whole store, embeddings included (768 floats × N), sat in a JS
   array during every recall.
 - **SSD wear** proportional to store size × recall count.
 
-This should be fixed before anyone accumulates a large store, not after. It is the one item on
-the roadmap that is a latent *bug* rather than a missing feature.
+All three are gone: writes are atomic and access counts live in a sidecar, so a recall now
+performs no store writes at all. The code now lives in `store.js`. What this section is *for*
+is the reason the `Store` seam below has the shape it does — `touch()` exists precisely because
+bumping a counter should never have been a whole-file operation.
 
 ## Design
 
