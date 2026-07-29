@@ -90,7 +90,11 @@ Things a contributor should know before touching the code:
   memory — that was `BUG-001`.
 - **Nothing on a read path may write to the store.** Retention metadata belongs in a sidecar;
   putting it inline was `BUG-002`.
-- **Run `node test.js` before pushing.** It's dependency-free and takes under a second.
+- **Run `npm test` before pushing.** It's dependency-free and takes under a second.
+- **A behaviour change isn't done until the docs describing that behaviour change with it.**
+  Six claims in `docs/` went stale in a single session this way — see `BUG-006`. Grep for what
+  you changed before you push, and never assert how the system behaves without re-opening the
+  file that decides it.
 
 ## Cross-repo plan
 
