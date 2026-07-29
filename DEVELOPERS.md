@@ -68,6 +68,7 @@ in the `resonance-memory-stack` repo. The load-bearing ones:
 
 | Document | What |
 |---|---|
+| [`docs/HANDOFF.md`](docs/HANDOFF.md) | **Start here on a fresh machine** — what's verified, what isn't, and what to check first |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Phased plan and the reasoning behind the ordering |
 | [`docs/BACKLOG.md`](docs/BACKLOG.md) | Itemized work (`RM-00` … `RM-20`) with acceptance criteria |
 | [`docs/BUGS.md`](docs/BUGS.md) | Known defects, fixed and open, with a watch list |
