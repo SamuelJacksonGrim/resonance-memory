@@ -66,7 +66,10 @@ in the `resonance-memory-stack` repo. The load-bearing ones:
 - **The Hebbian layer is discovery, not ordering.** Co-activation expands the candidate set;
   it never reorders the primary cosine result.
 - **Embed once at save; server owns all metadata; a `Store` abstraction sits behind the verbs**
-  so the backend (JSONL now, Lantern later) can be swapped without changing the MCP API.
+  so the backend (JSONL now, SQLite later — see `docs/proposed/0005`) can be swapped without
+  changing the MCP API. The seam lives in `store.js`.
+- **All store writes go through `writeFileDurable()`, and nothing on a read path writes to the
+  store.** Both were violated once; see `BUG-001`/`BUG-002`.
 
 ## Where the work is planned
 

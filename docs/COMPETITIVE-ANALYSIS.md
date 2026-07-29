@@ -141,8 +141,9 @@ Honest scoring of Resonance Memory **today** against the field. ✅ have it · �
 | Copyleft (forks stay open) | ❌ | ❌ | ❌ | ✅ | — |
 
 **Reading the matrix:** we are competitive on *substrate* and *distribution UX*, and behind on
-the entire **write path** (extraction, dedup, conflict, temporal) plus **evaluation**. That is
-exactly the ordering the roadmap encodes.
+the **write path** (extraction, dedup, contradiction *detection*) plus **evaluation**. Temporal
+metadata has since shipped — the schema and plumbing are in; only `RM-03`'s detection is open.
+That is exactly the ordering the roadmap encodes.
 
 ---
 
@@ -161,7 +162,8 @@ Three claims we can defend, and should lead with:
 Three claims we must **not** make until earned:
 - ❌ "Beats Mem0 on LOCOMO" — not until `RM-00` lands and the number is independently reproducible.
 - ❌ "Handles contradictions" — not until `RM-03` ships *with* its eval.
-- ❌ "Production ready at scale" — JSONL rewrites the whole file on every recall (see `RM-07`).
+- ❌ "Production ready at scale" — recall no longer rewrites the store, but every *mutation*
+  still rewrites the whole JSONL file and `all()` parses it per call (see `RM-07`).
 
 ---
 
