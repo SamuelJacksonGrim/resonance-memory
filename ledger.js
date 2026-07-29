@@ -33,6 +33,7 @@
  */
 
 const fs = require("fs");
+const { writeFileDurable } = require("./record.js");
 
 function edgeKey(a, b) { return [String(a), String(b)].sort().join(":"); }
 
@@ -60,7 +61,9 @@ class Ledger {
 
   save() {
     try {
-      fs.writeFileSync(this.file, JSON.stringify({ recalls: this.recalls, edges: Object.fromEntries(this.edges) }), "utf8");
+      // Durable (temp -> fsync -> atomic rename): a crash mid-save must never
+      // leave a truncated ledger that fails to parse on next load.
+      writeFileDurable(this.file, JSON.stringify({ recalls: this.recalls, edges: Object.fromEntries(this.edges) }));
     } catch { /* non-fatal: the field must never break recall */ }
   }
 

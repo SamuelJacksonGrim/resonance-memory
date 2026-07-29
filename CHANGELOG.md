@@ -33,6 +33,25 @@ Beta-readiness pass:
   supersession), temporal metadata, hybrid retrieval, the store abstraction, and the
   evaluation harness.
 
+- **Temporal memory (`RM-04`).** Every memory now records when it became true (`valid_from`),
+  whether it still is (`valid_to`), and when it was last confirmed. Recall answers from what's
+  **currently true**; superseded memories are kept, not deleted, and surface only when you ask
+  about the past ("where did I *used to* work") — clearly labelled as no longer current.
+  Re-saving something you already told it confirms the existing memory instead of duplicating
+  it. Old stores gain the new fields on first read; **no migration step**.
+- **`test.js`** — a dependency-free test suite (`node test.js`, 33 tests).
+
+### Fixed
+- **Your memories can no longer be truncated by a crash.** Store writes replaced the live file
+  in place, so a crash or power loss partway through could leave it empty. Writes are now
+  atomic (temp → fsync → rename). Same fix applied to the Hebbian ledger. (`BUG-001`)
+- **Recall no longer rewrites the entire memory file.** Every `recall_memory` used to re-serialize
+  the whole store just to bump an access counter — O(store) work on a *read*, and a whole-file
+  data-loss window. Access counts moved to a sidecar; recall now performs **zero** writes to
+  the store in steady state. (`BUG-002`)
+
+See [`docs/BUGS.md`](docs/BUGS.md) for the full write-up and the open watch list.
+
 ### Changed
 - **Association graph is now 3D.** Memories are placed by association: each semantic/Hebbian
   link is a spring whose rest length shrinks as similarity rises, so related memories cluster
