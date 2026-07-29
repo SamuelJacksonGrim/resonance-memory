@@ -51,6 +51,38 @@ eval/
  "expect":{"contains":["diabetic"],"reason":"health constraint must bridge via the walk"}}
 ```
 
+### The first three cases to run
+
+These settle an open disagreement about how much work plain cosine already does, and they
+should be written **before** any of `RM-08` is implemented — the answer changes how much of it
+is needed.
+
+```jsonl
+{"id":"constraint-near","kind":"constraint",
+ "writes":["I'm diabetic - keep sugar out of any recipe"],
+ "query":"suggest a dessert",
+ "expect":{"contains":["diabetic"],
+   "note":"DISPUTED - the stored text contains 'sugar' and 'recipe', so this plausibly clears the gate on cosine alone. Measure before assuming it needs constraint machinery."}}
+
+{"id":"constraint-far","kind":"constraint",
+ "writes":["I'm diabetic - keep sugar out of any recipe"],
+ "query":"what should I bring to the potluck on Friday",
+ "expect":{"contains":["diabetic"],
+   "note":"No shared vocabulary with sugar or recipes. This is the case that genuinely needs domain-based surfacing."}}
+
+{"id":"constraint-crowded","kind":"constraint",
+ "writes":["I'm diabetic - keep sugar out of any recipe",
+           "...50 unrelated recipe memories..."],
+ "query":"suggest a dessert recipe",
+ "expect":{"contains":["diabetic"],
+   "note":"Similarity may be fine while the top-k budget is not. Isolates crowding from matching."}}
+```
+
+If `constraint-near` passes on cosine alone, the marketing claim that motivated it is honest
+today and `RM-08`'s scope narrows to `constraint-far` and `constraint-crowded`. If it fails,
+the claim needs softening until `RM-08` lands. **Either result is worth having, and neither is
+knowable without the embedder** — which is exactly why this harness comes first.
+
 `excludes` is as important as `contains` — most memory bugs are *extra wrong stuff*, not
 missing right stuff.
 

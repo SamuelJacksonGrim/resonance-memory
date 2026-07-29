@@ -81,6 +81,10 @@ From `docs/BACKLOG.md`, in order:
 1. **`RM-00`** — the eval harness (`docs/proposed/0007`). Nothing else should merge first.
    `RM-03`'s detection logic in particular can quietly make recall *worse*, and there's
    currently no way to notice.
+   **Quick win once you have the embedder:** run the three `constraint-near` /
+   `constraint-far` / `constraint-crowded` cases in `proposed/0007`. They settle an open
+   question about how much plain cosine already does for constraint surfacing, and the answer
+   changes how much of `RM-08` is actually needed. Cheap to run, genuinely unknown.
 2. **`RM-03`** — supersession detection. All plumbing is done and tested
    (`supersedePatches`, `updateMany`, filtered recall); only the *decision of when to call
    it* is missing. Scoring function is in `docs/proposed/0002 §Detection`.
