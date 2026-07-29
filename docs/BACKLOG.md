@@ -150,9 +150,14 @@ Design: [`proposed/0003`](proposed/0003-hybrid-retrieval.md).
 ### `RM-08` — Soft constraints, decay, pruning · **M** · `todo`
 
 - [ ] **Soft constraints** as a first-class memory kind (`kind: "constraint"`): "I'm diabetic —
-      no sugary recipes." These must surface *proactively* on topically-related recalls even
-      when not directly matched. This is exactly the dog→walk→diabetes→sugar chain the 3D
-      layout already makes visible — the substrate is there, retrieval needs to use it.
+      no sugary recipes."
+- [ ] **Reserved slot first** (~10 lines): hold one of the `k` result slots for the best-scoring
+      constraint. Crowding — not semantic distance — is the argument that survives scrutiny:
+      a constraint can score well above the gate and still lose all five slots to closer
+      matches, and *better* embeddings make that worse, not better.
+- [ ] **Then measure before building more.** Run `constraint-far-sparse` (`proposed/0007`).
+      The embedding may already carry `potluck → food → sweets → diabetic` on its own, in
+      which case the 2-hop domain machinery is unnecessary and `RM-08` is nearly done.
 - [ ] Importance decay: `importance *= exp(-λ·Δt)`, refreshed on access/confirm.
 - [ ] Pruning proposals surfaced **in the panel for review** — never silent deletion.
 - [ ] Never auto-prune anything with `kind: "constraint"` or a manual pin.

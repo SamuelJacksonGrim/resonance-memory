@@ -286,8 +286,11 @@ test("nextId stays unique under rapid saves (same-millisecond collisions)", () =
 
 test("nextId stays monotonic if the clock jumps backwards", () => {
   const s = freshStore();
-  s.add(normalize({ id: Date.now() + 60000, text: "from the future" }));
-  assert.ok(s.nextId() > Date.now() + 60000, "never reuses an existing id");
+  // Capture the id once: calling Date.now() again in the assertion races the
+  // clock, and a 1ms tick between the two calls makes the comparison off by one.
+  const future = Date.now() + 60000;
+  s.add(normalize({ id: future, text: "from the future" }));
+  assert.ok(s.nextId() > future, "never reuses an existing id");
 });
 
 test("legacy store with no temporal fields loads as all-current", () => {
