@@ -28,7 +28,7 @@ That produces three failure modes we can see in any real store:
 ```
 save_memory(content)
    │
-   ├─ Tier 0  normalize + split        (always on, deterministic, ~0ms)
+   ├─ Tier 0  normalizeText + split        (always on, deterministic, ~0ms)
    ├─ Tier 1  guard                    (always on, deterministic, ~0ms)  ── may REFUSE
    ├─ Tier 2  extract                  (opt-in, local LLM, one call)     ── may be SKIPPED
    │
@@ -49,6 +49,9 @@ that is still better than today's.
 
 ## Tier 0 — normalize and split (always on)
 
+> Named `normalizeText` deliberately: `record.js` already exports a `normalize(record)` that
+> backfills the record schema. Two different jobs, one obvious name — do not let them collide.
+
 ```js
 // write.js
 const FILLER = [
@@ -57,7 +60,7 @@ const FILLER = [
   /^(fyi,? |btw,? |also,? )/i,
 ];
 
-function normalize(text) {
+function normalizeText(text) {
   let t = String(text || "").replace(/\s+/g, " ").trim();
   let changed = true;
   while (changed) {                       // strip stacked openers: "FYI, just so you know, ..."
@@ -172,7 +175,7 @@ safe, we can reject aggressively. Asymmetric costs → asymmetric thresholds.
 
 ```js
 async function saveMemory(content, opts = {}) {
-  const t0 = normalize(content);
+  const t0 = normalizeText(content);
   if (!t0) return "Nothing to save: `content` was empty.";
 
   const g = guard(t0);
