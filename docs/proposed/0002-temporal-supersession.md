@@ -184,10 +184,15 @@ async function reconcile(newText, newVec, store) {
 ### Applying it
 
 ```js
+// Both rows must change together. Two separate store.update() calls would be two
+// full-file rewrites, and a crash between them would leave a HALF-APPLIED
+// supersession: the old fact closed while nothing points at its replacement.
+// updateMany() applies both in a single atomic write. (record.js exposes
+// supersedePatches() so the patch shapes stay in one place; store.js:updateMany
+// lands them. Both are implemented and tested.)
 function supersede(oldId, newId, store, at = new Date().toISOString()) {
-  const old = store.get(oldId);
-  store.update(oldId, { valid_to: at, superseded_by: newId, modified: at });
-  store.update(newId, { supersedes: oldId, revision: (old.revision || 1) + 1, valid_from: at });
+  const p = supersedePatches(store.get(oldId), store.get(newId), at);
+  store.updateMany({ [String(oldId)]: p.old, [String(newId)]: p.new });
   // Optional: record the supersession as a typed edge for the 3D graph (RM-09).
 }
 ```
