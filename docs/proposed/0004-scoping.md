@@ -121,16 +121,20 @@ session memory that keeps recurring across sessions is evidently not transient.
 ```js
 // During idle consolidation: a session-tier memory that has been independently
 // restated in >= 2 distinct sessions is really a durable fact.
+// Collect patches and land them in ONE write: store.update() rewrites the whole
+// file per call, so promoting a cluster row-by-row is O(N^2) — and a crash
+// mid-loop would leave a cluster half-promoted, with duplicates already deleted.
 function promoteRecurring(store, { minSessions = 2 } = {}) {
-  const bySimilarity = clusterByCosine(store.sessionTier(), 0.9);
-  for (const cluster of bySimilarity) {
+  const patches = {};
+  for (const cluster of clusterByCosine(store.sessionTier(), 0.9)) {
     const sessions = new Set(cluster.map(r => r.session_id));
-    if (sessions.size >= minSessions) {
-      const keep = longest(cluster);
-      store.update(keep.id, { tier: "long_term", promoted_from: "session" });
-      for (const other of cluster) if (other.id !== keep.id) store.update(other.id, { deleted: true });
-    }
+    if (sessions.size < minSessions) continue;
+    const keep = longest(cluster);
+    patches[String(keep.id)] = { tier: "long_term", promoted_from: "session" };
+    for (const other of cluster)
+      if (other.id !== keep.id) patches[String(other.id)] = { deleted: true };
   }
+  if (Object.keys(patches).length) store.updateMany(patches);
 }
 ```
 
@@ -145,11 +149,13 @@ Session memories expire; long-term ones never do without review (`RM-08`).
 // Idle pass: drop session memories from sessions that ended long ago.
 const SESSION_TTL_DAYS = 7;
 function expireSessions(store, now = Date.now()) {
+  const patches = {};
   for (const r of store.sessionTier()) {
     const age = (now - Date.parse(r.last_confirmed || r.created)) / 864e5;
     if (age > SESSION_TTL_DAYS && r.session_id !== currentSessionId)
-      store.update(r.id, { deleted: true, delete_reason: "session_expired" });
+      patches[String(r.id)] = { deleted: true, delete_reason: "session_expired" };
   }
+  if (Object.keys(patches).length) store.updateMany(patches);   // one write, not N
 }
 ```
 

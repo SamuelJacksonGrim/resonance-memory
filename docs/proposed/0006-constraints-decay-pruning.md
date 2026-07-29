@@ -126,9 +126,15 @@ Stored as `kind: "constraint"` (backfilled `"fact"` by `normalize()`, so nothing
 > case the field cannot cover on its own: the very first firing, when the Hebbian weight is
 > still zero and there is no learned edge to lift the constraint over the gate.
 
-If crowding is the problem, this is the entire fix. Reserve one of the `k` result slots for
-the best-scoring constraint, so a constraint that clears the gate can never be squeezed out by
-memories that merely match the phrasing more closely.
+Reserve one of the `k` result slots for the best-scoring constraint, so a constraint that
+clears the gate can never be squeezed out of the *ranked* list by memories matching the
+phrasing more closely.
+
+Note this is a **cold-start aid, not a crowding fix** — the opening of this document explains
+why crowding isn't fatal on its own (`Related:` is a separate channel of four more slots
+reached by association, so a constraint pushed out of the ranked five is still reachable). What
+the reserved slot buys is the *first* firing, before any Hebbian weight exists to lift that
+association over the gate. Once the loop has fired once, it compounds on its own.
 
 ```js
 const CONSTRAINT_GATE = 0.42;    // below the 0.55 edge gate; tune on RM-00
@@ -148,8 +154,8 @@ function withReservedConstraint(ranked, all, queryVec, k = 5) {
 ```
 
 Note what this does *not* do: it doesn't reorder the primary results and it doesn't invent a
-similarity signal. It spends one slot of the output budget. **Ten lines, no new subsystem, and
-it addresses the argument that actually survived.**
+similarity signal. It spends one slot of the output budget. **Ten lines and no new subsystem** —
+which is why it's worth having even if measurement shows the field already covers most cases.
 
 Everything below is the fallback for the case where similarity genuinely can't reach — build
 it only if `constraint-far-sparse` proves that case is real.
@@ -274,12 +280,18 @@ Superseded memories are a separate, safer case — their successor already carri
 ```js
 // A superseded memory whose successor has itself been stable for months is
 // history nobody is reading. Drop the EMBEDDING (the bulk), keep the TEXT.
+//
+// Batch through updateMany: store.update() re-reads and rewrites the WHOLE
+// file per call, so updating N records one at a time is O(N^2) writes. This
+// is one read and one write regardless of how many rows compact.
 function compactSuperseded(store, { afterDays = 180 } = {}) {
+  const cutoff = Date.now() - afterDays * 864e5;
+  const patches = {};
   for (const r of store.all()) {
     if (!r.valid_to || !r.embedding) continue;
-    if ((Date.now() - Date.parse(r.valid_to)) / 864e5 > afterDays)
-      store.update(r.id, { embedding: null, compacted: true });
+    if (Date.parse(r.valid_to) < cutoff) patches[String(r.id)] = { embedding: null, compacted: true };
   }
+  if (Object.keys(patches).length) store.updateMany(patches);
 }
 ```
 
