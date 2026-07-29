@@ -39,18 +39,27 @@ Build `eval/` with seeded, offline, reproducible scoring.
 
 ## Phase 1 — Write path
 
-### `RM-04` — Temporal metadata · **S** · `todo`
-> *Do this first. It's a cheap schema change that `RM-03` and `RM-08` both require.*
+### `RM-04` — Temporal metadata · **S** · ✅ `done`
 
-- [ ] Add to the record: `valid_from`, `valid_to` (null = currently true), `last_confirmed`,
-      `superseded_by` (id | null), `revision` (int).
-- [ ] `JsonlStore._normalize()` backfills all of them for legacy rows — **no migration script,
-      no breaking change** (the normalizer already does this pattern).
-- [ ] `save_memory` sets `valid_from = now`, `last_confirmed = now`.
-- [ ] Re-saving an equivalent fact bumps `last_confirmed` instead of appending a duplicate.
-- [ ] Panel shows current vs superseded; superseded rendered dimmed in the 3D graph.
+- [x] Add to the record: `valid_from`, `valid_to` (null = currently true), `last_confirmed`,
+      `superseded_by`, `supersedes`, `revision`, `needs_review` — in `record.js`.
+- [x] `normalize()` backfills all of them for legacy rows — **no migration script, no breaking
+      change**. Covered by tests incl. the oldest `ts`-only shape.
+- [x] `save_memory` sets `valid_from = now`, `last_confirmed = now`.
+- [x] Re-saving an *identical* memory bumps `last_confirmed` instead of appending a duplicate.
+      (Near-duplicate detection is still `RM-02`.)
+- [x] `store.current()` excludes superseded; `active()` keeps history.
+- [x] Recall answers from current facts; superseded surface only on explicitly historical
+      queries and are labelled "no longer current".
+- [x] Panel: superseded nodes dimmed in the 3D graph, counted separately, flagged on hover.
+- [x] `supersedePatches()` + `updateMany()` land a supersession as one atomic write — ready
+      for `RM-03` to call.
 
-**Acceptance:** old stores load unchanged; new fields present on every read; `eval/temporal` green.
+**Shipped alongside:** `record.js` (shared schema), `store.js` (storage seam extracted from
+`server.js`), `test.js` (33 tests), and the fixes for `BUG-001`/`BUG-002` — see
+[`BUGS.md`](BUGS.md).
+
+**Remaining for `RM-03`:** the *detection* logic that decides when to call `supersedePatches`.
 
 Design: [`proposed/0002`](proposed/0002-temporal-supersession.md).
 
@@ -173,12 +182,15 @@ Design: [`proposed/0003`](proposed/0003-hybrid-retrieval.md).
 ## Phase 3 — Scope and scale
 
 ### `RM-07` — Store abstraction + SQLite backend · **L** · `todo`
-> *More urgent than it looks:* `applyRecall()` rewrites the **entire store file on every
-> recall** (`server.js:159–172`). Fine at hundreds of memories; a stall and a power-failure
-> data-loss window at tens of thousands.
+> **Update:** the *data-loss* half of this is **fixed** — writes are atomic and recall no
+> longer rewrites the store (`BUG-001`/`BUG-002` in [`BUGS.md`](BUGS.md)). What remains is the
+> *performance* half: `all()` still parses the whole store per call, and mutations still
+> rewrite the file. Current comfortable ceiling ≈10k memories.
 
-- [ ] Extract a documented `Store` interface (the abstraction is claimed in DEVELOPERS.md but
-      has exactly one implementation and leaks JSONL assumptions).
+- [x] Extract the storage layer into its own module (`store.js`) so it can be constructed and
+      tested without starting the MCP stdio loop.
+- [ ] Formalize the documented `Store` interface (`touch`, `searchDense`, `searchSparse`) —
+      the seam exists now but still leaks JSONL assumptions.
 - [ ] Add `SqliteStore` — `sqlite-vec` for vectors, FTS5 for the `RM-05` keyword arm (which
       makes hybrid retrieval nearly free), WAL mode, incremental writes.
 - [ ] Conformance test suite both backends must pass identically.

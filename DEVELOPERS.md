@@ -9,7 +9,10 @@ an opaque `id`.
 
 | File | What it is |
 |---|---|
-| `server.js` | The MCP server. Four verbs: `save_memory`, `recall_memory`, `edit_memory`, `delete_memory`. `JsonlStore` behind them. |
+| `server.js` | The MCP server. Four verbs: `save_memory`, `recall_memory`, `edit_memory`, `delete_memory`. |
+| `record.js` | The shared record schema (incl. temporal fields), durable atomic writes, and the access sidecar. |
+| `store.js` | `JsonlStore` — the storage backend behind the Store seam. Separate module so it's testable without the stdio loop. |
+| `test.js` | Dependency-free test suite: `node test.js`. |
 | `field.js` | Associative layer (Phase 2a): kNN semantic graph over stored vectors; neighborhood expansion. |
 | `ledger.js` | Hebbian sidecar (Phase 2b): co-activation reinforcement, bounded `cosine + 0.3·tanh(w)`, decay + prune. |
 | `panel.js` | Local 127.0.0.1 control panel: field toggle, Connect/Disconnect, association graph view, heartbeat auto-shutdown. |
@@ -67,17 +70,21 @@ in the `resonance-memory-stack` repo. The load-bearing ones:
 |---|---|
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Phased plan and the reasoning behind the ordering |
 | [`docs/BACKLOG.md`](docs/BACKLOG.md) | Itemized work (`RM-00` … `RM-20`) with acceptance criteria |
+| [`docs/BUGS.md`](docs/BUGS.md) | Known defects, fixed and open, with a watch list |
 | [`docs/COMPETITIVE-ANALYSIS.md`](docs/COMPETITIVE-ANALYSIS.md) | Mem0 / Zep / Letta capability + pricing landscape, and our gaps |
 | [`docs/proposed/`](docs/proposed/) | RFC-style designs with code and pseudocode |
 
-Two things in there that a contributor should know before touching the code:
+Things a contributor should know before touching the code:
 
 - **`proposed/0003` proposes amending the "ranking = cosine only" invariant** (hybrid
   retrieval). It ships flag-off and is promoted only on a measured A/B win. Don't flip a
   ranking default without that measurement.
-- **`proposed/0005` documents a latent bug:** `applyRecall()` rewrites the *entire* store file
-  on every recall (`server.js:159`), which is a stall and a power-failure data-loss window
-  once a store gets large.
+- **All store writes must go through `writeFileDurable()`** (`record.js`). Plain
+  `fs.writeFileSync` on a live data file is not atomic and can truncate the user's entire
+  memory — that was `BUG-001`.
+- **Nothing on a read path may write to the store.** Retention metadata belongs in a sidecar;
+  putting it inline was `BUG-002`.
+- **Run `node test.js` before pushing.** It's dependency-free and takes under a second.
 
 ## Cross-repo plan
 

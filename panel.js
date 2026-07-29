@@ -36,6 +36,7 @@ const install = require("./install.js");
 const field = require("./field.js");
 const engine = require("./engine.js");
 const { Ledger } = require("./ledger.js");
+const { normalize, isCurrent } = require("./record.js");
 
 function baseDir() {
   // In a bundled single-executable, __dirname is virtual; resolve next to the exe.
@@ -64,7 +65,7 @@ function fieldOn() { const c = readConfig(); return typeof c.field === "boolean"
 
 function parseJsonl(text) {
   return String(text).split("\n").filter(Boolean)
-    .map((l) => { try { return JSON.parse(l); } catch { return null; } })
+    .map((l) => { try { return normalize(JSON.parse(l)); } catch { return null; } })
     .filter((r) => r && !r.deleted);
 }
 function loadRecords(file) {
@@ -76,7 +77,9 @@ function loadDemo() {
   const disk = loadRecords(DEMO_PATH);
   return disk.length ? disk : parseJsonl(EMBEDDED.demoSeed);
 }
-function memCount() { return loadRecords(STORE_PATH).length; }
+// Currently-true memories. Superseded ones are still on disk (history is kept),
+// but "how many memories do I have" means the ones that are actually true now.
+function memCount() { return loadRecords(STORE_PATH).filter(isCurrent).length; }
 
 // Build the association graph for the view: nodes = memories, edges = kNN semantic links,
 // annotated with any learned Hebbian weight so the UI can highlight what use has reinforced.
@@ -99,10 +102,16 @@ function graphData(demo) {
     }
   }
   return {
-    nodes: recs.map((r) => ({ id: String(r.id), text: r.text })),
+    nodes: recs.map((r) => ({
+      id: String(r.id),
+      text: r.text,
+      current: isCurrent(r),                       // superseded ones render dimmed
+      superseded_by: r.superseded_by != null ? String(r.superseded_by) : null,
+    })),
     edges: [...seen.values()],
     source: demo ? "demo" : "your memories",
     field: !!ledger,
+    current_count: recs.filter(isCurrent).length,
   };
 }
 
@@ -384,7 +393,9 @@ const PAGE = `<!doctype html>
 
   async function loadGraph(force){
     var g = await (await fetch('/api/graph?demo=' + (showDemo?1:0))).json();
-    counts.textContent = g.nodes.length + ' memories, ' + g.edges.length + ' links';
+    var stale = g.nodes.length - (g.current_count != null ? g.current_count : g.nodes.length);
+    counts.textContent = g.nodes.length + ' memories, ' + g.edges.length + ' links'
+      + (stale > 0 ? ', ' + stale + ' superseded' : '');
     // Re-settle only when the SET of memories changes. Edge-only churn (Hebbian
     // reinforcement nudging weights) refreshes the springs in place - no bounce.
     var key = g.nodes.map(function(n){ return n.id; }).sort().join(',');
@@ -496,9 +507,12 @@ const PAGE = `<!doctype html>
       var nd=n[i];
       var base=3 + Math.min(nd.deg,6)*0.6;      // more-connected memories draw larger
       var r=(hover===i?base+2:base)*devicePixelRatio*nd.sk; if(r<0.5){ r=0.5; }
+      var stale = nd.current === false;         // superseded: still there, visibly past
       ctx.beginPath(); ctx.arc(nd.sx,nd.sy,r,0,7); ctx.fillStyle=color(nd.c);
-      ctx.globalAlpha=(hover>=0 && hover!==i && !isNeighbor(i)) ? 0.28 : 1; ctx.fill();
-      ctx.globalAlpha=1; ctx.lineWidth=1.2*devicePixelRatio; ctx.strokeStyle='rgba(255,255,255,.7)'; ctx.stroke();
+      var a=(hover>=0 && hover!==i && !isNeighbor(i)) ? 0.28 : 1;
+      ctx.globalAlpha = stale ? a*0.3 : a; ctx.fill();
+      ctx.globalAlpha = stale ? 0.4 : 1; ctx.lineWidth=1.2*devicePixelRatio;
+      ctx.strokeStyle = stale ? 'rgba(150,150,150,.6)' : 'rgba(255,255,255,.7)'; ctx.stroke();
     });
   }
   function isNeighbor(i){ return G.edges.some(function(e){ return (e.ai===hover&&e.bi===i)||(e.bi===hover&&e.ai===i); }); }
@@ -512,7 +526,11 @@ const PAGE = `<!doctype html>
     G.nodes.forEach(function(nd,i){ if(nd.sx==null) return; var d=(nd.sx-mx)*(nd.sx-mx)+(nd.sy-my)*(nd.sy-my); if(d<bd){ bd=d; best=i; } });
     var thr=15*devicePixelRatio, nh=(bd<thr*thr)?best:-1;
     if(nh!==hover){ hover=nh; kick();
-      if(hover>=0){ cap.innerHTML = '<b>&#8220;</b>' + G.nodes[hover].text.replace(/</g,'&lt;') + '<b>&#8221;</b>'; }
+      if(hover>=0){
+        var hn = G.nodes[hover];
+        cap.innerHTML = '<b>&#8220;</b>' + hn.text.replace(/</g,'&lt;') + '<b>&#8221;</b>'
+          + (hn.current === false ? ' <span style="opacity:.7">&mdash; no longer current</span>' : '');
+      }
       else { cap.innerHTML = 'Drag to rotate. Hover a dot to read the memory.'; }
     }
   });
