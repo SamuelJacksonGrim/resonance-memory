@@ -147,7 +147,8 @@ const PAGE = `<!doctype html>
   button.primary { background: var(--acc); border-color: var(--acc); color: #fff; }
   button:disabled { opacity: .55; cursor: default; }
   .graphwrap { border-radius: 14px; overflow: hidden; border: 1px solid rgba(0,0,0,.08); background: #fbfbfd; }
-  canvas { display: block; width: 100%; height: 300px; touch-action: none; }
+  canvas { display: block; width: 100%; height: 340px; touch-action: none; cursor: grab; }
+  canvas:active { cursor: grabbing; }
   .cap { min-height: 34px; padding: 8px 12px; font-size: 12.5px; color: #4b5563;
     border-top: 1px solid rgba(0,0,0,.06); background: #f7f8fa; }
   .cap b { color: var(--acc); }
@@ -207,11 +208,12 @@ const PAGE = `<!doctype html>
       <div id="graphBody">
         <div class="graphwrap">
           <canvas id="cv"></canvas>
-          <div class="cap" id="cap">Hover a dot to read the memory. Lines connect related ideas &mdash; thicker means more similar.</div>
+          <div class="cap" id="cap">Drag to rotate. Hover a dot to read a memory. Related ideas cluster together in 3D &mdash; thicker lines mean more similar.</div>
         </div>
         <div class="legend">
           <span><span class="dot" style="background:var(--acc)"></span>related (meaning)</span>
           <span><span class="dot" style="background:var(--heb)"></span>reinforced by use</span>
+          <span>bigger dot = more connected</span>
           <span id="counts"></span>
         </div>
       </div>
@@ -298,6 +300,7 @@ const PAGE = `<!doctype html>
     caret.innerHTML = graphCollapsed ? '&#9656;' : '&#9662;'; // right when hidden, down when shown
     graphToggle.setAttribute('aria-expanded', String(!graphCollapsed));
     if(!graphCollapsed) loadGraph(true);
+    else if(raf){ cancelAnimationFrame(raf); raf=null; }   // stop animating while hidden
   }
   graphToggle.addEventListener('click', function(){
     graphCollapsed = !graphCollapsed;
@@ -344,15 +347,33 @@ const PAGE = `<!doctype html>
     }
   });
 
-  // --- graph rendering (lightweight force layout) ---
+  // --- graph rendering (3D force-directed layout) -------------------------
+  // Memories are placed in 3D by association: every semantic/Hebbian link is a
+  // spring whose rest length shrinks as similarity rises, so strongly-related
+  // notes collapse together while unrelated ones drift apart - reachable only
+  // through the memories that bridge them. Positions persist across polls, so
+  // the cloud only re-settles ("bounces") when a memory is added or removed.
   var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
   var G = { nodes: [], edges: [] }, hover = -1, raf = null, W = 0, H = 0, lastKey = '';
+  var alpha = 0;                       // simulation heat: >0 settling, 0 at rest
+  var yaw = 0.6, pitch = -0.32;        // camera angles
+  var autoRotate = true, dragging = false, lastX = 0, lastY = 0;
+  var saved = {};                      // id -> {x,y,z}, preserved across reloads
+
+  // physics constants (world units)
+  var REP = 60, L0 = 20, SPRING = 0.03, CENTER = 0.004, DAMP = 0.85, MAXV = 8;
+
   function fit(){ var r = cv.getBoundingClientRect(); W = cv.width = r.width * devicePixelRatio; H = cv.height = r.height * devicePixelRatio; }
   window.addEventListener('resize', fit);
 
   function color(i){ var h = (i * 47) % 360; return 'hsl('+h+' 55% 55%)'; }
-  function components(nodes, edges){
-    var idx = {}; nodes.forEach(function(n,i){ n._i=i; idx[n.id]=i; n.c=-1; });
+
+  // connected components -> cluster color; edge endpoints -> indices; degree -> mass
+  function analyze(nodes, edges){
+    var idx = {}; nodes.forEach(function(n,i){ idx[n.id]=i; n.c=-1; n.deg=0; });
+    edges.forEach(function(e){ e.ai=idx[e.a]; e.bi=idx[e.b];
+      if(nodes[e.ai]){ nodes[e.ai].deg += 0.5 + e.w; }
+      if(nodes[e.bi]){ nodes[e.bi].deg += 0.5 + e.w; } });
     var comp = 0;
     nodes.forEach(function(n){ if(n.c>=0) return; var stack=[n]; n.c=comp;
       while(stack.length){ var x=stack.pop();
@@ -364,90 +385,148 @@ const PAGE = `<!doctype html>
   async function loadGraph(force){
     var g = await (await fetch('/api/graph?demo=' + (showDemo?1:0))).json();
     counts.textContent = g.nodes.length + ' memories, ' + g.edges.length + ' links';
-    // Only re-lay-out when the graph actually changed. Otherwise the poll would
-    // re-randomize positions and restart the physics every few seconds (the bounce).
-    var key = g.nodes.map(function(n){ return n.id; }).sort().join(',') + '|' + g.edges.length;
-    if(!force && key === lastKey){ return; }
+    // Re-settle only when the SET of memories changes. Edge-only churn (Hebbian
+    // reinforcement nudging weights) refreshes the springs in place - no bounce.
+    var key = g.nodes.map(function(n){ return n.id; }).sort().join(',');
+    if(!force && key === lastKey){ analyze(G.nodes, g.edges); G.edges = g.edges; return; }
     lastKey = key;
     if(!g.nodes.length){
       cap.innerHTML = showDemo ? 'Demo unavailable.' : 'No memories yet. Click <b>Show demo graph</b> to see what this looks like in action.';
-      G = { nodes: [], edges: [] }; draw(); return;
+      G = { nodes: [], edges: [] }; alpha = 0; if(raf){ cancelAnimationFrame(raf); raf=null; } draw(); return;
     }
     cap.innerHTML = showDemo
-      ? 'This is a <b>demo</b> (a made-up game developer\\'s notes). Notice bridges &mdash; e.g. &ldquo;debugging on a run&rdquo; links the running notes to the game-crash notes.'
-      : 'Your memories. Hover a dot to read it.';
+      ? 'A <b>demo</b> cloud in 3D. Related memories pull together; unrelated ones drift apart, reachable only through what bridges them. <b>Drag to rotate.</b>'
+      : 'Your memories in 3D - related ones cluster together. <b>Drag to rotate</b>, hover a dot to read it.';
     fit();
-    var idx = {}; g.nodes.forEach(function(n,i){ idx[n.id]=i; n.x = W*(0.2+0.6*Math.random()); n.y = H*(0.2+0.6*Math.random()); n.vx=0; n.vy=0; });
-    g.edges.forEach(function(e){ e.ai=idx[e.a]; e.bi=idx[e.b]; });
-    components(g.nodes, g.edges);
-    G = g;
-    if(raf) cancelAnimationFrame(raf); tick(0);
+    // Keep where existing nodes already settled; only brand-new ones get a fresh
+    // spot near the origin, so an add is a gentle local settle, not a re-scatter.
+    g.nodes.forEach(function(n){
+      var p = saved[n.id];
+      if(p){ n.x=p.x; n.y=p.y; n.z=p.z; }
+      else { n.x=(Math.random()-0.5)*24; n.y=(Math.random()-0.5)*24; n.z=(Math.random()-0.5)*24; }
+      n.vx=0; n.vy=0; n.vz=0;
+    });
+    analyze(g.nodes, g.edges);
+    G = g; alpha = 1;                    // reheat: the only place a bounce begins
+    if(!raf) raf = requestAnimationFrame(frame);
   }
 
-  function tick(step){
-    var n = G.nodes, e = G.edges;
-    for(var i=0;i<n.length;i++){
-      for(var j=i+1;j<n.length;j++){
-        var dx=n[j].x-n[i].x, dy=n[j].y-n[i].y, d2=dx*dx+dy*dy+0.01, d=Math.sqrt(d2);
-        var rep = 1500*devicePixelRatio*devicePixelRatio/d2; var fx=dx/d*rep, fy=dy/d*rep;
-        n[i].vx-=fx; n[i].vy-=fy; n[j].vx+=fx; n[j].vy+=fy;
+  function simulate(){
+    var n = G.nodes, e = G.edges, i, j;
+    // repulsion: every memory pushes every other apart (inverse-square, 3D)
+    for(i=0;i<n.length;i++){
+      var a = n[i];
+      for(j=i+1;j<n.length;j++){
+        var b = n[j];
+        var dx=b.x-a.x, dy=b.y-a.y, dz=b.z-a.z;
+        var d2=dx*dx+dy*dy+dz*dz+0.1, d=Math.sqrt(d2);
+        var rep=REP/d2, ux=dx/d, uy=dy/d, uz=dz/d;
+        a.vx-=ux*rep; a.vy-=uy*rep; a.vz-=uz*rep;
+        b.vx+=ux*rep; b.vy+=uy*rep; b.vz+=uz*rep;
       }
     }
+    // springs: each association pulls to a rest length that shrinks with
+    // similarity (and shrinks further where use has reinforced the link)
     e.forEach(function(ed){
       var a=n[ed.ai], b=n[ed.bi]; if(!a||!b) return;
-      var dx=b.x-a.x, dy=b.y-a.y, d=Math.sqrt(dx*dx+dy*dy)+0.01;
-      var rest = 62*devicePixelRatio, k=0.02*(0.5+(ed.w-0.5));
-      var f=(d-rest)*k; var fx=dx/d*f, fy=dy/d*f;
-      a.vx+=fx; a.vy+=fy; b.vx-=fx; b.vy-=fy;
+      var dx=b.x-a.x, dy=b.y-a.y, dz=b.z-a.z;
+      var d=Math.sqrt(dx*dx+dy*dy+dz*dz)+0.01;
+      var rest=L0*(1.5-Math.min(ed.w,1)); if(ed.hebbian>0){ rest*=(1-Math.min(ed.hebbian,0.4)); }
+      var f=(d-rest)*SPRING*(0.4+ed.w), ux=dx/d, uy=dy/d, uz=dz/d;
+      a.vx+=ux*f; a.vy+=uy*f; a.vz+=uz*f;
+      b.vx-=ux*f; b.vy-=uy*f; b.vz-=uz*f;
     });
-    // Radial containment: pull toward center, and push back softly near the walls so
-    // nodes settle into a centered cloud instead of pinning to the corners.
-    var cx=W/2, cy=H/2, rad=Math.min(W,H)*0.42;
-    for(var i=0;i<n.length;i++){
-      var dx=n[i].x-cx, dy=n[i].y-cy, dist=Math.sqrt(dx*dx+dy*dy)+0.01;
-      n[i].vx+=(cx-n[i].x)*0.004; n[i].vy+=(cy-n[i].y)*0.004;
-      if(dist>rad){ var pull=(dist-rad)*0.06; n[i].vx-=dx/dist*pull; n[i].vy-=dy/dist*pull; }
-      n[i].vx*=0.85; n[i].vy*=0.85;
-      n[i].x+=n[i].vx; n[i].y+=n[i].vy;
-      var m=14*devicePixelRatio; n[i].x=Math.max(m,Math.min(W-m,n[i].x)); n[i].y=Math.max(m,Math.min(H-m,n[i].y));
+    // integrate: pull gently to center, damp, clamp; heavier (more-connected)
+    // nodes carry more mass, so hubs sit steady while leaves swing into place
+    for(i=0;i<n.length;i++){
+      var p=n[i], mass=0.6+0.5*Math.min(p.deg,6);
+      p.vx-=p.x*CENTER; p.vy-=p.y*CENTER; p.vz-=p.z*CENTER;
+      p.vx*=DAMP; p.vy*=DAMP; p.vz*=DAMP;
+      var sp=Math.sqrt(p.vx*p.vx+p.vy*p.vy+p.vz*p.vz);
+      if(sp>MAXV){ var s=MAXV/sp; p.vx*=s; p.vy*=s; p.vz*=s; }
+      p.x+=p.vx/mass; p.y+=p.vy/mass; p.z+=p.vz/mass;
+      saved[p.id]={ x:p.x, y:p.y, z:p.z };
     }
+  }
+
+  // rotate by the camera angles, then perspective-project to the canvas
+  function project(nx,ny,nz,D,scale){
+    var cy=Math.cos(yaw), sy=Math.sin(yaw), cx=Math.cos(pitch), sx=Math.sin(pitch);
+    var x1=nx*cy - nz*sy, z1=nx*sy + nz*cy;
+    var y1=ny*cx - z1*sx, z2=ny*sx + z1*cx;
+    var denom=D-z2, lo=D*0.2; if(denom<lo){ denom=lo; }
+    var k=D/denom;
+    return { x:W/2 + x1*k*scale, y:H/2 + y1*k*scale, depth:z2, k:k };
+  }
+
+  function kick(){ if(!raf){ raf = requestAnimationFrame(frame); } }  // wake the loop
+  function frame(){
+    var settling = alpha > 0.01;
+    if(settling){ simulate(); alpha *= 0.96; }        // cools to rest; no perpetual jitter
+    var spinning = autoRotate && !dragging && hover<0;
+    if(spinning){ yaw += 0.0024; }                    // gentle spin sells the 3D
     draw();
-    if(step<260) raf=requestAnimationFrame(function(){ tick(step+1); });
+    // Keep animating only while there's motion; otherwise idle to zero CPU and
+    // let a hover/drag/reheat wake us via kick(). A settled, still cloud costs nothing.
+    raf = (settling || spinning || dragging) ? requestAnimationFrame(frame) : null;
   }
 
   function draw(){
     ctx.clearRect(0,0,W,H);
-    var heb = css('--heb'), acc = css('--acc');
-    G.edges.forEach(function(ed){
-      var a=G.nodes[ed.ai], b=G.nodes[ed.bi]; if(!a||!b) return;
+    var n=G.nodes, e=G.edges, i;
+    if(!n.length){ return; }
+    // auto-fit: scale the cloud to the canvas from its own bounding radius
+    var R=1; for(i=0;i<n.length;i++){ var rr=Math.sqrt(n[i].x*n[i].x+n[i].y*n[i].y+n[i].z*n[i].z); if(rr>R){ R=rr; } }
+    var scale=0.42*Math.min(W,H)/R, D=R*2.6;
+    for(i=0;i<n.length;i++){ var pr=project(n[i].x,n[i].y,n[i].z,D,scale); n[i].sx=pr.x; n[i].sy=pr.y; n[i].sz=pr.depth; n[i].sk=pr.k; }
+    var heb=css('--heb'), acc=css('--acc');
+    e.forEach(function(ed){
+      var a=n[ed.ai], b=n[ed.bi]; if(!a||!b) return;
       var lit = hover>=0 && (ed.ai===hover||ed.bi===hover);
       ctx.strokeStyle = ed.hebbian>0 ? heb : acc;
-      ctx.globalAlpha = lit ? 0.95 : (hover>=0 ? 0.12 : 0.42);
-      ctx.lineWidth = (0.6 + Math.max(0,(ed.w-0.5))*7 + (ed.hebbian>0?1.2:0)) * devicePixelRatio;
-      ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+      ctx.globalAlpha = lit ? 0.95 : (hover>=0 ? 0.05 : 0.26);
+      ctx.lineWidth = (0.5 + Math.max(0,(ed.w-0.5))*5 + (ed.hebbian>0?1:0)) * devicePixelRatio * (a.sk+b.sk)/2;
+      ctx.beginPath(); ctx.moveTo(a.sx,a.sy); ctx.lineTo(b.sx,b.sy); ctx.stroke();
     });
-    ctx.globalAlpha = 1;
-    G.nodes.forEach(function(nd,i){
-      var r = (hover===i?7:5)*devicePixelRatio;
-      ctx.beginPath(); ctx.arc(nd.x,nd.y,r,0,7); ctx.fillStyle = color(nd.c);
-      ctx.globalAlpha = (hover>=0 && hover!==i && !isNeighbor(i)) ? 0.35 : 1;
-      ctx.fill();
-      ctx.globalAlpha=1; ctx.lineWidth=1.5*devicePixelRatio; ctx.strokeStyle='rgba(255,255,255,.7)'; ctx.stroke();
+    ctx.globalAlpha=1;
+    // paint far-to-near so nearer memories sit on top
+    var order=[]; for(i=0;i<n.length;i++){ order.push(i); }
+    order.sort(function(p,q){ return n[p].sz - n[q].sz; });
+    order.forEach(function(i){
+      var nd=n[i];
+      var base=3 + Math.min(nd.deg,6)*0.6;      // more-connected memories draw larger
+      var r=(hover===i?base+2:base)*devicePixelRatio*nd.sk; if(r<0.5){ r=0.5; }
+      ctx.beginPath(); ctx.arc(nd.sx,nd.sy,r,0,7); ctx.fillStyle=color(nd.c);
+      ctx.globalAlpha=(hover>=0 && hover!==i && !isNeighbor(i)) ? 0.28 : 1; ctx.fill();
+      ctx.globalAlpha=1; ctx.lineWidth=1.2*devicePixelRatio; ctx.strokeStyle='rgba(255,255,255,.7)'; ctx.stroke();
     });
   }
   function isNeighbor(i){ return G.edges.some(function(e){ return (e.ai===hover&&e.bi===i)||(e.bi===hover&&e.ai===i); }); }
 
+  // hover to read a memory (uses the last projected screen positions)
   cv.addEventListener('mousemove', function(ev){
+    if(dragging) return;
     var r = cv.getBoundingClientRect();
     var mx=(ev.clientX-r.left)*devicePixelRatio, my=(ev.clientY-r.top)*devicePixelRatio;
     var best=-1, bd=1e9;
-    G.nodes.forEach(function(nd,i){ var d=(nd.x-mx)*(nd.x-mx)+(nd.y-my)*(nd.y-my); if(d<bd){bd=d;best=i;} });
-    var nh = (bd < (16*devicePixelRatio)*(16*devicePixelRatio)) ? best : -1;
-    if(nh!==hover){ hover=nh; draw();
+    G.nodes.forEach(function(nd,i){ if(nd.sx==null) return; var d=(nd.sx-mx)*(nd.sx-mx)+(nd.sy-my)*(nd.sy-my); if(d<bd){ bd=d; best=i; } });
+    var thr=15*devicePixelRatio, nh=(bd<thr*thr)?best:-1;
+    if(nh!==hover){ hover=nh; kick();
       if(hover>=0){ cap.innerHTML = '<b>&#8220;</b>' + G.nodes[hover].text.replace(/</g,'&lt;') + '<b>&#8221;</b>'; }
+      else { cap.innerHTML = 'Drag to rotate. Hover a dot to read the memory.'; }
     }
   });
-  cv.addEventListener('mouseleave', function(){ hover=-1; draw(); cap.textContent='Hover a dot to read the memory.'; });
+  cv.addEventListener('mouseleave', function(){ hover=-1; kick(); });
+
+  // drag to rotate (mouse + touch); taking control ends the gentle auto-spin
+  function startDrag(x,y){ dragging=true; autoRotate=false; lastX=x; lastY=y; kick(); }
+  function moveDrag(x,y){ if(!dragging) return; yaw += (x-lastX)*0.01; pitch += (y-lastY)*0.01; pitch=Math.max(-1.45,Math.min(1.45,pitch)); lastX=x; lastY=y; kick(); }
+  cv.addEventListener('mousedown', function(ev){ startDrag(ev.clientX, ev.clientY); });
+  window.addEventListener('mousemove', function(ev){ moveDrag(ev.clientX, ev.clientY); });
+  window.addEventListener('mouseup', function(){ dragging=false; });
+  cv.addEventListener('touchstart', function(ev){ if(ev.touches[0]){ startDrag(ev.touches[0].clientX, ev.touches[0].clientY); } }, { passive:true });
+  cv.addEventListener('touchmove', function(ev){ if(ev.touches[0]){ moveDrag(ev.touches[0].clientX, ev.touches[0].clientY); ev.preventDefault(); } }, { passive:false });
+  window.addEventListener('touchend', function(){ dragging=false; });
 
   // --- heartbeat: keep the (hidden) process alive only while a tab is open ---
   function ping(){ fetch('/api/ping', { method:'POST' }).catch(function(){}); }

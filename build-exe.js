@@ -52,7 +52,36 @@ fs.writeFileSync(
 );
 
 console.log("[1/4] bundling sources with esbuild ...");
-run(`npx --yes esbuild "${path.join(dir, "entry.js")}" --bundle --platform=node --target=node20 --outfile="${path.join(build, "bundle.js")}"`);
+// --legal-comments=none drops the per-file GPL header that sits atop every source,
+// so the bundle isn't peppered with a dozen identical notices. We add ONE notice
+// back as a top-of-file banner below.
+const bundleFile = path.join(build, "bundle.js");
+run(`npx --yes esbuild "${path.join(dir, "entry.js")}" --bundle --platform=node --target=node20 --legal-comments=none --outfile="${bundleFile}"`);
+
+// One clean license banner at the very top of the bundle, in place of the many
+// per-file headers. Defensively strip any header block esbuild happened to keep.
+const licenseBanner =
+  "/*\n" +
+  " * Resonance Memory\n" +
+  " * Copyright (C) 2026 Samuel Jackson Grim\n" +
+  " *\n" +
+  " * This program is free software: you can redistribute it and/or modify\n" +
+  " * it under the terms of the GNU General Public License as published by\n" +
+  " * the Free Software Foundation, either version 3 of the License, or\n" +
+  " * (at your option) any later version.\n" +
+  " *\n" +
+  " * This program is distributed in the hope that it will be useful,\n" +
+  " * but WITHOUT ANY WARRANTY; without even the implied warranty of\n" +
+  " * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n" +
+  " * GNU General Public License for more details.\n" +
+  " *\n" +
+  " * You should have received a copy of the GNU General Public License\n" +
+  " * along with this program.  If not, see <https://www.gnu.org/licenses/>.\n" +
+  " */\n";
+let bundled = fs.readFileSync(bundleFile, "utf8");
+// Remove any surviving copies of the exact per-file header block, then prepend one.
+bundled = bundled.replace(/\/\*\r?\n \* Resonance Memory\r?\n[\s\S]*?www\.gnu\.org\/licenses\/>\.\r?\n \*\/\r?\n?/g, "");
+fs.writeFileSync(bundleFile, licenseBanner + bundled);
 
 console.log("[2/4] generating SEA blob ...");
 run(`"${process.execPath}" --experimental-sea-config "${path.join(dir, "sea-config.json")}"`);
