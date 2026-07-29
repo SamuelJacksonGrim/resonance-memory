@@ -6,22 +6,40 @@
 
 Three related failures, all about *which memories deserve to be present*.
 
-### 1. Constraints don't surface when they matter
+### 1. Constraints surface only when they happen to match
 
 > "I'm diabetic — don't give me sugary recipes."
 
-Save that, then ask for a dessert recommendation. Cosine recall matches the query against
-memory text: "dessert recommendation" is not lexically or semantically close to "I'm
-diabetic," so the constraint doesn't surface, and the assistant cheerfully suggests tiramisu.
+**First, a correction to an earlier draft of this document.** It claimed that asking for a
+dessert wouldn't surface this memory, because "dessert" isn't close to "I'm diabetic." That
+argument was wrong, and wrong in an instructive way: it silently compared the query against a
+*truncated* version of the memory. The stored text contains **"sugary"** and **"recipes"** —
+a dessert or recipe query has real lexical and semantic overlap with it, and probably does
+clear the gate. The same draft then asserted two paragraphs later that "the substrate already
+places these near each other," which contradicts the claim outright. **Treat the near-miss
+case as unmeasured until `eval/constraints` says otherwise** (see `RM-00`).
 
-**The memory was stored correctly and retrieved correctly by the rules, and the outcome is
-still wrong.** A constraint is not a fact you look up when it matches — it's a fact that must
-be present whenever it *applies*, which is a different retrieval question. This is the failure
-mode that makes a memory system feel untrustworthy rather than merely imperfect.
+The real problem is narrower, and survives that correction intact:
 
-It's also the exact chain from the 3D layout work: `chewtoy → heartworm → walk → diabetes →
-sugar`. The substrate already places these near each other; **retrieval just doesn't use the
-adjacency.**
+1. **Matching is not the same as applying.** A constraint has to be present whenever it
+   *governs* the answer, not whenever it happens to score well against the phrasing. "What
+   should I bring to the potluck?", "plan my kid's birthday party", "we're celebrating on
+   Friday" — none of these share vocabulary with sugar or recipes, and all of them are cases
+   where a diabetic would want the constraint in play.
+2. **Top-k crowding.** Even when the constraint scores above the gate, it competes for `k=5`
+   slots against memories that match the query *more* directly. Ask for a dessert recipe with
+   500 memories stored and the top five may all be recipes, with the constraint sitting at
+   rank 8. Similarity was fine; the budget was the problem.
+3. **Recall has to fire at all.** Surfacing depends on the model choosing to call
+   `recall_memory` at that moment. Nothing about cosine helps if it doesn't.
+
+So the fix is not "make cosine better at this pair." It's to give constraints a retrieval path
+that doesn't depend on winning a similarity contest — a reserved slot, entered by *domain*
+rather than by score. That is what the rest of this document specifies, and it holds whether
+or not any particular query/memory pair clears the gate.
+
+The 2-hop domain also carries the chain from the 3D layout work — `chewtoy → heartworm → walk
+→ diabetes → sugar` — where each link is close but the endpoints are not.
 
 ### 2. Everything is equally permanent
 
