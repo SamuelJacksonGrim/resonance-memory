@@ -51,11 +51,14 @@ eval/
  "expect":{"contains":["diabetic"],"reason":"health constraint must bridge via the walk"}}
 ```
 
-### The first three cases to run
+`excludes` is as important as `contains` — most memory bugs are *extra wrong stuff*, not
+missing right stuff.
 
-These settle an open disagreement about how much work plain cosine already does, and they
-should be written **before** any of `RM-08` is implemented — the answer changes how much of it
-is needed.
+### The five cases to run first
+
+These settle an open disagreement about how much work plain cosine and the existing
+associative field already do, and they should be written **before** any of `RM-08` is
+implemented — the answer changes how much of it is needed.
 
 ```jsonl
 {"id":"constraint-near","kind":"constraint",
@@ -151,9 +154,6 @@ claim this project rests on and has never measured.
 **None of this is knowable without the embedder** — which is exactly why the harness comes
 first, and why these cases are the cheapest first thing to run.
 
-`excludes` is as important as `contains` — most memory bugs are *extra wrong stuff*, not
-missing right stuff.
-
 ## Metrics
 
 | Metric | Definition | Why |
@@ -199,15 +199,34 @@ a *feature*: it keeps the fixture set honest and reviewable in a diff.
 
 ```js
 // eval/run.js
+async function runCase(c, { variant, field }) {
+  const store = freshStore();                          // isolated temp store per case
+  for (const w of c.writes) await saveMemory(w, { store, variant });
+
+  // Repeated cases (constraint-learning) exercise the Hebbian loop: the SAME store
+  // across turns, so reinforceRecall can strengthen edges between them. Scoring a
+  // repeat case with a single recall would measure the opposite of what it tests.
+  const turns = c.repeat || [{ query: c.query }];
+  const seen = [];
+  for (const t of turns) {
+    const got = await recallMemory(t.query, { store, variant, field });
+    seen.push(got);
+  }
+  return {
+    id: c.id, kind: c.kind, field,
+    ...score(c, seen),                                 // handles contains / contains_by_turn
+    first_hit_turn: seen.findIndex(g => hits(c, g)) + 1 || null,
+  };
+}
+
 async function run({ variant = "default", filter = null } = {}) {
   const results = [];
   for (const file of fs.readdirSync("eval/corpora")) {
     for (const c of readJsonl(`eval/corpora/${file}`)) {
       if (filter && !c.id.startsWith(filter)) continue;
-      const store = freshStore();                      // isolated temp store per case
-      for (const w of c.writes) await saveMemory(w, { store, variant });
-      const got = await recallMemory(c.query, { store, variant });
-      results.push({ ...score(c, got), id: c.id, kind: c.kind });
+      // Constraint cases run BOTH ways; the gap is the field's measured value.
+      const modes = c.kind === "constraint" ? [false, true] : [c.field ?? false];
+      for (const field of modes) results.push(await runCase(c, { variant, field }));
     }
   }
   return aggregate(results);
@@ -235,6 +254,7 @@ For `RM-05` (hybrid) and `RM-09` (Hebbian tuning), where the question is "is var
 
 ```bash
 npm run eval -- --ab cosine-only,hybrid-rrf
+npm run eval -- --ab field-off,field-on     # the one that matters most; see below
 ```
 
 ```
@@ -269,10 +289,10 @@ updates   staleness   duplicates   store_kb   graph_components
    1000       0.04         0.03        3180                  5
 ```
 
-**The curve is the deliverable.** Slow rot is invisible to single-shot benchmarks and is
-exactly the failure mode the user identified: *"the gap between a working prototype of
-temporal/contradiction handling and one that stays coherent after hundreds of updates."*
-Flat lines here are the strongest quality claim the project can make.
+**The curve is the deliverable.** Slow rot is invisible to single-shot benchmarks, and it is
+the real gap between a working prototype of temporal/contradiction handling and one that stays
+coherent after hundreds of updates. Flat lines here are the strongest quality claim the
+project can make.
 
 ## What we publish
 
@@ -288,3 +308,7 @@ Flat lines here are the strongest quality claim the project can make.
 - ≥50 contradiction cases; every corpus category represented.
 - A deliberately-broken change (rank by recency) is caught.
 - `--ab` and `--soak` both work.
+- Constraint cases run with the field **off and on**, and the scorecard reports both plus the
+  gap — the associative field's measured value, which the project has never had.
+- Repeated cases keep one store across turns and report `first_hit_turn`, so "missed at turn 1,
+  landed by turn 4" scores as the success it is rather than a failure.
