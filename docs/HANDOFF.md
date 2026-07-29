@@ -154,6 +154,12 @@ Straight from [`BACKLOG.md`](BACKLOG.md), in order:
 
 ## Known open issues
 
-[`BUGS.md`](BUGS.md) — two open (`BUG-004` store path names LM Studio for Claude-only users;
-`BUG-005` unsigned binary) plus a four-item watch list, of which `W-01` (`nextId()` collisions
-within a millisecond) is the easiest to confirm or dismiss with a quick hammer test.
+[`BUGS.md`](BUGS.md) — five fixed, **two open** (`BUG-004` store path names LM Studio for
+Claude-only users; `BUG-005` unsigned binary), plus a three-item watch list. `W-02` (the panel
+has no CSRF token or `Origin` check, so any local process — or a web page via DNS rebinding —
+can drive its API) is the one worth settling before `RM-12` turns that into a documented API.
+
+Two of the fixed ones are worth reading before you trust the prose here: **`BUG-006`** (design
+docs asserted system behaviour that the code contradicted) and **`BUG-007`** (a fix that
+introduced a worse bug than it solved, caught by review rather than by the test suite). The
+code is tested; the documentation is the part that earned suspicion.

@@ -11,8 +11,8 @@ verified vs unverified, exact commands, per-item context — lives in
 
 You're picking up https://github.com/SamuelJacksonGrim/resonance-memory — work from the
 tip of `main`. Recently landed: GPL-3.0 licensing, a 3D associative graph, the temporal
-memory schema (`RM-04`), and fixes for two critical storage bugs. `CHANGELOG.md` has the
-current state.
+memory schema (`RM-04`), and fixes for three storage bugs. `CHANGELOG.md` has the current
+state.
 
 **Read `docs/HANDOFF.md` first.** It separates what's actually been verified from what
 hasn't — the previous work was done in a sandbox with no GPU, no LM Studio, and no
@@ -132,7 +132,7 @@ From `docs/BACKLOG.md`, in order:
 
 ## Open issues
 
-`docs/BUGS.md` — 3 fixed, 2 open (`BUG-004` store path names LM Studio even for Claude-only
-users; `BUG-005` unsigned binary), plus a watch list. `W-02` (panel has no CSRF token or
-Origin check — any local process, or a web page via DNS rebinding, can drive the API) should
-be settled before `RM-12` exposes it as a documented API.
+`docs/BUGS.md` — 5 fixed, 2 open (`BUG-004` store path names LM Studio even for Claude-only
+users; `BUG-005` unsigned binary), plus a three-item watch list. `W-02` (panel has no CSRF
+token or Origin check — any local process, or a web page via DNS rebinding, can drive the API)
+should be settled before `RM-12` exposes it as a documented API.
