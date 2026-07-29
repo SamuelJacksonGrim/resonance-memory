@@ -26,8 +26,11 @@ an opaque `id`.
 
 ## Store & embeddings
 
-- Flat JSONL at `MEMORY_FILE_PATH` (default `~/.lmstudio/resonance-memory.jsonl`); Hebbian
-  sidecar at `<store>.assoc.json`.
+- Flat JSONL at `MEMORY_FILE_PATH` (default `~/.lmstudio/resonance-memory.jsonl`), plus two
+  sidecars beside it: `<store>.assoc.json` (Hebbian weights) and `<store>.access.json`
+  (access counts — kept out of the store so recall never rewrites it, see `BUG-002`).
+  Both are regenerable: deleting them loses learned associations and access counts, never
+  a memory.
 - Embeddings via an OpenAI-compatible `/v1/embeddings` endpoint (default LM Studio on
   `localhost:1234`, `text-embedding-nomic-embed-text-v1.5`, 768-dim). Keyword-overlap fallback
   if the endpoint is down. The embedder is **not bundled** — the user downloads it via LM Studio;
