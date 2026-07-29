@@ -57,8 +57,9 @@ The ordering is not arbitrary. Three rules drive it:
 **Deliverables**
 - A fixture corpus of messy, realistic inputs — including the cases nobody benchmarks:
   contradictions, restatements, partial updates, "actually, no", relative dates.
-- Metrics: recall@k, MRR, **staleness rate** (answered from a superseded fact), duplicate
-  rate, extraction precision/recall, write-latency, store growth.
+- Metrics: recall@k, MRR, **staleness rate** (answered from a superseded fact),
+  false-supersession (hard gate — must be zero), duplicate rate, constraint surfacing,
+  extraction precision/recall, write-latency, store growth.
 - A **golden-set** regression gate: a change that drops any metric fails loudly.
 - Reproducible with fixed seeds, offline, no API key, in under a minute.
 
@@ -79,11 +80,13 @@ includes ≥50 contradiction/update cases (the axis LOCOMO and LongMemEval both 
 | `RM-01` | Extraction on write (heuristics first, optional local LLM pass) | `RM-00` |
 | `RM-02` | Near-duplicate detection + merge | `RM-00` |
 | `RM-03` | Contradiction / supersession (mark deprecated, prefer newer) | `RM-02`, `RM-04` |
-| `RM-04` | Temporal metadata (`valid_from` / `valid_to` / `last_confirmed`) | — |
+| ~~`RM-04`~~ | ~~Temporal metadata~~ — ✅ **shipped** | — |
 
-**Sequencing note.** `RM-04` is deliberately first-in-practice: it is a *schema* change, it is
-cheap, and both `RM-03` and later retrieval work are impossible without it. Write the fields
-before you need them; backfill is painful.
+**Sequencing note.** `RM-04` went first for a reason: a *schema* change is cheap, and both
+`RM-03` and later retrieval work are impossible without the fields in place. It has shipped —
+`valid_from` / `valid_to` / `last_confirmed` / `superseded_by` are live, recall filters to
+currently-true memories, and `supersedePatches()` applies a supersession atomically. **Nothing
+calls it yet**: deciding *when* one fact replaces another is `RM-03`, still open.
 
 **Design stance (see `proposed/0001`, `proposed/0002`):**
 - **Heuristics before LLMs.** A tiered write pipeline: cheap deterministic rules handle the
@@ -137,11 +140,13 @@ result documented.
 | `RM-07` | Real store abstraction + SQLite backend | `RM-00` |
 | `RM-10` | Idle-time consolidation ("sleep-time compute") | Phase 1 |
 
-**`RM-07` is more urgent than it looks.** `JsonlStore.applyRecall()` **rewrites the entire
-store file on every single recall** (`server.js:159–172`). At a few hundred memories that is
-invisible; at tens of thousands it is a stall and a data-loss window on power failure. SQLite
-with `sqlite-vec` + FTS5 is what every local-first competitor already uses, and it makes
-`RM-05`'s keyword half nearly free.
+**`RM-07`'s dangerous half is already done.** `applyRecall()` used to rewrite the entire store
+on every recall, which was both a stall and a whole-file data-loss window on power failure.
+Both are fixed (`BUG-001`/`BUG-002` in [`BUGS.md`](BUGS.md)): writes are atomic, and access
+counts moved to a sidecar so a recall performs no store writes at all. What remains is the
+*performance* half — `all()` still parses the whole store per call and mutations still rewrite
+it — which is a scaling limit, not a correctness one. SQLite with `sqlite-vec` + FTS5 is what
+every local-first competitor already uses, and it makes `RM-05`'s keyword half nearly free.
 
 **Exit criteria:** 100k-memory store recalls in <100ms p95; scoping isolates agents in the
 eval; no MCP API change.
