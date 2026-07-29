@@ -119,7 +119,12 @@ function classify(text) {
 
 Stored as `kind: "constraint"` (backfilled `"fact"` by `normalize()`, so nothing migrates).
 
-### The reserved slot — build this first
+### The reserved slot — for cold start only
+
+> Not the first thing to build. **Measure what the associative field already does first**
+> (`constraint-learning` and the `field: true`/`false` pair in `0007`). This exists for the
+> case the field cannot cover on its own: the very first firing, when the Hebbian weight is
+> still zero and there is no learned edge to lift the constraint over the gate.
 
 If crowding is the problem, this is the entire fix. Reserve one of the `k` result slots for
 the best-scoring constraint, so a constraint that clears the gate can never be squeezed out by
@@ -310,15 +315,23 @@ possible moment, and they never trust the tool again. For a product whose entire
 | Risk | Mitigation |
 |---|---|
 | Constraint fires on every query (noise) | Gate tuned on `RM-00`; hard cap of 3; measured by a false-positive metric |
-| Constraint *misses* when it matters | `constraint_surfacing ≥ 0.9` is the acceptance gate; 2-hop domain is generous by design |
+| Constraint *misses* when it matters | `constraint_surfacing ≥ 0.9` is the acceptance gate. First line of defence is the associative field, which already reaches constraints and strengthens that path with use; the 2-hop domain is the fallback if measurement shows the field can't cover it |
 | Decay drops something needed yearly ("my sister's birthday") | Never auto-prune; `last_confirmed` refresh on any access; pinning |
 | Classifier mislabels a fact as a constraint | Over-inclusion is cheap here (a constraint just decays slower); under-inclusion is the costly error |
 | `importanceOf` is recomputed on every read | Pure function of stored fields — memoize per read; no write amplification |
 
 ## Acceptance
 
+> **Measure before building.** Everything below is the bar for the *finished* capability, not
+> a build order. The first three bullets may already be met by the associative field as it
+> stands — `constraint-learning` and the `field: true`/`false` pair in `0007` settle that, and
+> a pass there removes most of this document's scope.
+
 - **`constraint_surfacing ≥ 0.9`** on `eval/constraints` — including the dog→walk→diabetes→
-  sugar chain, which is the canonical case.
+  sugar chain, which is the canonical case. Report it with the field **on and off**; the gap
+  is what the field is worth.
+- The `constraint-learning` case reaches the constraint by a later turn than it does on turn 1
+  — evidence the Hebbian loop is doing the work rather than a static domain model.
 - Constraint false-positive rate < 0.1 on unrelated queries.
 - **Zero** unreviewed deletions, ever.
 - `store_growth` on the `RM-15` soak improves measurably with `compactSuperseded` on.
