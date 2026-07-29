@@ -62,6 +62,12 @@ class JsonlStore {
   _writeAll(recs) {
     const data = recs.map((r) => JSON.stringify(r)).join("\n") + (recs.length ? "\n" : "");
     writeFileDurable(this.file, data);
+    // `recs` came from all(), so they already carry the sidecar's counts folded in.
+    // Now that those totals are persisted in the store itself, the sidecar must be
+    // cleared - otherwise the next read folds them in AGAIN and access_count doubles
+    // on every edit/vacuum. A full rewrite is the natural checkpoint for this.
+    this.access.consolidate();
+    this.access.save();
   }
 
   add(rec) { appendLineDurable(this.file, JSON.stringify(rec) + "\n"); }
@@ -111,9 +117,7 @@ class JsonlStore {
 
   vacuum() {
     const kept = this.all().filter((r) => !r.deleted);
-    this._writeAll(kept);
-    this.access.prune(kept.map((r) => r.id));
-    this.access.save();
+    this._writeAll(kept);   // consolidates + clears the sidecar; nothing left to prune
     return kept.length;
   }
 

@@ -112,6 +112,62 @@ private memories," an "unknown publisher" dialog is a real adoption tax.
 
 ---
 
+## `BUG-007` — Access counts doubled on every store mutation
+**Severity:** high (silent data corruption) · **Status:** ✅ **fixed** · **Introduced by:** the
+`BUG-002` fix in this same branch
+
+### What
+`all()` folds sidecar counts onto records. `_writeAll()` then persisted those *folded* values
+into the store — while the sidecar kept its own copy. The next read added them again.
+
+```
+2 recalls        -> access_count 2   ✓
+   ...one edit   -> access_count 4   ✗
+   ...another    -> access_count 6   ✗
+```
+
+It compounds without bound, and every `update()` / `delete()` / `vacuum()` triggers it.
+
+### Why it mattered
+`importance = access_count` is the retention signal. Nothing consumes it *yet*, so the damage
+was latent — but `RM-08` pruning decides what to **delete** based on it. A frequently-edited
+memory would have looked far more important than it was, and the corruption is invisible
+until something acts on it.
+
+### Fix
+`AccessLog.consolidate()` — after a full rewrite persists the folded totals, clear the
+sidecar. A rewrite is the natural checkpoint: the store file becomes the authority, the
+sidecar restarts from zero. Four regression tests, each failing without the fix.
+
+### How it was found
+**Adversarial audit prompted by the reviewer**, not by the tests. The original test suite
+covered "recall does not rewrite the store" and "sidecar round-trips" — but never *recall
+followed by a mutation*. The bug lived exactly in the seam between two things that were each
+tested in isolation.
+
+> **Lesson worth keeping:** a fix for a real bug can introduce a worse one. `BUG-002` was
+> genuine and the sidecar is still the right design — but "the old code was wrong" does not
+> establish that the new code is right, and my tests were written to confirm the fix rather
+> than to attack it.
+
+---
+
+## `BUG-001` addendum — the durability fix has a measured cost
+
+Not a defect, but it was claimed as a strict improvement without measurement, so:
+
+```
+20 × rewrite of a 5.9 MB store:  plain 138ms | durable 494ms  (3.58×)
+```
+
+`fsync` is the expensive part, and that is the point of it — the guarantee is that the bytes
+are on disk before anything references them. The cost lands only on **mutations** (save / edit
+/ delete / vacuum), never on recall, and ~25ms for a save that cannot corrupt the user's entire
+memory is the right trade. But it is a real cost and it was previously unstated. If it ever
+matters, the answer is `RM-07` (incremental writes), not dropping the fsync.
+
+---
+
 ## `BUG-006` — Design docs asserted system behaviour without re-checking the code
 **Severity:** high (misleads every future decision) · **Status:** ✅ **audited and fixed**
 
