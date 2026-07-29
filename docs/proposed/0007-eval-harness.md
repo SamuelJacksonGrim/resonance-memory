@@ -64,11 +64,19 @@ is needed.
  "expect":{"contains":["diabetic"],
    "note":"DISPUTED - the stored text contains 'sugar' and 'recipe', so this plausibly clears the gate on cosine alone. Measure before assuming it needs constraint machinery."}}
 
-{"id":"constraint-far","kind":"constraint",
+{"id":"constraint-far-sparse","kind":"constraint",
  "writes":["I'm diabetic - keep sugar out of any recipe"],
  "query":"what should I bring to the potluck on Friday",
  "expect":{"contains":["diabetic"],
-   "note":"No shared vocabulary with sugar or recipes. This is the case that genuinely needs domain-based surfacing."}}
+   "note":"No shared vocabulary - but the EMBEDDING may still carry potluck->food->sweets->diabetic, because it was trained on text where those co-occur. One memory, so no graph hops are available: this measures the embedding's own geometry, alone."}}
+
+{"id":"constraint-far-rich","kind":"constraint",
+ "writes":["I'm diabetic - keep sugar out of any recipe",
+           "I usually bring my lemon bars to group dinners",
+           "Everyone at the office loves dessert potlucks"],
+ "query":"what should I bring to the potluck on Friday",
+ "expect":{"contains":["diabetic"],
+   "note":"Same query, but now intermediate memories exist for the graph to hop through. Difference vs constraint-far-sparse isolates what the associative field adds ON TOP of the embedding."}}
 
 {"id":"constraint-crowded","kind":"constraint",
  "writes":["I'm diabetic - keep sugar out of any recipe",
@@ -78,10 +86,39 @@ is needed.
    "note":"Similarity may be fine while the top-k budget is not. Isolates crowding from matching."}}
 ```
 
-If `constraint-near` passes on cosine alone, the marketing claim that motivated it is honest
-today and `RM-08`'s scope narrows to `constraint-far` and `constraint-crowded`. If it fails,
-the claim needs softening until `RM-08` lands. **Either result is worth having, and neither is
-knowable without the embedder** — which is exactly why this harness comes first.
+### Two mechanisms, easy to confuse
+
+There are *two* separate things that could carry `potluck → food → sweets → diabetic`, and the
+sparse/rich pair above exists to tell them apart:
+
+1. **The embedding's own geometry.** `nomic-embed-text` was trained on text where potlucks,
+   desserts, sugar and diabetes co-occur constantly. That chain is already compressed into the
+   vector space — cosine is *not* keyword overlap, and it plausibly spans the whole hop
+   sequence on its own. This works with a **single** stored memory.
+2. **The associative graph.** `field.js` expands through *your stored memories*, not through
+   world knowledge. It can only hop `potluck → lemon bars → dessert → diabetic` if you
+   actually saved something about lemon bars. **In a sparse store there is nothing to hop
+   through**, and the graph contributes nothing.
+
+The honest expectation is that mechanism 1 does most of the work, and that constraint
+machinery earns its place mainly through **crowding** (`constraint-crowded`) rather than
+through similarity. But that's a prediction, not a measurement.
+
+### What the results mean
+
+| Result | Implication |
+|---|---|
+| `constraint-near` passes | The dessert claim on the landing page is honest today |
+| `constraint-far-sparse` passes | The embedding carries the whole chain unaided — `RM-08`'s domain machinery is mostly redundant for retrieval |
+| `constraint-far-rich` passes but `-sparse` fails | The associative field is doing real, measurable work — the strongest evidence yet for the project's central bet |
+| `constraint-crowded` fails while the others pass | The problem was never similarity; it's the top-k budget. Fix with a reserved slot, not a better domain model |
+
+That third row is worth the whole harness on its own: it's the first test that would show the
+Hebbian/associative substrate earning its keep against a plain vector store, which is the one
+claim this project rests on and has never measured.
+
+**None of this is knowable without the embedder** — which is exactly why the harness comes
+first, and why these cases are the cheapest first thing to run.
 
 `excludes` is as important as `contains` — most memory bugs are *extra wrong stuff*, not
 missing right stuff.
