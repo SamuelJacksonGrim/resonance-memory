@@ -20,11 +20,16 @@ the substrate. If an item seems to need a fifth verb, the design is wrong.
 Build `eval/` with seeded, offline, reproducible scoring.
 
 - [ ] Fixture corpora in `eval/corpora/*.jsonl`: `basic`, `contradictions`, `duplicates`,
-      `temporal`, `messy` (typos, fragments, pronouns, "actually no"), `adversarial`.
+      `temporal`, `messy` (typos, fragments, pronouns, "actually no"), `constraints`,
+      `adversarial`.
 - [ ] ≥50 contradiction/update cases — **the axis LOCOMO and LongMemEval both under-test**,
       so it's where we can lead rather than follow.
 - [ ] Metrics: `recall@k`, `MRR`, **`staleness_rate`** (answered from a superseded fact),
-      `duplicate_rate`, `extraction_precision/recall`, `write_latency_p95`, `store_growth`.
+      `false_supersession` (hard gate — must be 0), `duplicate_rate`, `constraint_surfacing`,
+      `extraction_precision/recall`, `write_latency_p95`, `store_growth`.
+- [ ] Constraint cases run with the field **off and on**; report both and the gap.
+- [ ] Repeated cases (`repeat` / `contains_by_turn`) keep one store across turns and report
+      `first_hit_turn`, so a constraint that lands by turn 4 isn't scored as a miss.
 - [ ] `npm run eval` → scorecard table; `npm run eval -- --json` for CI.
 - [ ] Golden-set regression gate: any metric drop fails with a diff of which cases flipped.
 - [ ] Deterministic: fixed seeds, cached embeddings committed, **no network, no API key**.
@@ -56,8 +61,8 @@ Build `eval/` with seeded, offline, reproducible scoring.
       for `RM-03` to call.
 
 **Shipped alongside:** `record.js` (shared schema), `store.js` (storage seam extracted from
-`server.js`), `test.js` (the test suite), and the fixes for `BUG-001`/`BUG-002` — see
-[`BUGS.md`](BUGS.md).
+`server.js`), `test.js` (the test suite), and the fixes for `BUG-001` / `BUG-002` / `BUG-007`
+(the last one introduced *by* the `BUG-002` fix) — see [`BUGS.md`](BUGS.md).
 
 **Remaining for `RM-03`:** the *detection* logic that decides when to call `supersedePatches`.
 
@@ -167,7 +172,9 @@ Design: [`proposed/0003`](proposed/0003-hybrid-retrieval.md).
 - [ ] Never auto-prune anything with `kind: "constraint"` or a manual pin.
 
 **Acceptance:** constraint memories appear in ≥90% of topically-related recalls in
-`eval/constraints`; no unreviewed deletions, ever.
+`eval/constraints`, **reported with the field both off and on** — the gap is what the
+associative field is worth, and it may show most of this item is already done. No unreviewed
+deletions, ever.
 
 ---
 
@@ -194,7 +201,9 @@ Design: [`proposed/0003`](proposed/0003-hybrid-retrieval.md).
 > **Update:** the *data-loss* half of this is **fixed** — writes are atomic and recall no
 > longer rewrites the store (`BUG-001`/`BUG-002` in [`BUGS.md`](BUGS.md)). What remains is the
 > *performance* half: `all()` still parses the whole store per call, and mutations still
-> rewrite the file. Current comfortable ceiling ≈10k memories.
+> rewrite the file. Comfortable ceiling is **estimated** at ~10k memories — that number comes
+> from reading the code, not from a measurement, and replacing it with a real one is a cheap
+> first task.
 
 - [x] Extract the storage layer into its own module (`store.js`) so it can be constructed and
       tested without starting the MCP stdio loop.
@@ -202,6 +211,10 @@ Design: [`proposed/0003`](proposed/0003-hybrid-retrieval.md).
       the seam exists now but still leaks JSONL assumptions.
 - [ ] Add `SqliteStore` — `sqlite-vec` for vectors, FTS5 for the `RM-05` keyword arm (which
       makes hybrid retrieval nearly free), WAL mode, incremental writes.
+      **`node:sqlite` is confirmed available** on the Node 22 runtime (`DatabaseSync`,
+      `StatementSync`, `backup`), which settles the dependency question in `proposed/0005`:
+      no native module, no threat to the single-file SEA build. Whether the `sqlite-vec`
+      extension loads inside SEA is the one part still unknown.
 - [ ] Conformance test suite both backends must pass identically.
 - [ ] Transparent one-way migration on first run, with a `.bak`.
 - [ ] JSONL stays the default until SQLite passes conformance + eval parity.
