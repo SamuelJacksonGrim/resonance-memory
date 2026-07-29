@@ -33,12 +33,13 @@ Beta-readiness pass:
   supersession), temporal metadata, hybrid retrieval, the store abstraction, and the
   evaluation harness.
 
-- **Temporal memory (`RM-04`).** Every memory now records when it became true (`valid_from`),
-  whether it still is (`valid_to`), and when it was last confirmed. Recall answers from what's
-  **currently true**; superseded memories are kept, not deleted, and surface only when you ask
-  about the past ("where did I *used to* work") — clearly labelled as no longer current.
-  Re-saving something you already told it confirms the existing memory instead of duplicating
-  it. Old stores gain the new fields on first read; **no migration step**.
+- **Temporal groundwork (`RM-04`).** Memories now carry `valid_from` / `valid_to` /
+  `last_confirmed`, recall answers from the ones still marked current, and superseded ones are
+  kept rather than deleted — surfacing only when you ask about the past. **Nothing sets a
+  memory superseded yet**; the detection that decides *when* one fact replaces another is
+  `RM-03`, still to come. This release is the schema and the plumbing under it.
+  Saving text you've already saved word-for-word confirms the existing memory instead of
+  storing a copy. Old stores gain the new fields on first read; **no migration step**.
 - **`test.js`** — a dependency-free test suite (`npm test`), plus a `package.json` so the
   usual entry points (`npm test`, `npm run build`, `npm run panel`) work.
 
