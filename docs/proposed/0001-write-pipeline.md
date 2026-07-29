@@ -4,7 +4,9 @@
 
 ## Problem
 
-`saveMemory()` today is: trim → embed → append. Whatever the model sends is what we store.
+`saveMemory()` today is: trim → *confirm-if-identical* → embed → append. The only filtering is
+an exact-text match against currently-true memories (added with `RM-04`); otherwise whatever
+the model sends is what we store.
 That produces three failure modes we can see in any real store:
 
 1. **Filler.** `"I think it's worth noting that Samuel prefers concise answers"` — the fact is

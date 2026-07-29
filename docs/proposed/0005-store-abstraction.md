@@ -16,7 +16,17 @@ aspirational rather than real:
 3. **`all()` loads the entire store into memory and re-parses it on every call** — and it's
    called by `active()`, `update()`, `applyRecall()`, `hasDeleted()` and `nextId()`.
 
-### The urgent part
+### The urgent part — ✅ FIXED, described below as it was
+
+> **Status:** both problems in this section were fixed in the `BUG-001` / `BUG-002` work (see
+> [`../BUGS.md`](../BUGS.md)). Writes are now atomic (`writeFileDurable`) and access counts
+> moved to a sidecar, so **recall performs zero writes to the store in steady state**. The
+> text below is kept as the record of why the `Store` seam needs the shape it does — read it
+> as history, not as current behaviour.
+>
+> What remains is the *performance* half: `all()` still parses the whole store per call and
+> mutations still rewrite the file. That is what SQLite is for, and it is a scaling limit
+> rather than a correctness one.
 
 ```js
 // server.js:159-172
@@ -205,4 +215,5 @@ test so no future backend reintroduces it.
 - Both backends pass conformance identically and produce identical eval scorecards.
 - Migration verified on a real store, with `.bak` retained.
 - **No change to the four MCP verbs.**
-- Kill-9 during a write leaves a readable store (the current JSONL path does not).
+- Kill-9 during a write leaves a readable store. *(Already true for JSONL as of `BUG-001` —
+  the SQLite backend must not regress it. Encoded in the conformance suite.)*
