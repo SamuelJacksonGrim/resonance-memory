@@ -11,7 +11,7 @@ stable; sophistication grows in the substrate, not in the API.
 Beta-readiness pass:
 
 ### Added
-- **Association graph view** in the panel — a live force-directed constellation of your
+- **Association graph view** in the panel — a live 3D force-directed constellation of your
   memories; hover a dot to read it, line thickness = similarity, reinforced-by-use edges
   highlighted. Refreshes as the graph learns.
 - **Demo graph** — a one-click, 100% synthetic sample (a fictional game dev's notes,

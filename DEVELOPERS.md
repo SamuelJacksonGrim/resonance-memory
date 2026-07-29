@@ -88,11 +88,6 @@ Things a contributor should know before touching the code:
 - **`proposed/0003` proposes amending the "ranking = cosine only" invariant** (hybrid
   retrieval). It ships flag-off and is promoted only on a measured A/B win. Don't flip a
   ranking default without that measurement.
-- **All store writes must go through `writeFileDurable()`** (`record.js`). Plain
-  `fs.writeFileSync` on a live data file is not atomic and can truncate the user's entire
-  memory — that was `BUG-001`.
-- **Nothing on a read path may write to the store.** Retention metadata belongs in a sidecar;
-  putting it inline was `BUG-002`.
 - **Run `npm test` before pushing.** It's dependency-free and takes under a second.
 - **A behaviour change isn't done until the docs describing that behaviour change with it.**
   Six claims in `docs/` went stale in a single session this way — see `BUG-006`. Grep for what

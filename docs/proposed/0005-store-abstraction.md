@@ -68,6 +68,7 @@ class Store {
   async active({ scope } = {}) {}              // active, including superseded
   async add(record) {}                         // -> id
   async update(id, patch) {}                   // -> bool
+  async updateMany(patchById) {}               // several rows in ONE write (supersession)
   async touch(ids, { at }) {}                  // bump access_count/last_access. NO full rewrite.
   async backfillEmbeddings(map) {}             // id -> vector
   async searchDense(vector, { limit, scope }) {}   // -> [{id, score}]
@@ -80,8 +81,10 @@ class Store {
 Two changes carry the weight:
 
 - **`touch()` replaces `applyRecall()`.** Bumping access metadata is conceptually an update to
-  a handful of rows, and the interface should say so. JSONL implements it with the old rewrite
-  (now the only place that does); SQLite implements it as one `UPDATE ... WHERE id IN (...)`.
+  a handful of rows, and the interface should say so. JSONL already implements this without any
+  store write at all — the counts live in an `AccessLog` sidecar (`record.js`) and are folded in
+  on read; SQLite implements it as one `UPDATE ... WHERE id IN (...)`. Whichever backend, the
+  rule is the same: **a read must not write to the store.**
 - **`searchDense` / `searchSparse` move *into* the store.** Ranking policy stays in the
   service layer, but *index access* belongs to the backend — otherwise every backend is forced
   to hand its whole corpus to the caller, which is precisely today's problem.
