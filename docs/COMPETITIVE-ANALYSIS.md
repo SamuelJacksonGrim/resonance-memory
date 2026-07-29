@@ -122,9 +122,9 @@ Honest scoring of Resonance Memory **today** against the field. ✅ have it · �
 | Semantic recall | ✅ | ✅ | ✅ | ✅ | — |
 | Embed-once-on-save | ✅ | ✅ | ✅ | ✅ | — |
 | Automatic fact extraction on write | ✅ | ✅ | ✅ | ❌ | `RM-01` |
-| Deduplication | ✅ | ✅ | 🟡 | ❌ | `RM-02` |
-| Contradiction / supersession | 🟡 | ✅ | 🟡 | ❌ | `RM-03` |
-| Temporal metadata (valid-from/to) | 🟡 | ✅ | ❌ | ❌ | `RM-04` |
+| Deduplication | ✅ | ✅ | 🟡 | 🟡 *(exact-match only)* | `RM-02` |
+| Contradiction / supersession | 🟡 | ✅ | 🟡 | 🟡 *(applies it; can't yet detect it)* | `RM-03` |
+| Temporal metadata (valid-from/to) | 🟡 | ✅ | ❌ | ✅ | — |
 | Hybrid retrieval (semantic+keyword) | ✅ | ✅ | 🟡 | 🟡 *(keyword only as fallback)* | `RM-05` |
 | Graph retrieval | 💰 Pro | ✅ | ❌ | ✅ **free** | — |
 | **Hebbian / co-activation reshaping** | ❌ | ❌ | ❌ | ✅ **unique** | `RM-09` |
@@ -132,7 +132,7 @@ Honest scoring of Resonance Memory **today** against the field. ✅ have it · �
 | Multi-user / agent scoping | ✅ | ✅ | ✅ | ❌ | `RM-06` |
 | Session vs long-term separation | ✅ | ✅ | ✅ | ❌ | `RM-06` |
 | Idle/sleep-time consolidation | 🟡 | ✅ | ✅ | ❌ | `RM-10` |
-| Pluggable store backend | ✅ | ✅ | ✅ | 🟡 *(abstraction exists, one impl)* | `RM-07` |
+| Pluggable store backend | ✅ | ✅ | ✅ | 🟡 *(seam extracted, one impl)* | `RM-07` |
 | Eval harness / regression suite | ✅ | ✅ | ✅ | ❌ | `RM-00` |
 | SDKs | ✅ | ✅ | ✅ | ❌ | `RM-12` |
 | Hosted option | ✅ | ✅ | ✅ | ❌ *(deliberate)* | — |
