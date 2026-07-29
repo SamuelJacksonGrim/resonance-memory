@@ -24,8 +24,14 @@ The real problem is narrower, and survives that correction intact:
 1. **Matching is not the same as applying.** A constraint has to be present whenever it
    *governs* the answer, not whenever it happens to score well against the phrasing. "What
    should I bring to the potluck?", "plan my kid's birthday party", "we're celebrating on
-   Friday" — none of these share vocabulary with sugar or recipes, and all of them are cases
-   where a diabetic would want the constraint in play.
+   Friday" — none of these share vocabulary with sugar or recipes, yet all are cases where a
+   diabetic wants the constraint in play.
+   **Caveat, and it may be a large one:** the embedding model was trained on text where
+   potlucks, desserts, sugar and diabetes co-occur constantly, so `potluck → food → sweets →
+   diabetic` is plausibly already compressed into the vector geometry. Cosine is not keyword
+   overlap. This point may therefore be much weaker than it looks — `constraint-far-sparse`
+   in `0007` exists to find out, and if it passes, most of the domain machinery below is
+   redundant for retrieval and only the crowding fix survives.
 2. **Top-k crowding.** Even when the constraint scores above the gate, it competes for `k=5`
    slots against memories that match the query *more* directly. Ask for a dessert recipe with
    500 memories stored and the top five may all be recipes, with the constraint sitting at
