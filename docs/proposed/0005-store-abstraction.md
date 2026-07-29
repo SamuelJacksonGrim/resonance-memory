@@ -4,17 +4,18 @@
 
 ## Problem
 
-`DEVELOPERS.md` claims a swappable `Store` abstraction "so the backend (JSONL now, Lantern
-later) can be swapped without changing the MCP API." The intent is right, but today it is
-aspirational rather than real:
+`DEVELOPERS.md` claims a swappable `Store` abstraction so the backend can be swapped without
+changing the MCP API. The intent is right; the seam is only half real:
 
-1. **There is one implementation**, so no pressure has ever tested the seam. Interfaces with a
-   single implementor are guesses.
+1. **There is one implementation**, so no pressure has ever tested it. Interfaces with a single
+   implementor are guesses. (The layer *has* been extracted into `store.js`, so it can now be
+   constructed and tested without the stdio loop — that part is done.)
 2. **The interface leaks JSONL assumptions.** `applyRecall(returnedIds, embeddingById)` and
    `vacuum()` are file-rewrite operations, not storage concepts. A SQL backend would implement
-   `vacuum()` as a no-op and `applyRecall()` as two `UPDATE`s — the shape is wrong.
+   `vacuum()` as a no-op — the shape is wrong.
 3. **`all()` loads the entire store into memory and re-parses it on every call** — and it's
-   called by `active()`, `update()`, `applyRecall()`, `hasDeleted()` and `nextId()`.
+   called by `active()`, `current()`, `get()`, `update()`, `updateMany()`, `hasDeleted()` and
+   `nextId()`. This is the remaining scaling limit and the main reason for SQLite.
 
 ### The urgent part — ✅ FIXED, described below as it was
 
@@ -156,7 +157,9 @@ FTS5 gives real BM25, incrementally maintained by triggers, so the hand-rolled `
 that makes this project shippable. Options, in preference order:
 
 1. **`node:sqlite`** — built into Node 22+. No dependency, no native build, works in SEA.
-   **Preferred if the SEA runtime is on 22+;** verify before committing to it.
+   **Confirmed available** on the Node 22 runtime this repo builds with (`DatabaseSync`,
+   `StatementSync`, `backup`), so this is the choice. The open question is only whether the
+   `sqlite-vec` extension loads inside a SEA context; the fallback below covers it if not.
 2. **`sql.js`** (WASM) — no native build, but loads the whole DB into memory, which defeats
    half the purpose.
 3. **`better-sqlite3`** — fastest and most mature, but a native module inside a SEA blob is a
