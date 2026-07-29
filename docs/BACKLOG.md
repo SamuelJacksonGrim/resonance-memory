@@ -151,13 +151,17 @@ Design: [`proposed/0003`](proposed/0003-hybrid-retrieval.md).
 
 - [ ] **Soft constraints** as a first-class memory kind (`kind: "constraint"`): "I'm diabetic —
       no sugary recipes."
-- [ ] **Reserved slot first** (~10 lines): hold one of the `k` result slots for the best-scoring
-      constraint. Crowding — not semantic distance — is the argument that survives scrutiny:
-      a constraint can score well above the gate and still lose all five slots to closer
-      matches, and *better* embeddings make that worse, not better.
-- [ ] **Then measure before building more.** Run `constraint-far-sparse` (`proposed/0007`).
-      The embedding may already carry `potluck → food → sweets → diabetic` on its own, in
-      which case the 2-hop domain machinery is unnecessary and `RM-08` is nearly done.
+- [ ] **Start by measuring what already works.** `field.js` + `ledger.js` *already* surface
+      constraints by association and *already* strengthen that path with use — the Hebbian
+      bonus is applied before the `minSim` gate, so a reinforced edge clears a gate that raw
+      cosine misses. Run `constraint-learning` and the `field: true` / `false` pair
+      (`proposed/0007`) before writing any new retrieval code.
+- [ ] Two small fixes, if measurement shows they're needed: **seed constraint edges at write
+      time** (cold start — the loop can't reinforce an edge that never fired once), and allow
+      **2 hops for `kind: "constraint"`** (one hop can't carry dog→walk→diabetes→sugar).
+- [ ] **Reserved slot** (~10 lines) for the cold-start case only.
+- [ ] The domain-probe machinery in `proposed/0006` is **probably redundant** — it statically
+      reimplements what the field does dynamically. Build only if the above doesn't close it.
 - [ ] Importance decay: `importance *= exp(-λ·Δt)`, refreshed on access/confirm.
 - [ ] Pruning proposals surfaced **in the panel for review** — never silent deletion.
 - [ ] Never auto-prune anything with `kind: "constraint"` or a manual pin.
