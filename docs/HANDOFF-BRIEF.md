@@ -9,9 +9,10 @@ verified vs unverified, exact commands, per-item context — lives in
 
 # Resonance Memory — handoff
 
-You're picking up https://github.com/SamuelJacksonGrim/resonance-memory (branch `main`,
-at commit `90733ce`). PR #1 just merged: GPL-3.0 licensing, a 3D associative graph,
-the temporal memory schema (`RM-04`), and fixes for two critical storage bugs.
+You're picking up https://github.com/SamuelJacksonGrim/resonance-memory — work from the
+tip of `main`. Recently landed: GPL-3.0 licensing, a 3D associative graph, the temporal
+memory schema (`RM-04`), and fixes for two critical storage bugs. `CHANGELOG.md` has the
+current state.
 
 **Read `docs/HANDOFF.md` first.** It separates what's actually been verified from what
 hasn't — the previous work was done in a sandbox with no GPU, no LM Studio, and no
@@ -22,7 +23,7 @@ listed as unknown.
 
 ```bash
 node --version    # 22.x expected
-npm test          # 35 tests, no deps, <1s — should be 35/35
+npm test          # dependency-free, <1s — every test should pass
 npm run build     # THE UNVERIFIED ONE
 ```
 
@@ -55,7 +56,7 @@ snippet for marking a memory superseded, since automatic detection (`RM-03`) isn
 
 ## Already verified — don't redo
 
-35 tests pass; every file parses; the esbuild bundle builds and runs as an MCP server with
+The test suite passes; every file parses; the esbuild bundle builds and runs as an MCP server with
 all four verbs; `record.js`/`store.js` are bundled; exactly one GPL notice in the bundle;
 temporal recall works end-to-end over stdio (present-tense query excludes superseded facts,
 historical query returns them labelled); recall performs zero writes to the store; legacy

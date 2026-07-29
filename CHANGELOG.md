@@ -39,7 +39,8 @@ Beta-readiness pass:
   about the past ("where did I *used to* work") — clearly labelled as no longer current.
   Re-saving something you already told it confirms the existing memory instead of duplicating
   it. Old stores gain the new fields on first read; **no migration step**.
-- **`test.js`** — a dependency-free test suite (`node test.js`, 33 tests).
+- **`test.js`** — a dependency-free test suite (`npm test`), plus a `package.json` so the
+  usual entry points (`npm test`, `npm run build`, `npm run panel`) work.
 
 ### Fixed
 - **Your memories can no longer be truncated by a crash.** Store writes replaced the live file

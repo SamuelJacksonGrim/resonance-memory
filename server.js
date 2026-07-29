@@ -47,6 +47,9 @@ const field = require("./field.js");
 const { Ledger } = require("./ledger.js");
 const { normalize, isHistoricalQuery } = require("./record.js");
 const { JsonlStore } = require("./store.js");
+// Single source of truth for the version, so serverInfo can't drift from package.json.
+// esbuild inlines this JSON into the bundle, so it resolves in the SEA build too.
+const VERSION = require("./package.json").version;
 
 // Associative field (Phase 2a/2b). Enabled by the RESONANCE_MEMORY_FIELD env var (default/
 // fallback) OR, live, by a shared config.json that the control-panel dashboard writes.
@@ -275,7 +278,7 @@ async function handle(req) {
     return { jsonrpc: "2.0", id, result: {
       protocolVersion: (params && params.protocolVersion) || "2024-11-05",
       capabilities: { tools: {} },
-      serverInfo: { name: "resonance-memory", version: "2.0.0" },
+      serverInfo: { name: "resonance-memory", version: VERSION },
     } };
   }
   if (method === "tools/list") {
