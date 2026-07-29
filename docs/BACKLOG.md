@@ -56,7 +56,7 @@ Build `eval/` with seeded, offline, reproducible scoring.
       for `RM-03` to call.
 
 **Shipped alongside:** `record.js` (shared schema), `store.js` (storage seam extracted from
-`server.js`), `test.js` (33 tests), and the fixes for `BUG-001`/`BUG-002` — see
+`server.js`), `test.js` (the test suite), and the fixes for `BUG-001`/`BUG-002` — see
 [`BUGS.md`](BUGS.md).
 
 **Remaining for `RM-03`:** the *detection* logic that decides when to call `supersedePatches`.
