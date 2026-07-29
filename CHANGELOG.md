@@ -25,6 +25,41 @@ Beta-readiness pass:
 - **`uninstall.bat`** — disconnects from LM Studio / Claude Desktop and points you to your
   data file (never auto-deletes your memories).
 - **`build-demo-seed.js`** — regenerates the demo seed from synthetic text via the embedder.
+- **GPL-3.0 licensing** — full `LICENSE` at the repo root plus per-file copyright headers; the
+  build collapses them to a single notice in the bundle.
+- **Planning docs** — [`docs/ROADMAP.md`](docs/ROADMAP.md), [`docs/BACKLOG.md`](docs/BACKLOG.md)
+  (`RM-00`…`RM-20`), [`docs/COMPETITIVE-ANALYSIS.md`](docs/COMPETITIVE-ANALYSIS.md), and
+  [`docs/proposed/`](docs/proposed/) design docs covering the write path (extraction, dedup,
+  supersession), temporal metadata, hybrid retrieval, the store abstraction, and the
+  evaluation harness.
+
+- **Temporal memory (`RM-04`).** Every memory now records when it became true (`valid_from`),
+  whether it still is (`valid_to`), and when it was last confirmed. Recall answers from what's
+  **currently true**; superseded memories are kept, not deleted, and surface only when you ask
+  about the past ("where did I *used to* work") — clearly labelled as no longer current.
+  Re-saving something you already told it confirms the existing memory instead of duplicating
+  it. Old stores gain the new fields on first read; **no migration step**.
+- **`test.js`** — a dependency-free test suite (`node test.js`, 33 tests).
+
+### Fixed
+- **Your memories can no longer be truncated by a crash.** Store writes replaced the live file
+  in place, so a crash or power loss partway through could leave it empty. Writes are now
+  atomic (temp → fsync → rename). Same fix applied to the Hebbian ledger. (`BUG-001`)
+- **Recall no longer rewrites the entire memory file.** Every `recall_memory` used to re-serialize
+  the whole store just to bump an access counter — O(store) work on a *read*, and a whole-file
+  data-loss window. Access counts moved to a sidecar; recall now performs **zero** writes to
+  the store in steady state. (`BUG-002`)
+
+See [`docs/BUGS.md`](docs/BUGS.md) for the full write-up and the open watch list.
+
+### Changed
+- **Association graph is now 3D.** Memories are placed by association: each semantic/Hebbian
+  link is a spring whose rest length shrinks as similarity rises, so related memories cluster
+  and unrelated ones stay reachable only through what bridges them. Drag to rotate. More-
+  connected memories carry more mass and draw larger.
+- **The graph no longer re-settles on a timer.** Node positions persist across polls; the
+  layout re-settles only when the set of memories changes. The render loop idles to zero CPU
+  once settled.
 
 ## [0.1.0] - 2026-07-26
 
