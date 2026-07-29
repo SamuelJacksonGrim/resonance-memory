@@ -25,6 +25,22 @@ Beta-readiness pass:
 - **`uninstall.bat`** — disconnects from LM Studio / Claude Desktop and points you to your
   data file (never auto-deletes your memories).
 - **`build-demo-seed.js`** — regenerates the demo seed from synthetic text via the embedder.
+- **GPL-3.0 licensing** — full `LICENSE` at the repo root plus per-file copyright headers; the
+  build collapses them to a single notice in the bundle.
+- **Planning docs** — [`docs/ROADMAP.md`](docs/ROADMAP.md), [`docs/BACKLOG.md`](docs/BACKLOG.md)
+  (`RM-00`…`RM-20`), [`docs/COMPETITIVE-ANALYSIS.md`](docs/COMPETITIVE-ANALYSIS.md), and
+  [`docs/proposed/`](docs/proposed/) design docs covering the write path (extraction, dedup,
+  supersession), temporal metadata, hybrid retrieval, the store abstraction, and the
+  evaluation harness.
+
+### Changed
+- **Association graph is now 3D.** Memories are placed by association: each semantic/Hebbian
+  link is a spring whose rest length shrinks as similarity rises, so related memories cluster
+  and unrelated ones stay reachable only through what bridges them. Drag to rotate. More-
+  connected memories carry more mass and draw larger.
+- **The graph no longer re-settles on a timer.** Node positions persist across polls; the
+  layout re-settles only when the set of memories changes. The render loop idles to zero CPU
+  once settled.
 
 ## [0.1.0] - 2026-07-26
 
