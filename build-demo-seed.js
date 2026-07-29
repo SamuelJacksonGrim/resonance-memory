@@ -28,6 +28,7 @@
  */
 const fs = require("fs");
 const path = require("path");
+const { normalize, writeFileDurable } = require("./record.js");
 
 const EMBED_URL = process.env.EMBED_ENDPOINT || "http://localhost:1234/v1/embeddings";
 const EMBED_MODEL = process.env.EMBED_MODEL || "text-embedding-nomic-embed-text-v1.5";
@@ -82,11 +83,13 @@ async function embed(texts) {
   console.log("Embedding " + MEMORIES.length + " synthetic demo memories via " + EMBED_MODEL + " ...");
   const vecs = await embed(MEMORIES);
   const now = new Date().toISOString();
-  const lines = MEMORIES.map((text, i) => JSON.stringify({
+  // Emit through normalize() so the seed always carries the CURRENT record shape
+  // (temporal fields, provenance, ...) without this script having to track it.
+  const lines = MEMORIES.map((text, i) => JSON.stringify(normalize({
     id: 1000 + i, created: now, modified: now, text,
-    embedding: vecs[i], importance: 0, access_count: 0, last_access: null, deleted: false,
-  }));
-  fs.writeFileSync(OUT, lines.join("\n") + "\n", "utf8");
+    embedding: vecs[i], valid_from: now, last_confirmed: now, source: "user_stated",
+  })));
+  writeFileDurable(OUT, lines.join("\n") + "\n");
   console.log("Wrote " + MEMORIES.length + " demo memories -> " + OUT +
     "  (" + (vecs[0] ? vecs[0].length : 0) + "-dim vectors)");
 })().catch((e) => { console.error("FAILED: " + e.message); process.exit(1); });
