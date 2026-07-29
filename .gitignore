@@ -15,6 +15,8 @@ node_modules/
 config.json
 *.jsonl
 *.jsonl.assoc.json
+*.jsonl.access.json
+*.migrated
 # ...but the synthetic demo seed DOES ship (it's the first-launch showcase).
 !demo-seed.jsonl
 

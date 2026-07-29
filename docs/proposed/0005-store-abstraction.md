@@ -1,0 +1,208 @@
+# 0005 — Store abstraction and the SQLite backend
+
+**Status:** proposed · **Backlog:** `RM-07` · **Depends on:** `RM-00`
+
+## Problem
+
+`DEVELOPERS.md` claims a swappable `Store` abstraction "so the backend (JSONL now, Lantern
+later) can be swapped without changing the MCP API." The intent is right, but today it is
+aspirational rather than real:
+
+1. **There is one implementation**, so no pressure has ever tested the seam. Interfaces with a
+   single implementor are guesses.
+2. **The interface leaks JSONL assumptions.** `applyRecall(returnedIds, embeddingById)` and
+   `vacuum()` are file-rewrite operations, not storage concepts. A SQL backend would implement
+   `vacuum()` as a no-op and `applyRecall()` as two `UPDATE`s — the shape is wrong.
+3. **`all()` loads the entire store into memory and re-parses it on every call** — and it's
+   called by `active()`, `update()`, `applyRecall()`, `hasDeleted()` and `nextId()`.
+
+### The urgent part
+
+```js
+// server.js:159-172
+applyRecall(returnedIds, embeddingById) {
+  const recs = this.all();          // parse the WHOLE file
+  for (const r of recs) { /* bump access_count on ~5 rows */ }
+  this._writeAll(recs);             // rewrite the WHOLE file
+}
+```
+
+**Every recall rewrites the entire store.** At 200 memories that's invisible. At 50,000 it's a
+multi-hundred-millisecond stall on a *read* operation, plus:
+
+- **A data-loss window.** `fs.writeFileSync` on the live file is not atomic; power loss or a
+  crash mid-write truncates the user's entire memory. There is no `.bak` on this path.
+- **Unbounded memory.** The whole store, embeddings included (768 floats × N), sits in a JS
+  array during every recall.
+- **SSD wear** proportional to store size × recall count.
+
+This should be fixed before anyone accumulates a large store, not after. It is the one item on
+the roadmap that is a latent *bug* rather than a missing feature.
+
+## Design
+
+### Step 1 — a real interface
+
+```js
+/**
+ * Store — the substrate contract. Implementations must be interchangeable
+ * under eval/conformance.test.js. No method may leak a storage detail
+ * (file paths, SQL, rewrite semantics) to callers.
+ */
+class Store {
+  async init() {}                              // open/migrate; idempotent
+  async get(id) {}                             // -> record | null
+  async current({ scope } = {}) {}             // active, not superseded (RM-04/RM-06)
+  async active({ scope } = {}) {}              // active, including superseded
+  async add(record) {}                         // -> id
+  async update(id, patch) {}                   // -> bool
+  async touch(ids, { at }) {}                  // bump access_count/last_access. NO full rewrite.
+  async backfillEmbeddings(map) {}             // id -> vector
+  async searchDense(vector, { limit, scope }) {}   // -> [{id, score}]
+  async searchSparse(query, { limit, scope }) {}   // -> [{id, score}]  (RM-05)
+  async stats() {}                             // { count, bytes, superseded }
+  async close() {}
+}
+```
+
+Two changes carry the weight:
+
+- **`touch()` replaces `applyRecall()`.** Bumping access metadata is conceptually an update to
+  a handful of rows, and the interface should say so. JSONL implements it with the old rewrite
+  (now the only place that does); SQLite implements it as one `UPDATE ... WHERE id IN (...)`.
+- **`searchDense` / `searchSparse` move *into* the store.** Ranking policy stays in the
+  service layer, but *index access* belongs to the backend — otherwise every backend is forced
+  to hand its whole corpus to the caller, which is precisely today's problem.
+
+### Step 2 — SQLite backend
+
+```sql
+CREATE TABLE memories (
+  id             INTEGER PRIMARY KEY,
+  text           TEXT NOT NULL,
+  created        TEXT NOT NULL,
+  modified       TEXT NOT NULL,
+  valid_from     TEXT NOT NULL,          -- RM-04
+  valid_to       TEXT,                   -- NULL = current
+  last_confirmed TEXT,
+  superseded_by  INTEGER REFERENCES memories(id),
+  supersedes     INTEGER REFERENCES memories(id),
+  revision       INTEGER DEFAULT 1,
+  needs_review   INTEGER DEFAULT 0,
+  importance     REAL DEFAULT 0,
+  access_count   INTEGER DEFAULT 0,
+  last_access    TEXT,
+  source         TEXT DEFAULT 'user_stated',  -- RM-16 provenance
+  scope          TEXT DEFAULT 'default',      -- RM-06
+  agent_id       TEXT,
+  session_id     TEXT,
+  tier           TEXT DEFAULT 'long_term',
+  deleted        INTEGER DEFAULT 0
+);
+
+CREATE INDEX idx_current ON memories(scope, deleted, valid_to);
+CREATE INDEX idx_session ON memories(scope, session_id, tier);
+
+-- Vectors (sqlite-vec)
+CREATE VIRTUAL TABLE memory_vec USING vec0(id INTEGER PRIMARY KEY, embedding FLOAT[768]);
+
+-- Keyword arm for RM-05 - BM25 for free, incrementally maintained
+CREATE VIRTUAL TABLE memory_fts USING fts5(text, content='memories', content_rowid='id');
+CREATE TRIGGER mem_ai AFTER INSERT ON memories BEGIN
+  INSERT INTO memory_fts(rowid, text) VALUES (new.id, new.text);
+END;
+CREATE TRIGGER mem_au AFTER UPDATE OF text ON memories BEGIN
+  INSERT INTO memory_fts(memory_fts, rowid, text) VALUES('delete', old.id, old.text);
+  INSERT INTO memory_fts(rowid, text) VALUES (new.id, new.text);
+END;
+CREATE TRIGGER mem_ad AFTER DELETE ON memories BEGIN
+  INSERT INTO memory_fts(memory_fts, rowid, text) VALUES('delete', old.id, old.text);
+END;
+```
+
+`touch()` becomes what it always should have been:
+
+```js
+async touch(ids, { at = new Date().toISOString() } = {}) {
+  const q = `UPDATE memories
+             SET access_count = access_count + 1, last_access = ?, importance = access_count + 1
+             WHERE id IN (${ids.map(() => "?").join(",")})`;
+  this.db.prepare(q).run(at, ...ids);
+}
+```
+
+One indexed write instead of a full-file rewrite. **`RM-05`'s keyword arm also comes free** —
+FTS5 gives real BM25, incrementally maintained by triggers, so the hand-rolled `Bm25` class in
+`proposed/0003` gets deleted.
+
+### Dependency question
+
+`better-sqlite3` is native and would break the zero-dependency, single-SEA-binary property
+that makes this project shippable. Options, in preference order:
+
+1. **`node:sqlite`** — built into Node 22+. No dependency, no native build, works in SEA.
+   **Preferred if the SEA runtime is on 22+;** verify before committing to it.
+2. **`sql.js`** (WASM) — no native build, but loads the whole DB into memory, which defeats
+   half the purpose.
+3. **`better-sqlite3`** — fastest and most mature, but a native module inside a SEA blob is a
+   real packaging fight across three platforms.
+
+`sqlite-vec` is a loadable extension; if it can't be loaded in the SEA context, fall back to
+storing embeddings as `BLOB` and doing cosine in JS over a **candidate set pre-filtered by
+FTS5** — still far better than scanning everything, and it keeps the door open.
+
+> **Decide this with a spike before writing the backend.** The whole design pivots on which
+> SQLite binding survives SEA packaging on Windows, macOS and Linux.
+
+### Step 3 — migration
+
+```js
+async function migrateIfNeeded(jsonlPath, dbPath) {
+  if (!fs.existsSync(jsonlPath) || fs.existsSync(dbPath)) return;
+  fs.copyFileSync(jsonlPath, jsonlPath + ".bak");     // never migrate without a backup
+  const db = new SqliteStore(dbPath); await db.init();
+  for (const r of readJsonl(jsonlPath)) await db.add(normalize(r));
+  const n = (await db.stats()).count;
+  if (n !== countJsonl(jsonlPath)) throw new Error("migration count mismatch - aborting, .bak kept");
+  fs.renameSync(jsonlPath, jsonlPath + ".migrated");
+}
+```
+
+One-way, verified by count, `.bak` always. JSONL remains the default backend until SQLite
+passes conformance **and** eval parity — the migration doesn't run just because the code exists.
+
+### Step 4 — conformance suite
+
+```js
+// eval/conformance.test.js - run against EVERY backend
+for (const makeStore of [() => new JsonlStore(tmp()), () => new SqliteStore(tmp())]) {
+  test("add → get round-trips all fields", ...);
+  test("update patches only named fields", ...);
+  test("touch bumps access_count without altering text", ...);
+  test("current() excludes superseded and deleted", ...);
+  test("searchDense returns ids ordered by cosine", ...);
+  test("concurrent add + recall does not corrupt", ...);
+  test("crash mid-write leaves a readable store", ...);     // the JSONL bug, encoded
+}
+```
+
+That last two are the ones that would have caught the current problem. Encode the bug as a
+test so no future backend reintroduces it.
+
+## Risks
+
+| Risk | Mitigation |
+|---|---|
+| Native dep breaks the single-file exe | Prefer `node:sqlite`; spike SEA packaging **before** building |
+| Migration corrupts a user's memories | `.bak` + count verification + one-way + JSONL stays default until proven |
+| Interface churn ripples into `server.js` | Land the interface **first** with JSONL behind it; SQLite is then additive |
+| `sqlite-vec` unavailable in SEA | Fall back to BLOB + JS cosine over an FTS5-prefiltered candidate set |
+| Two backends drift | Conformance suite is the gate; both must produce identical eval scorecards |
+
+## Acceptance
+
+- 100k memories: recall p95 <100ms, no full-file rewrite on any read path.
+- Both backends pass conformance identically and produce identical eval scorecards.
+- Migration verified on a real store, with `.bak` retained.
+- **No change to the four MCP verbs.**
+- Kill-9 during a write leaves a readable store (the current JSONL path does not).

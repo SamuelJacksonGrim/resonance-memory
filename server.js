@@ -1,5 +1,22 @@
 #!/usr/bin/env node
 /*
+ * Resonance Memory
+ * Copyright (C) 2026 Samuel Jackson Grim
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+/*
  * resonance-memory - an MCP memory server a small model cannot misuse.
  *
  * Four cognitive verbs, each dead simple:
@@ -28,6 +45,8 @@ const fs = require("fs");
 const path = require("path");
 const field = require("./field.js");
 const { Ledger } = require("./ledger.js");
+const { normalize, isHistoricalQuery } = require("./record.js");
+const { JsonlStore } = require("./store.js");
 
 // Associative field (Phase 2a/2b). Enabled by the RESONANCE_MEMORY_FIELD env var (default/
 // fallback) OR, live, by a shared config.json that the control-panel dashboard writes.
@@ -90,107 +109,44 @@ function keywordScore(query, text) {
   return q.size ? hits / q.size : 0;
 }
 
-// ------------------------------------------------------------------- Store
-// Swappable backend. This one is flat JSONL; a Lantern-backed Store can replace
-// it later with the same method surface, leaving the MCP verbs untouched.
-class JsonlStore {
-  constructor(file) { this.file = file; }
-
-  _normalize(r) {
-    const created = r.created || r.ts || new Date().toISOString();
-    return {
-      id: r.id,
-      created,
-      modified: r.modified || created,
-      text: r.text,
-      embedding: Array.isArray(r.embedding) ? r.embedding : null,
-      importance: typeof r.importance === "number" ? r.importance : 0,
-      access_count: typeof r.access_count === "number" ? r.access_count : 0,
-      last_access: r.last_access || null,
-      deleted: !!r.deleted,
-    };
-  }
-
-  all() {
-    if (!fs.existsSync(this.file)) return [];
-    return fs.readFileSync(this.file, "utf8")
-      .split("\n").filter(Boolean)
-      .map((l) => { try { return this._normalize(JSON.parse(l)); } catch { return null; } })
-      .filter(Boolean);
-  }
-
-  active() { return this.all().filter((r) => !r.deleted); }
-
-  _writeAll(recs) {
-    const data = recs.map((r) => JSON.stringify(r)).join("\n") + (recs.length ? "\n" : "");
-    fs.writeFileSync(this.file, data, "utf8");
-  }
-
-  add(rec) { fs.appendFileSync(this.file, JSON.stringify(rec) + "\n", "utf8"); }
-
-  // patch matched by id (string-compared so a number or string id both work)
-  update(id, patch) {
-    const key = String(id);
-    const recs = this.all();
-    let found = false;
-    for (const r of recs) { if (String(r.id) === key) { Object.assign(r, patch); found = true; } }
-    if (found) this._writeAll(recs);
-    return found;
-  }
-
-  // backfill freshly-computed vectors + bump access metadata in a single rewrite
-  applyRecall(returnedIds, embeddingById) {
-    const bump = new Set(returnedIds.map(String));
-    const now = new Date().toISOString();
-    const recs = this.all();
-    for (const r of recs) {
-      if (embeddingById && embeddingById.has(String(r.id))) r.embedding = embeddingById.get(String(r.id));
-      if (bump.has(String(r.id))) {
-        r.access_count += 1;
-        r.last_access = now;
-        r.importance = r.access_count; // retention signal only; NOT used in ranking
-      }
-    }
-    this._writeAll(recs);
-  }
-
-  vacuum() {
-    const kept = this.all().filter((r) => !r.deleted);
-    this._writeAll(kept);
-    return kept.length;
-  }
-
-  hasDeleted() { return this.all().some((r) => r.deleted); }
-
-  nextId() {
-    const ids = this.all().map((r) => Number(r.id)).filter((n) => !Number.isNaN(n));
-    const max = ids.length ? Math.max(...ids) : 0;
-    const now = Date.now();
-    return now > max ? now : max + 1;
-  }
-}
-
 const store = new JsonlStore(STORE_PATH);
 
 // ---------------------------------------------------------------- service
 async function saveMemory(content) {
   content = (content || "").trim();
   if (!content) return "Nothing to save: `content` was empty.";
+  const now = new Date().toISOString();
+
+  // Exact restatement of a memory that is still true: confirm it rather than
+  // storing a second copy. Near-duplicate detection (cosine-banded) is RM-02;
+  // this is only the free, unambiguous case.
+  const same = store.current().find((r) => r.text === content);
+  if (same) {
+    store.update(same.id, { last_confirmed: now });
+    return "Already remembered — confirmed it's still current. (" + store.current().length + " memories total.)";
+  }
+
   let embedding = null;
   try { embedding = (await embed([content]))[0]; } catch { embedding = null; }
-  const now = new Date().toISOString();
-  store.add({
+  store.add(normalize({
     id: store.nextId(), created: now, modified: now, text: content,
-    embedding, importance: 0, access_count: 0, last_access: null, deleted: false,
-  });
-  return "Saved. (" + store.active().length + " memories total.)";
+    embedding, valid_from: now, valid_to: null, last_confirmed: now,
+  }));
+  return "Saved. (" + store.current().length + " memories total.)";
 }
 
 async function recallMemory(query, k = 5) {
   query = (query || "").trim();
   if (!query) return "Provide a `query` string to recall.";
-  const mems = store.active();
-  if (!mems.length) return "No memories saved yet.";
+  // Answer from what is currently true. Superseded memories surface only when the
+  // question is explicitly about the past ("where did I used to work").
+  const historical = isHistoricalQuery(query);
+  const mems = historical ? store.active() : store.current();
+  if (!mems.length) {
+    return store.active().length
+      ? "Nothing current matches. (Older, superseded memories exist — ask about the past to see them.)"
+      : "No memories saved yet.";
+  }
 
   let ranked;
   try {
@@ -215,7 +171,12 @@ async function recallMemory(query, k = 5) {
     store.applyRecall(ranked.map((m) => m.id), null); // bump access even on fallback
   }
 
-  let out = ranked.map((m, i) => (i + 1) + ". [id " + m.id + "] " + m.text).join("\n");
+  // When history was asked for, say plainly which memories are no longer current
+  // so the model doesn't present a superseded fact as the present truth.
+  let out = ranked.map((m, i) =>
+    (i + 1) + ". [id " + m.id + "] " + m.text +
+    (m.valid_to ? "  (no longer current — superseded " + m.valid_to.slice(0, 10) + ")" : "")
+  ).join("\n");
   if (fieldEnabled() && mems.length > ranked.length) {
     try {
       const L = getLedger();
@@ -241,7 +202,9 @@ async function editMemory(id, content) {
   if (!content) return "Provide the new `content`.";
   let embedding = null;
   try { embedding = (await embed([content]))[0]; } catch { embedding = null; }
-  const ok = store.update(id, { text: content, embedding, modified: new Date().toISOString() });
+  const now = new Date().toISOString();
+  // An edit is a correction in place: the fact is current again as of now.
+  const ok = store.update(id, { text: content, embedding, modified: now, last_confirmed: now });
   return ok ? "Edited memory " + id + "." : "No memory with id " + id + ".";
 }
 
