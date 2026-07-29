@@ -275,6 +275,21 @@ test("a corrupt line is skipped, not fatal", () => {
   assert.strictEqual(s.all().length, 2, "bad line skipped, good ones survive");
 });
 
+test("nextId stays unique under rapid saves (same-millisecond collisions)", () => {
+  // Date.now() alone would collide; nextId falls back to max+1 within a tick.
+  const s = freshStore();
+  const ids = [];
+  for (let i = 0; i < 200; i++) { const id = s.nextId(); ids.push(String(id)); s.add(normalize({ id, text: "m" + i })); }
+  assert.strictEqual(new Set(ids).size, 200, "all ids distinct");
+  assert.strictEqual(s.all().length, 200);
+});
+
+test("nextId stays monotonic if the clock jumps backwards", () => {
+  const s = freshStore();
+  s.add(normalize({ id: Date.now() + 60000, text: "from the future" }));
+  assert.ok(s.nextId() > Date.now() + 60000, "never reuses an existing id");
+});
+
 test("legacy store with no temporal fields loads as all-current", () => {
   const s = freshStore();
   fs.writeFileSync(s.file,
