@@ -1,8 +1,12 @@
 # Known bugs and defects
 
-Found defects, what they cost, and whether they're fixed. Newest first. A bug leaves this
-list only when it is *fixed*, not when it is understood — if it's understood but unfixed, it
-stays here with an owner in the backlog.
+Found defects, what they cost, and whether they're fixed. Numbered in the order found, grouped
+so related ones read together — check the status line on each rather than the position. A bug
+leaves this list only when it is *fixed*, not when it is understood; if it's understood but
+unfixed, it stays here with an owner in the backlog.
+
+**Current:** 5 fixed (`BUG-001`, `002`, `003`, `006`, `007`) · 2 open (`BUG-004`, `005`) ·
+3 on the watch list (`W-02`, `W-03`, `W-04`; `W-01` was dismissed).
 
 **Severity:** `critical` data loss / corruption · `high` user-visible breakage ·
 `medium` degradation at scale · `low` cosmetic
