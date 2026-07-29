@@ -12,8 +12,8 @@
 ## Problem
 
 Retrieval today is cosine-only, with `keywordScore` used **only as a fallback when the
-embedding endpoint is down** (`server.js:227–233`). That means we lose on exactly the queries
-dense vectors are known to be worst at:
+embedding endpoint is down** — it appears exactly once in `server.js`, inside the `catch` of
+`recallMemory()`. That means we lose on exactly the queries dense vectors are worst at:
 
 | Query type | Why cosine struggles | Example |
 |---|---|---|
