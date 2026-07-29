@@ -19,6 +19,8 @@ config.json
 *.migrated
 # ...but the synthetic demo seed DOES ship (it's the first-launch showcase).
 !demo-seed.jsonl
+# ...and the RM-00 eval fixtures are tracked (committed for offline reproducibility).
+!eval/corpora/*.jsonl
 
 # Local backups
 *.bak
