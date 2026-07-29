@@ -19,33 +19,41 @@ clear the gate. The same draft then asserted two paragraphs later that "the subs
 places these near each other," which contradicts the claim outright. **Treat the near-miss
 case as unmeasured until `eval/constraints` says otherwise** (see `RM-00`).
 
-The real problem is narrower, and survives that correction intact:
+**And a second correction, because the first fix didn't go far enough.** A revision then kept
+"semantic distance" as the leading argument and merely appended a caveat to it. That was still
+wrong-headed: if the chain `potluck → food → sweets → diabetic` is already in the embedding —
+and it very likely is, since the model was trained on text where those co-occur constantly —
+then distance isn't the problem at all, and it should not be leading anything.
 
-1. **Matching is not the same as applying.** A constraint has to be present whenever it
-   *governs* the answer, not whenever it happens to score well against the phrasing. "What
-   should I bring to the potluck?", "plan my kid's birthday party", "we're celebrating on
-   Friday" — none of these share vocabulary with sugar or recipes, yet all are cases where a
-   diabetic wants the constraint in play.
-   **Caveat, and it may be a large one:** the embedding model was trained on text where
-   potlucks, desserts, sugar and diabetes co-occur constantly, so `potluck → food → sweets →
-   diabetic` is plausibly already compressed into the vector geometry. Cosine is not keyword
-   overlap. This point may therefore be much weaker than it looks — `constraint-far-sparse`
-   in `0007` exists to find out, and if it passes, most of the domain machinery below is
-   redundant for retrieval and only the crowding fix survives.
-2. **Top-k crowding.** Even when the constraint scores above the gate, it competes for `k=5`
-   slots against memories that match the query *more* directly. Ask for a dessert recipe with
-   500 memories stored and the top five may all be recipes, with the constraint sitting at
-   rank 8. Similarity was fine; the budget was the problem.
-3. **Recall has to fire at all.** Surfacing depends on the model choosing to call
-   `recall_memory` at that moment. Nothing about cosine helps if it doesn't.
+Reordered by what actually survives, strongest first:
 
-So the fix is not "make cosine better at this pair." It's to give constraints a retrieval path
-that doesn't depend on winning a similarity contest — a reserved slot, entered by *domain*
-rather than by score. That is what the rest of this document specifies, and it holds whether
-or not any particular query/memory pair clears the gate.
+1. **Top-k crowding.** *This is the real argument, and it holds no matter how good the
+   embedding is.* A constraint can score well above the gate and still be squeezed out: it
+   competes for `k=5` slots against memories that match the phrasing *more* directly. Ask for
+   a dessert recipe with 500 memories stored and the top five may all be recipes, with the
+   constraint at rank 8. **Similarity was never the failure — the budget was.** Better
+   embeddings make this *worse*, not better, because they surface more strong near-matches to
+   compete with.
+2. **Recall has to fire at all.** Surfacing depends on the model choosing to call
+   `recall_memory` in that turn. No amount of retrieval quality helps if it doesn't. Also
+   independent of the embedding.
+3. **Semantic distance — possible, unproven, and probably smaller than assumed.** There may
+   be queries genuinely too far to reach ("we're celebrating Friday"), but every concrete
+   example anyone has produced so far dissolved on inspection. `constraint-far-sparse` in
+   [`0007`](0007-eval-harness.md) exists to find a real one. Until it does, **treat this as
+   speculative and do not build for it.**
 
-The 2-hop domain also carries the chain from the 3D layout work — `chewtoy → heartworm → walk
-→ diabetes → sugar` — where each link is close but the endpoints are not.
+### What that costs this design
+
+Non-trivially: **most of it.** If crowding is the whole problem, the fix is a **reserved slot**
+— hold one of the `k` results for the highest-scoring constraint — and the domain-probe
+machinery in Part 1 below is unnecessary. That's roughly ten lines instead of a subsystem.
+
+The `constraintDomain()` / `applicableConstraints()` design is kept below because it is the
+right answer *if* `constraint-far-sparse` fails. **Build the reserved slot first, measure,
+and only build the domain model if the measurement demands it.** The 2-hop domain remains the
+tool for the `chewtoy → heartworm → walk → diabetes → sugar` case, where each link is close
+but the endpoints are far — if that case turns out to be real.
 
 ### 2. Everything is equally permanent
 
@@ -79,6 +87,36 @@ function classify(text) {
 
 Stored as `kind: "constraint"` (backfilled `"fact"` by `normalize()`, so nothing migrates).
 
+### The reserved slot — build this first
+
+If crowding is the problem, this is the entire fix. Reserve one of the `k` result slots for
+the best-scoring constraint, so a constraint that clears the gate can never be squeezed out by
+memories that merely match the phrasing more closely.
+
+```js
+const CONSTRAINT_GATE = 0.42;    // below the 0.55 edge gate; tune on RM-00
+
+function withReservedConstraint(ranked, all, queryVec, k = 5) {
+  if (ranked.some(m => m.kind === "constraint")) return ranked;   // already surfaced
+
+  const best = all
+    .filter(m => m.kind === "constraint" && !ranked.includes(m))
+    .map(m => ({ m, s: cosine(queryVec, m.embedding) }))
+    .filter(x => x.s >= CONSTRAINT_GATE)
+    .sort((a, b) => b.s - a.s)[0];
+
+  if (!best) return ranked;
+  return [...ranked.slice(0, k - 1), best.m];   // drop the weakest, seat the constraint
+}
+```
+
+Note what this does *not* do: it doesn't reorder the primary results and it doesn't invent a
+similarity signal. It spends one slot of the output budget. **Ten lines, no new subsystem, and
+it addresses the argument that actually survived.**
+
+Everything below is the fallback for the case where similarity genuinely can't reach — build
+it only if `constraint-far-sparse` proves that case is real.
+
 ### Domain extraction
 
 A constraint needs to know *what it governs*. We already have the machinery — the constraint's
@@ -111,8 +149,7 @@ domain model; we don't need to build a second one.
 ### Surfacing
 
 ```js
-const CONSTRAINT_GATE = 0.42;   // deliberately below the 0.55 edge gate - tune on RM-00
-
+// Reuses CONSTRAINT_GATE from the reserved-slot section above.
 function applicableConstraints(queryVec, constraints, domains) {
   const hits = [];
   for (const c of constraints) {
