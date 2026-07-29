@@ -15,7 +15,7 @@ set are *unverified* — this document is mostly about telling those two apart h
 
 | Claim | How it was checked |
 |---|---|
-| All 33 tests pass | `node test.js` |
+| The whole test suite passes | `npm test` |
 | Every source file parses | `node --check` on each |
 | esbuild bundle builds and runs | bundled `entry.js`, ran it as `--mcp`, exercised all four verbs |
 | Bundle carries exactly one GPL notice | counted notices before/after the strip in `build-exe.js` |
@@ -44,7 +44,7 @@ set are *unverified* — this document is mostly about telling those two apart h
 
 ```bash
 node --version          # need 18+; 22+ unlocks node:sqlite (see "RM-07" below)
-npm test                # 33 tests, no dependencies, <1s
+npm test                # dependency-free, <1s — every test should pass
 npm run build           # the unverified one — SEA + postject + dist/
 ```
 
