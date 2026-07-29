@@ -15,7 +15,8 @@
     "mcp": "node server.js",
     "panel": "node panel.js",
     "seed": "node build-demo-seed.js",
-    "inspect": "node inspect_sidecar.js"
+    "inspect": "node inspect_sidecar.js",
+    "eval": "node eval/run.js"
   },
   "repository": {
     "type": "git",

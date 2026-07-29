@@ -1,0 +1,32 @@
+{
+  "generated": "2026-07-29T23:04:58.986Z",
+  "passed": 16,
+  "total": 25,
+  "cases": {
+    "basic-name": true,
+    "basic-work": true,
+    "basic-pref": true,
+    "constraint-near [field:off]": true,
+    "constraint-near [field:on]": true,
+    "constraint-far-sparse [field:off]": true,
+    "constraint-far-sparse [field:on]": true,
+    "constraint-far-rich [field:off]": true,
+    "constraint-far-rich [field:on]": true,
+    "constraint-crowded [field:off]": true,
+    "constraint-crowded [field:on]": true,
+    "contra-job": false,
+    "contra-city": false,
+    "noise-schedule [field:off]": true,
+    "noise-schedule [field:on]": false,
+    "noise-homonym [field:off]": true,
+    "noise-homonym [field:on]": true,
+    "field-rescue [field:off]": false,
+    "field-rescue [field:on]": false,
+    "field-rescue-veg [field:off]": false,
+    "field-rescue-veg [field:on]": false,
+    "field-rescue-heights [field:off]": false,
+    "field-rescue-heights [field:on]": false,
+    "regress-direct [field:off]": true,
+    "regress-direct [field:on]": true
+  }
+}
