@@ -86,6 +86,35 @@ is needed.
    "note":"Similarity may be fine while the top-k budget is not. Isolates crowding from matching."}}
 ```
 
+### The cases above are all one-shot — that is a flaw
+
+Every case so far issues a query once and scores the result. But recall is **not a static
+function**: `reinforceRecall` strengthens an edge each time memories co-surface, and that
+bonus is added *before* the `minSim` gate. A constraint that misses on query 1 may hit on
+query 5 purely because the association has been reinforced. **A one-shot harness cannot see
+that, and will systematically undervalue the associative field.**
+
+So constraint cases need a repeated form:
+
+```jsonl
+{"id":"constraint-learning","kind":"constraint","field":true,
+ "writes":["I'm diabetic - keep sugar out of any recipe",
+           "I make lemon bars for the office"],
+ "repeat":[{"query":"dessert ideas for the office"},
+           {"query":"what should I bake this weekend"},
+           {"query":"dessert ideas for the office"},
+           {"query":"what should I bring to the potluck on Friday"}],
+ "expect":{"contains_by_turn":[false,null,null,true],
+   "note":"Turn 1 may miss (Hebbian weight is 0 - pure cosine). Turn 4 is the distant query that should now land BECAUSE turns 1-3 reinforced the edge. Passing turn 4 while turn 1 misses is the signal we want."}}
+```
+
+Report `first_hit_turn` alongside pass/fail. **"Missed at first, learned by turn 4" is a
+success for this architecture, and a one-shot metric would score it as a failure.**
+
+Run every constraint case twice — `field: false` and `field: true` — and report both. The gap
+between them *is* the associative field's measured value, which is the number this project
+most needs and has never had.
+
 ### Two mechanisms, easy to confuse
 
 There are *two* separate things that could carry `potluck → food → sweets → diabetic`, and the
@@ -112,6 +141,8 @@ through similarity. But that's a prediction, not a measurement.
 | `constraint-far-sparse` passes | The embedding carries the whole chain unaided — `RM-08`'s domain machinery is mostly redundant for retrieval |
 | `constraint-far-rich` passes but `-sparse` fails | The associative field is doing real, measurable work — the strongest evidence yet for the project's central bet |
 | `constraint-crowded` fails while the others pass | The problem was never similarity; it's the top-k budget. Fix with a reserved slot, not a better domain model |
+| `constraint-learning` hits by turn 4 having missed turn 1 | **The Hebbian loop works.** Retrieval improves with use, exactly as designed — and no static analysis of cosine would ever have shown it |
+| Any case passes with `field: true` and fails with `field: false` | Direct measurement of what the associative field is worth. This is the project's central claim, currently untested |
 
 That third row is worth the whole harness on its own: it's the first test that would show the
 Hebbian/associative substrate earning its keep against a plain vector store, which is the one

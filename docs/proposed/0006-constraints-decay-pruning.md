@@ -19,41 +19,73 @@ clear the gate. The same draft then asserted two paragraphs later that "the subs
 places these near each other," which contradicts the claim outright. **Treat the near-miss
 case as unmeasured until `eval/constraints` says otherwise** (see `RM-00`).
 
-**And a second correction, because the first fix didn't go far enough.** A revision then kept
-"semantic distance" as the leading argument and merely appended a caveat to it. That was still
-wrong-headed: if the chain `potluck → food → sweets → diabetic` is already in the embedding —
-and it very likely is, since the model was trained on text where those co-occur constantly —
-then distance isn't the problem at all, and it should not be leading anything.
+**Then a second correction, and then a third — this section has now been wrong three times,
+each time by analysing retrieval as if it were a static function of cosine.**
 
-Reordered by what actually survives, strongest first:
+The second draft demoted semantic distance but promoted **top-k crowding** in its place,
+arguing a constraint could score above the gate and still lose all five slots, and that better
+embeddings would make that *worse* by surfacing more competitors.
 
-1. **Top-k crowding.** *This is the real argument, and it holds no matter how good the
-   embedding is.* A constraint can score well above the gate and still be squeezed out: it
-   competes for `k=5` slots against memories that match the phrasing *more* directly. Ask for
-   a dessert recipe with 500 memories stored and the top five may all be recipes, with the
-   constraint at rank 8. **Similarity was never the failure — the budget was.** Better
-   embeddings make this *worse*, not better, because they surface more strong near-matches to
-   compete with.
-2. **Recall has to fire at all.** Surfacing depends on the model choosing to call
-   `recall_memory` in that turn. No amount of retrieval quality helps if it doesn't. Also
-   independent of the embedding.
-3. **Semantic distance — possible, unproven, and probably smaller than assumed.** There may
-   be queries genuinely too far to reach ("we're celebrating Friday"), but every concrete
-   example anyone has produced so far dissolved on inspection. `constraint-far-sparse` in
-   [`0007`](0007-eval-harness.md) exists to find a real one. Until it does, **treat this as
-   speculative and do not build for it.**
+That is also wrong, and this time the counter-evidence is in the codebase. Read
+`server.js: recallMemory()`:
 
-### What that costs this design
+```js
+const edges = field.buildEdges(mems, { k: 2, minSim: 0.55, bonus });
+const rel   = field.neighborhood(edges, ranked.map(m => m.id), { hops: 1, max: 4 });
+if (rel.length) out += "\n\nRelated:\n" + ...
+L.reinforceRecall(ranked.map(m => m.id), rel.map(e => e.id));
+```
 
-Non-trivially: **most of it.** If crowding is the whole problem, the fix is a **reserved slot**
-— hold one of the `k` results for the highest-scoring constraint — and the domain-probe
-machinery in Part 1 below is unnecessary. That's roughly ten lines instead of a subsystem.
+Three things follow, and together they dismantle the crowding argument:
 
-The `constraintDomain()` / `applicableConstraints()` design is kept below because it is the
-right answer *if* `constraint-far-sparse` fails. **Build the reserved slot first, measure,
-and only build the domain model if the measurement demands it.** The 2-hop domain remains the
-tool for the `chewtoy → heartworm → walk → diabetes → sugar` case, where each link is close
-but the endpoints are far — if that case turns out to be real.
+1. **`Related:` is a separate channel.** Up to four more memories, reached by *association*
+   from whatever did match. They do not compete for the five cosine slots. A constraint
+   crowded out of the ranked list is still reachable — the effective budget is nine, not five.
+2. **The Hebbian bonus is added before the gate.** `bonus(a,b)` from `ledger.js` is
+   `0.3·tanh(w)`, applied inside `buildEdges` *before* `minSim` is checked. A learned
+   association can lift a weak-cosine edge **over** the gate. `field.js` says so in its own
+   docstring: "lets a learned association lift a weak-cosine edge over the gate without
+   erasing semantics."
+3. **It compounds.** `reinforceRecall` strengthens the edge every time the constraint
+   co-surfaces. So the association gets *easier* to trigger the more it is used — the exact
+   opposite of the "better embeddings crowd it out" claim, and the whole reason the Hebbian
+   layer exists.
+
+**The mechanism this document proposed building already exists and already learns.** A recipe
+query pulls recipe memories by cosine; the graph reaches the constraint from them; surfacing it
+reinforces that edge; next time it fires more readily, and eventually clears the gate for
+queries that started out too distant. That is precisely the "matching gets stronger with use"
+behaviour the project was built around, and three drafts of this section reasoned as though it
+weren't there.
+
+### What is actually missing
+
+Much less than any previous draft claimed:
+
+1. **The field is off by default.** None of the above happens for a typical user. This is
+   almost certainly worth more than every feature specified below, and it costs nothing to
+   change once `RM-00` validates it. *(Tracked as a known limitation in the changelog.)*
+2. **Cold start.** On the first relevant query the Hebbian weight is zero, so the edge is pure
+   cosine. The loop can't reinforce an association that has never once fired.
+3. **One hop, not two.** `neighborhood(..., { hops: 1 })` reaches constraints adjacent to a
+   match. The `chewtoy → heartworm → walk → diabetes → sugar` chain needs two, and each hop
+   also has its own `max: 4` budget.
+4. **The bonus is capped at 0.3** — deliberately, so learning can never swamp semantics. Sound
+   design, but it means association alone cannot rescue an arbitrarily weak cosine.
+
+Only (2) and (3) are code, and both are small: seed constraint edges at write time so the loop
+has something to reinforce, and allow a second hop for `kind: "constraint"`. Neither needs a
+domain model.
+
+### What survives of the design below
+
+The **reserved slot** is worth keeping for cold start — it's ten lines and it makes the first
+firing happen, which is what the Hebbian loop needs in order to start compounding.
+
+The `constraintDomain()` / `applicableConstraints()` machinery is **probably redundant**: it
+reimplements, statically, what `field.js` + `ledger.js` already do dynamically and better.
+It stays below only as the fallback if `constraint-far-sparse` fails *and* the two small fixes
+above don't close the gap. **Measure before building any of it.**
 
 ### 2. Everything is equally permanent
 
