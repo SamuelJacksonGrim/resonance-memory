@@ -61,6 +61,24 @@ in the `resonance-memory-stack` repo. The load-bearing ones:
 - **Embed once at save; server owns all metadata; a `Store` abstraction sits behind the verbs**
   so the backend (JSONL now, Lantern later) can be swapped without changing the MCP API.
 
+## Where the work is planned
+
+| Document | What |
+|---|---|
+| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Phased plan and the reasoning behind the ordering |
+| [`docs/BACKLOG.md`](docs/BACKLOG.md) | Itemized work (`RM-00` … `RM-20`) with acceptance criteria |
+| [`docs/COMPETITIVE-ANALYSIS.md`](docs/COMPETITIVE-ANALYSIS.md) | Mem0 / Zep / Letta capability + pricing landscape, and our gaps |
+| [`docs/proposed/`](docs/proposed/) | RFC-style designs with code and pseudocode |
+
+Two things in there that a contributor should know before touching the code:
+
+- **`proposed/0003` proposes amending the "ranking = cosine only" invariant** (hybrid
+  retrieval). It ships flag-off and is promoted only on a measured A/B win. Don't flip a
+  ranking default without that measurement.
+- **`proposed/0005` documents a latent bug:** `applyRecall()` rewrites the *entire* store file
+  on every recall (`server.js:159`), which is a stall and a power-failure data-loss window
+  once a store gets large.
+
 ## Cross-repo plan
 
 This is **Phase 1** of the Resonance memory stack. The portable work-order (roadmap +
