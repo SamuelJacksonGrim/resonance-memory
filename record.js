@@ -202,6 +202,17 @@ class AccessLog {
 
   get(id) { return this.counts.get(String(id)) || { n: 0, last: null }; }
 
+  /*
+   * Called after the store has been rewritten with these counts already folded
+   * into the records. The store file is now the authority, so the sidecar must
+   * drop them - otherwise the next read adds them a SECOND time and the count
+   * doubles on every mutation. (This is exactly what it did before; see the
+   * regression tests in test.js.)
+   */
+  consolidate() {
+    if (this.counts.size) { this.counts.clear(); this.dirty = true; }
+  }
+
   /* Fold sidecar counts onto records read from the main store. The stored
    * access_count (from older builds, before the sidecar) is the baseline. */
   apply(records) {

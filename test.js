@@ -275,6 +275,53 @@ test("a corrupt line is skipped, not fatal", () => {
   assert.strictEqual(s.all().length, 2, "bad line skipped, good ones survive");
 });
 
+// --- regressions for the double-count bug (found by adversarial audit) ---------
+// all() folds sidecar counts into records; _writeAll then persisted those folded
+// values while the sidecar kept its own copy, so the next read added them again.
+// Two recalls + an edit reported 4, then 6, then 8...
+test("access_count does not double after an edit", () => {
+  const s = freshStore();
+  s.add(normalize({ id: 1, text: "x" }));
+  s.applyRecall([1], new Map());
+  s.applyRecall([1], new Map());
+  assert.strictEqual(s.get(1).access_count, 2, "two recalls");
+  s.update(1, { text: "edited" });
+  assert.strictEqual(s.get(1).access_count, 2, "an edit must not inflate the count");
+  s.update(1, { text: "edited again" });
+  assert.strictEqual(s.get(1).access_count, 2, "and must not compound");
+});
+
+test("access_count does not double after vacuum", () => {
+  const s = freshStore();
+  s.add(normalize({ id: 1, text: "keep" }));
+  s.add(normalize({ id: 2, text: "gone", deleted: true }));
+  s.applyRecall([1], new Map());
+  s.applyRecall([1], new Map());
+  s.applyRecall([1], new Map());
+  assert.strictEqual(s.get(1).access_count, 3);
+  s.vacuum();
+  assert.strictEqual(s.get(1).access_count, 3, "vacuum must not inflate the count");
+});
+
+test("counts survive a rewrite (consolidated into the store, not lost)", () => {
+  const s = freshStore();
+  s.add(normalize({ id: 1, text: "x" }));
+  s.applyRecall([1], new Map());
+  s.update(1, { text: "edited" });
+  // reopen from disk: the total must have been persisted, not dropped with the sidecar
+  const reopened = new JsonlStore(s.file);
+  assert.strictEqual(reopened.get(1).access_count, 1, "consolidated into the store file");
+});
+
+test("recall after a rewrite keeps counting from the consolidated total", () => {
+  const s = freshStore();
+  s.add(normalize({ id: 1, text: "x" }));
+  s.applyRecall([1], new Map());
+  s.update(1, { text: "edited" });          // consolidate -> store has 1, sidecar empty
+  s.applyRecall([1], new Map());            // sidecar -> 1
+  assert.strictEqual(s.get(1).access_count, 2, "1 consolidated + 1 new");
+});
+
 test("nextId stays unique under rapid saves (same-millisecond collisions)", () => {
   // Date.now() alone would collide; nextId falls back to max+1 within a tick.
   const s = freshStore();
