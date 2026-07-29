@@ -58,8 +58,9 @@ Then:
 Done. Your AI can now save and recall memories on its own.
 
 Want to see what it does *before* connecting anything? Click **Show demo graph** on that page —
-it draws a little constellation of example memories so you can watch how related ideas cluster
-together and link up.
+it draws a little constellation of example memories in 3D, so you can watch how related ideas
+pull together and unrelated ones drift apart, reachable only through whatever bridges them.
+Drag to rotate it; hover any dot to read the memory.
 
 ## How it works (the plain version)
 
@@ -130,7 +131,7 @@ embedding model can be swapped in — it isn't tied to one vendor.
 
 ## License
 
-GPL-3.0. Use it, fork it, build on it — just keep your version open too.
+GPL-3.0 — see [`LICENSE`](LICENSE). Use it, fork it, build on it — just keep your version open too.
 
 ---
 
