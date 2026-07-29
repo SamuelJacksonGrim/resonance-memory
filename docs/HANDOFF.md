@@ -1,5 +1,9 @@
 # Handoff — local build and verification
 
+> **Just need something to paste to an agent?** Use
+> [`HANDOFF-BRIEF.md`](HANDOFF-BRIEF.md) — the short, self-contained version. This document
+> is the detailed reference behind it.
+
 For whoever picks this up on Samuel's machine with a real GPU and admin rights. Everything
 below was written in a sandbox **without** a GPU, without LM Studio, and without the ability
 to run the full SEA build. That means a specific set of things are *verified* and a specific
