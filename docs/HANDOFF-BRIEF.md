@@ -54,6 +54,23 @@ npm run panel     # 127.0.0.1:9090
 The temporal behaviour is worth exercising by hand — `docs/HANDOFF.md` has a copy-paste
 snippet for marking a memory superseded, since automatic detection (`RM-03`) isn't built yet.
 
+## Trust the code more than the prose
+
+`BUG-006` and `BUG-007` in [`BUGS.md`](BUGS.md) are worth two minutes before you start:
+
+- **Six doc claims about how the system behaves were wrong** — some never checked against the
+  source, some true when written and falsified by later commits in the same branch. They were
+  audited and fixed, but by the same author who wrote them, so that audit isn't independent.
+  **If a doc asserts what the code does, open the file.**
+- **One fix introduced a worse bug than it solved.** The `BUG-002` sidecar work made
+  `access_count` double on every mutation. It was caught by adversarial review, not by the
+  test suite — because the tests were written to confirm the fix rather than attack it. Both
+  "recall doesn't rewrite the store" and "sidecar round-trips" passed the whole time; nothing
+  tested *recall followed by a mutation*.
+
+The code is tested and independently verifiable in under a minute (below). The prose is the
+part that earned suspicion.
+
 ## Already verified — don't redo
 
 The test suite passes; every file parses; the esbuild bundle builds and runs as an MCP server with
