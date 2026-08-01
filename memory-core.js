@@ -56,7 +56,10 @@ const FIELD_MUTUAL = !["0", "false", "no"].includes(String(process.env.RESONANCE
 // min cosine for a constraint<->seed link; 0.55 (stage 1) forms diabetic/veg bridges,
 // 0.45 (stage 2) reaches the heights<->rooftop isolate (0.472). Env-overridable to A/B.
 const K_SEARCH = Number(process.env.RESONANCE_FIELD_KSEARCH) || 15;
-const CONSTRAINT_GATE = process.env.RESONANCE_CONSTRAINT_GATE ? Number(process.env.RESONANCE_CONSTRAINT_GATE) : 0.55;
+// 0.45 (stage 2) is the DEFAULT: it reaches the heights<->rooftop isolate (0.472) that
+// the 0.55 edge gate misses, and on the corpus it cost zero tangent bleed. The gate only
+// governs whether a TYPED constraint finds a bridge, so it cannot loosen ordinary recall.
+const CONSTRAINT_GATE = process.env.RESONANCE_CONSTRAINT_GATE ? Number(process.env.RESONANCE_CONSTRAINT_GATE) : 0.45;
 
 function cosine(a, b) {
   if (!a || !b) return 0;
