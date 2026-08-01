@@ -277,6 +277,29 @@ This is the legibility foundation for experiment #2 (typed-constraint retrieval)
 explicit and two-dimensional: **drive ROC up (rescue the diabetic/veg/heights leaves) while holding
 TBR at 0** — and watch `+Nrel` as the leading indicator that a gate loosening is about to bleed.
 
+## Stage 1 — typed traversal (no gate change): diabetic + vegetarian rescued
+
+**Result: ROC 25% → 75% (3/4), TBR held at 0%, golden 22→23/27.** The first field-attributable
+constraint rescues in the project's history. Three mechanisms, all local, no gate drop, no LLM:
+
+1. **Server-side constraint typing at save** (`record.detectConstraint`, wired through `normalize`).
+   A lexical heuristic flags apex rules (diabetic / vegetarian / allergic / terrified / "no meat"…).
+   Measured on the corpus: **4/4 constraints flagged, 0 false positives across 131 memories.** The
+   server assigns it, never the model (small-model-safe); it only widens retrieval, so a false
+   positive is cheap.
+2. **Decoupled search vs return radius** (`K_SEARCH=15`, `return_k=5`). The model still sees 5, but
+   the field's constraint walk seeds from the top 15 — so the diabetic bridge "lemon bars" (rank 7)
+   becomes a seed.
+3. **Constraint-restricted bidirectional 1-hop** (`field.reachableConstraints`). From the wide seed
+   pool, surface any *typed constraint* that is either (a) in the pool but outside the returned top-k
+   (vegetarian, rank 10 — it fell in the gap between return_k and k_search), or (b) reachable via a
+   bridge in the pool (diabetic, rank 21 → via lemon bars, rank 7). **Restricted to constraints**, so
+   the wider radius cannot re-drag a non-constraint hub — the noise corpora have no constraint to
+   surface, so TBR is protected *by construction*, and indeed `+Nrel` on the noise cases was unchanged.
+
+`heights` still fails: its only bridge (`rooftop`, cos 0.472) is below the 0.55 edge gate, so it forms
+no association at all. That is Stage 2's target — a constraint-only gate drop to ~0.45.
+
 ### Corrected geometry that sets up experiment #2 (measured, not assumed)
 External review initially conceded `heights` to a save-time NLI model, believing the `heights↔rooftop`
 edge "does not exist (cosine 0.395)." That 0.395 is `heights`-to-**query**; the actual **pair** cosine

@@ -48,6 +48,16 @@ const {
 // DEFAULT topology. Set RESONANCE_FIELD_MUTUAL=0 to fall back to directional kNN.
 const FIELD_MUTUAL = !["0", "false", "no"].includes(String(process.env.RESONANCE_FIELD_MUTUAL || "").toLowerCase());
 
+// Constraint rescue (RM-00 field experiment #2). Decouple the internal SEARCH radius
+// from the RETURN radius: cosine-rank all memories, hand the model the top RETURN_K,
+// but let the field's constraint walk seed from the top K_SEARCH - so a bridge like
+// "lemon bars" (rank 7) becomes a seed and can route to the constraint behind it
+// ("diabetic", rank 21) that the model never sees directly. CONSTRAINT_GATE is the
+// min cosine for a constraint<->seed link; 0.55 (stage 1) forms diabetic/veg bridges,
+// 0.45 (stage 2) reaches the heights<->rooftop isolate (0.472). Env-overridable to A/B.
+const K_SEARCH = Number(process.env.RESONANCE_FIELD_KSEARCH) || 15;
+const CONSTRAINT_GATE = process.env.RESONANCE_CONSTRAINT_GATE ? Number(process.env.RESONANCE_CONSTRAINT_GATE) : 0.55;
+
 function cosine(a, b) {
   if (!a || !b) return 0;
   let dot = 0, na = 0, nb = 0;
@@ -124,7 +134,8 @@ function createCore({ store, embed, fieldEnabled = () => false, getLedger }) {
         : "No memories saved yet.";
     }
 
-    let ranked;
+    let ranked;               // the top-k the model actually sees (return radius)
+    let seedPool = [];        // wider top-K_SEARCH ids: the field's constraint walk seeds
     try {
       // Embed the query plus only the records missing a stored vector (legacy or a
       // save-time endpoint outage). Steady state: nothing missing -> one embed call.
@@ -134,16 +145,19 @@ function createCore({ store, embed, fieldEnabled = () => false, getLedger }) {
       const fresh = new Map();
       vectorless.forEach((m, i) => fresh.set(String(m.id), vecs[i + 1]));
 
-      ranked = mems
+      const scored = mems
         .map((m) => ({ m, s: cosine(qv, m.embedding || fresh.get(String(m.id))) }))
-        .sort((a, b) => b.s - a.s).slice(0, k).map((x) => x.m);
+        .sort((a, b) => b.s - a.s);
+      ranked = scored.slice(0, k).map((x) => x.m);
+      seedPool = scored.slice(0, K_SEARCH).map((x) => x.m.id);
 
       store.applyRecall(ranked.map((m) => m.id), fresh); // backfill + bump in one write
     } catch {
-      ranked = mems
+      const scored = mems
         .map((m) => ({ m, s: keywordScore(query, m.text) }))
-        .sort((a, b) => b.s - a.s).slice(0, k)
-        .filter((x, i) => x.s > 0 || i === 0).map((x) => x.m);
+        .sort((a, b) => b.s - a.s);
+      ranked = scored.slice(0, k).filter((x, i) => x.s > 0 || i === 0).map((x) => x.m);
+      seedPool = scored.slice(0, K_SEARCH).map((x) => x.m.id);
       store.applyRecall(ranked.map((m) => m.id), null); // bump access even on fallback
     }
 
@@ -158,13 +172,26 @@ function createCore({ store, embed, fieldEnabled = () => false, getLedger }) {
         const L = getLedger();
         const bonus = (a, b) => L.bonus(a, b);
         const edges = field.buildEdges(mems, { k: 2, minSim: 0.55, bonus, mutual: FIELD_MUTUAL });
+        // General neighborhood: forward one hop from the RETURNED seeds (unchanged).
         const rel = field.neighborhood(edges, ranked.map((m) => m.id), { hops: 1, max: 4 });
-        if (rel.length) {
+        // Constraint rescue: apex rules reachable from the WIDER seed pool. Restricted
+        // to typed constraints so the expanded radius can't re-drag non-constraint hubs.
+        const cres = field.reachableConstraints(mems, seedPool, { gate: CONSTRAINT_GATE, k: 2, max: 4, exclude: ranked.map((m) => m.id) });
+        // Merge (constraints first), drop anything already returned or duplicated.
+        const seen = new Set(ranked.map((m) => String(m.id)));
+        const merged = [];
+        for (const e of [...cres, ...rel]) {
+          const key = String(e.id);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          merged.push(e);
+        }
+        if (merged.length) {
           const byId = new Map(mems.map((m) => [String(m.id), m]));
-          out += "\n\nRelated:\n" + rel.map((e) => "- [id " + e.id + "] " + byId.get(String(e.id)).text).join("\n");
+          out += "\n\nRelated:\n" + merged.map((e) => "- [id " + e.id + "] " + byId.get(String(e.id)).text).join("\n");
         }
         // Hebbian reinforcement on the returned payload, provenance-discounted.
-        L.reinforceRecall(ranked.map((m) => m.id), rel.map((e) => e.id));
+        L.reinforceRecall(ranked.map((m) => m.id), merged.map((e) => e.id));
         L.tick();
         L.save();
       } catch { /* the field is additive; never let it break recall */ }

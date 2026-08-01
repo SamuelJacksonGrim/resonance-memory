@@ -408,7 +408,7 @@ test("legacy store with no temporal fields loads as all-current", () => {
 // ------------------------------------------------- associative field topology
 section("associative field: reciprocal kNN (RM-00)");
 
-const { buildEdges } = require("./field.js");
+const { buildEdges, reachableConstraints } = require("./field.js");
 
 // Three points on a circle so the nearest-neighbor graph is deliberately one-sided:
 //   A(0deg) - B(20deg) - C(35deg).  Gaps: A-B=20, B-C=15, A-C=35.
@@ -441,6 +441,42 @@ test("mutual kNN never keeps an edge directional kNN dropped (it only prunes)", 
     const dset = new Set(dir.get(id).map((x) => String(x.id)));
     for (const e of mut.get(id)) assert.ok(dset.has(String(e.id)), "mutual is a subset of directional");
   }
+});
+
+// --- constraint rescue (RM-00 experiment #2) --------------------------------
+// C is the constraint. B is its bridge (cos 0.60). D is a far node (cos 0.40).
+const C = { id: "C", is_constraint: true, embedding: [1, 0] };
+const B = { id: "B", is_constraint: false, embedding: [0.6, 0.8] };       // cos(C,B)=0.60
+const D = { id: "D", is_constraint: false, embedding: [0.4, Math.sqrt(1 - 0.16)] }; // cos(C,D)=0.40
+const recs = [C, B, D];
+const ids = (out) => out.map((e) => String(e.id));
+
+test("reachableConstraints: rescues a constraint via a bridge in the seed pool", () => {
+  const out = reachableConstraints(recs, ["B"], { gate: 0.55, exclude: [] });
+  assert.deepStrictEqual(ids(out), ["C"], "C reachable because its bridge B is a seed");
+});
+
+test("reachableConstraints: surfaces a constraint that is itself an unreturned seed", () => {
+  // the vegetarian bug: C ranked into the wider pool but not the returned top-k.
+  const out = reachableConstraints(recs, ["C", "B"], { gate: 0.55, exclude: [] });
+  assert.ok(ids(out).includes("C"), "C in the pool but not returned must still surface");
+});
+
+test("reachableConstraints: never re-surfaces an already-RETURNED constraint", () => {
+  const out = reachableConstraints(recs, ["C", "B"], { gate: 0.55, exclude: ["C"] });
+  assert.deepStrictEqual(ids(out), [], "C is already shown to the model; don't repeat it");
+});
+
+test("reachableConstraints: only constraints are ever surfaced", () => {
+  const out = reachableConstraints(recs, ["C", "D"], { gate: 0.35, exclude: [] });
+  assert.ok(!ids(out).includes("B") && !ids(out).includes("D"), "non-constraints never appended");
+});
+
+test("reachableConstraints: the gate governs whether a bridge counts", () => {
+  // C's only seed-neighbor is D at cos 0.40. Above a 0.55 gate D is not a bridge.
+  assert.deepStrictEqual(reachableConstraints([C, D], ["D"], { gate: 0.55, exclude: [] }), []);
+  // Drop the gate to 0.35 and the same link now rescues C (the stage-2 mechanic).
+  assert.deepStrictEqual(ids(reachableConstraints([C, D], ["D"], { gate: 0.35, exclude: [] })), ["C"]);
 });
 
 // ------------------------------------------------- ROC/TBR field signals (RM-00)

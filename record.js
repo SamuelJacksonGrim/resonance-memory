@@ -128,12 +128,33 @@ function normalize(r) {
     // anything written before provenance existed - the user's client said it.
     source: r.source || "user_stated",
 
+    // constraint typing (RM-00 field experiment #2). Computed from text if not
+    // explicitly set, so every record - including ones written before this existed -
+    // is typed on read with no migration step.
+    is_constraint: typeof r.is_constraint === "boolean" ? r.is_constraint : detectConstraint(r.text),
+
     deleted: !!r.deleted,
   };
 }
 
 /* Currently-true: not deleted, not superseded. This is what recall answers from. */
 function isCurrent(r) { return !r.deleted && !r.valid_to; }
+
+/*
+ * Constraint / preference typing (RM-00 field experiment #2). A constraint is an
+ * "apex rule" the assistant must honor even when the user did not restate it ("I'm
+ * diabetic", "I'm vegetarian", "terrified of heights", "allergic to nuts"). These
+ * are exactly the memories that sit at the BOTTOM of cosine ranking for the query
+ * they should gate (a rule rarely restates its trigger), so they need a privileged
+ * retrieval policy. The SERVER assigns this type from text at save (never the model,
+ * per the small-model-safety invariant); it only widens retrieval, never deletes, so
+ * a false positive is cheap. Deliberately a lexical heuristic for now; a tiny local
+ * classifier is the upgrade path if recall/precision of the TYPE (not the edges)
+ * ever becomes the bottleneck.
+ */
+const CONSTRAINT_RE =
+  /\b(diabetic|vegan|vegetarian|pescatarian|celiac|coeliac|lactose|gluten|allerg(?:ic|y|ies)|intoleran(?:t|ce)|terrified|afraid|scared|phobi[ac]|acrophobi|kosher|halal|sober|teetotal)\b|\bno (?:sugar|meat|dairy|nuts?|gluten|shellfish|alcohol)\b|\b(?:can'?t|cannot|never) (?:eat|have|drink|stand|do)\b/i;
+function detectConstraint(text) { return CONSTRAINT_RE.test(String(text || "")); }
 
 /* Does this query explicitly ask about the past? Only then do superseded memories
  * surface. Kept deliberately narrow - a false positive here resurfaces stale facts,
@@ -276,5 +297,6 @@ module.exports = {
   writeFileDurable, appendLineDurable,
   normalize, isCurrent, isHistoricalQuery, supersedePatches,
   detectSupersession, hasSupersedeCue, SUPERSEDE_CUE_RE,
+  detectConstraint, CONSTRAINT_RE,
   AccessLog, HISTORICAL_RE,
 };
