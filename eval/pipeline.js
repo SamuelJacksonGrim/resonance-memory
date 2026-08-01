@@ -27,7 +27,7 @@
 
 const field = require("../field.js");
 const { Ledger } = require("../ledger.js");
-const { normalize, isHistoricalQuery } = require("../record.js");
+const { normalize, isHistoricalQuery, detectSupersession, supersedePatches } = require("../record.js");
 
 // identical to server.js's cosine
 function cosine(a, b) {
@@ -49,10 +49,21 @@ function createMemory({ store, embed, fieldEnabled = false, ledgerPath }) {
     if (same) { store.update(same.id, { last_confirmed: now }); return "Already remembered."; }
     let embedding = null;
     try { embedding = (await embed([content]))[0]; } catch { embedding = null; }
-    store.add(normalize({
+    const rec = normalize({
       id: store.nextId(), created: now, modified: now, text: content,
       embedding, valid_from: now, valid_to: null, last_confirmed: now,
-    }));
+    });
+    // RM-03: mirror server.js exactly - retire the most-similar current memory when
+    // the new one carries an explicit correction cue. (Shared detector in record.js.)
+    const superseded = detectSupersession(rec, store.current(), cosine);
+    if (superseded) {
+      const p = supersedePatches(superseded, rec, now);
+      Object.assign(rec, p.new);
+      store.add(rec);
+      store.update(superseded.id, p.old);
+      return "Saved (superseded " + superseded.id + ").";
+    }
+    store.add(rec);
     return "Saved.";
   }
 

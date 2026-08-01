@@ -94,7 +94,8 @@ misaligned topology above: a fast learner on a bad map still arrives in the wron
 ### 4. Documented gaps (not regressions — improvements when closed)
 - **Contradiction detection (`contra-job`, `contra-city`): fails.** Nothing wires supersession
   into the save verb — `supersedePatches` is defined and unit-tested but called by no verb, so
-  contradictory facts both store as current. This is `RM-03`.
+  contradictory facts both store as current. This is `RM-03`. **→ Now closed; see the RM-03
+  addendum below.**
 
 ## Decisions taken
 
@@ -114,3 +115,83 @@ Twelve hours ago the position was *"we believe this associative substrate is wha
 Resonance different."* It is now *"we built an instrument capable of falsifying that hypothesis,
 and the first serious experiment showed the dynamics work but the current topology does not
 produce the desired retrieval behavior."* That is the difference between a belief and a result.
+
+---
+
+# RM-03 — contradiction detection (supersession wired into `save`)
+
+**Date:** 2026-08-01 · **Substrate baseline:** commit `cf70448` (RM-00) · same embedder and
+offline harness. **Scorecard: 20 / 27** — `contra-job` and `contra-city` flipped **fail → pass**
+(RM-00's documented gap #4, now closed), plus two new precision guards. No RM-00 case moved.
+
+## What was broken
+
+`supersedePatches` (record.js) and `updateMany` (store.js) both existed, were unit-tested, and
+were **called by nothing**. So "I work at Acme" then "Actually I work at Globex now" stored *two*
+current facts, and recall surfaced the stale one. The missing piece was never persistence — it
+was the **decision**: *when are two memories a correction rather than two separate truths?*
+
+## The measurement that shaped the design
+
+Before writing a line of detection, the pairwise cosines (offline cache):
+
+```
+0.5703   "I work at Acme"        <> "Actually I work at Globex now"   SHOULD supersede
+0.5599   "I live in Austin"      <> "I moved to Denver last month"    SHOULD supersede
+0.5124   "Actually...Globex now" <> "I live in Austin"                MUST NOT (different slot)
+0.4736   "I work at Acme"        <> "I live in Austin"
+```
+
+> **On this embedder, a same-attribute update and a different-attribute statement in the same
+> first-person voice are only ~0.05 cosine apart.** Cosine alone cannot tell a correction from a
+> coincidental resemblance.
+
+A similarity-threshold-only detector would eventually retire an unrelated memory (the 0.51 case
+is a *new job*, not a move — it must not delete "I live in Austin"). Worse, two genuinely
+additive facts — "I have a dog named Rex" / "I have a cat named Whiskers" — are geometrically
+*closer* (shared "I have a … named" frame) than the real updates, so cosine-only would delete
+the dog.
+
+## The design (cue-gated, argmax-targeted)
+
+Supersession fires only when **all** hold (`detectSupersession`, record.js — pure, unit-tested):
+
+1. the new memory carries an explicit **correction cue** (`actually`, `now`, `moved`, `no longer`,
+   `switched`, `instead`, …) — *not* history cues like "used to", which surface the old fact;
+2. it is above a **similarity floor** (0.535 — measured to sit between the 0.51 cross-slot pair
+   and the 0.56 real updates); and
+3. it retires only the **single most-similar** current memory (argmax), never a set.
+
+**The cue gate carries the precision; cosine only picks which memory the cue targets.** This is
+the honest boundary: RM-03 detects *user-signalled* corrections, not silent value swaps ("I work
+at Globex" with no cue, following "I work at Acme", is **not** caught — documented, not hidden).
+
+## What the guards prove
+
+```
+contra-job          Globex retires Acme                     PASS  (cue + 0.57)
+contra-city         Denver retires Austin                   PASS  (cue + 0.56)
+contra-wrongslot    new job does NOT retire the city        PASS  (cue, but 0.51 < floor)
+contra-additive-pets  cat does NOT retire the dog           PASS  (no cue -> both kept)
+```
+
+The last two are the point: they are the cases a naive "high similarity → supersede" gets
+**wrong**, and they lock the precision boundary into the golden.
+
+## Known boundaries (measured, not aspirational)
+
+- **The 0.535 floor is empirically tuned** to this embedder on short first-person statements,
+  where the same-slot/different-slot margin is only ~0.05. It is fragile *by nature of the
+  geometry*; the cue gate, not the floor, is what makes the mechanism safe.
+- **Supersession is order-dependent** — it only retires memories already present when the
+  correction is saved. (This is why `field-rescue`'s "The Friday standup moved to 3pm" line,
+  which carries the "moved" cue, does **not** disturb that corpus: at save time its only
+  neighbors score 0.43, below the floor.)
+- **Silent value swaps are out of scope** — no cue, no supersession, by design.
+
+## Decision
+
+Supersession is **on by default** in the `save` verb (unlike the field, which stays parked): it
+is cue-gated and argmax-limited, so its worst case is retiring nothing, and the guard cases prove
+it does not delete additive or cross-slot facts. The RM-04 bi-temporal model (`valid_to`,
+`superseded_by`, `supersedes`, `revision`) now has its first live writer.
