@@ -115,4 +115,56 @@ function neighborhood(edges, seedIds, opts = {}) {
   return out.slice(0, max);
 }
 
-module.exports = { cosine, buildEdges, neighborhood };
+/*
+ * Constraint rescue (RM-00 field experiment #2). Find typed-constraint memories
+ * reachable from the (expanded) cosine seed pool within one BIDIRECTIONAL hop, so an
+ * apex rule that sits far down cosine ("I'm diabetic", rank 21) still surfaces when a
+ * bridge it associates with ("lemon bars", rank 7) made it into the seed pool.
+ *
+ * Why this is a separate path, not just wider neighborhood(): it only ever returns
+ * CONSTRAINTS. The expanded seed radius would otherwise re-drag non-constraint hubs
+ * (the mechanic FP) back in; restricting the aggressive reach to typed constraints
+ * means a corpus with no constraints (the noise cases) gets nothing new — TBR is
+ * protected by construction, not by luck.
+ *
+ *   records: normalized memories (must carry is_constraint + embedding)
+ *   seedIds: the internal cosine seed pool (k_search wide, e.g. 15)
+ *   opts.exclude: ids ALREADY returned to the model (skip these — no double-surfacing).
+ *              NOTE: this is the RETURNED set (top return_k), NOT the seed pool. A
+ *              constraint that ranked into the wider pool but fell outside the returned
+ *              top-k is precisely a rescue target (vegetarian, rank 10 with return_k=5).
+ *   opts.gate: min cosine for a constraint<->seed association (0.55 default; 0.45 in
+ *              stage 2 to reach sub-gate isolates like heights<->rooftop = 0.472)
+ *   opts.k:    neighbors examined per constraint (default 2, matches buildEdges)
+ *   opts.max:  cap on rescued constraints
+ * Returns [{ id, sim, via }] for unreturned constraints, best first.
+ */
+function reachableConstraints(records, seedIds, opts = {}) {
+  const gate = opts.gate != null ? opts.gate : 0.55;
+  const k = opts.k || 2;
+  const max = opts.max || 4;
+  const seeds = new Set(seedIds.map(String));
+  const exclude = new Set((opts.exclude || []).map(String));
+  const withVec = records.filter((r) => Array.isArray(r.embedding));
+  const out = [];
+  for (const c of withVec) {
+    if (!c.is_constraint || exclude.has(String(c.id))) continue;
+    // (a) the constraint itself ranked into the wider pool but not the returned set:
+    // it's already query-relevant, surface it directly.
+    if (seeds.has(String(c.id))) { out.push({ id: c.id, sim: 1, via: "seed" }); continue; }
+    // (b) bridge rescue: the constraint's own top-k associations above the gate...
+    const nbrs = withVec
+      .filter((b) => String(b.id) !== String(c.id))
+      .map((b) => ({ id: b.id, sim: cosine(c.embedding, b.embedding) }))
+      .filter((x) => x.sim >= gate)
+      .sort((a, b) => b.sim - a.sim)
+      .slice(0, k);
+    // ...reachable iff one of them landed in the seed pool (bidirectional 1-hop).
+    const hit = nbrs.find((n) => seeds.has(String(n.id)));
+    if (hit) out.push({ id: c.id, sim: hit.sim, via: hit.id });
+  }
+  out.sort((a, b) => b.sim - a.sim);
+  return out.slice(0, max);
+}
+
+module.exports = { cosine, buildEdges, neighborhood, reachableConstraints };

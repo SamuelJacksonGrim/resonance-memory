@@ -1,6 +1,6 @@
 {
-  "generated": "2026-08-01T09:32:19.424Z",
-  "passed": 21,
+  "generated": "2026-08-01T10:32:52.021Z",
+  "passed": 23,
   "total": 27,
   "cases": {
     "basic-name": true,
@@ -23,9 +23,9 @@
     "noise-homonym [field:off]": true,
     "noise-homonym [field:on]": true,
     "field-rescue [field:off]": false,
-    "field-rescue [field:on]": false,
+    "field-rescue [field:on]": true,
     "field-rescue-veg [field:off]": false,
-    "field-rescue-veg [field:on]": false,
+    "field-rescue-veg [field:on]": true,
     "field-rescue-heights [field:off]": false,
     "field-rescue-heights [field:on]": false,
     "regress-direct [field:off]": true,
