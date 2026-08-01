@@ -1,6 +1,6 @@
 {
-  "generated": "2026-08-01T09:14:23.659Z",
-  "passed": 20,
+  "generated": "2026-08-01T09:32:19.424Z",
+  "passed": 21,
   "total": 27,
   "cases": {
     "basic-name": true,
@@ -19,7 +19,7 @@
     "contra-wrongslot": true,
     "contra-additive-pets": true,
     "noise-schedule [field:off]": true,
-    "noise-schedule [field:on]": false,
+    "noise-schedule [field:on]": true,
     "noise-homonym [field:off]": true,
     "noise-homonym [field:on]": true,
     "field-rescue [field:off]": false,

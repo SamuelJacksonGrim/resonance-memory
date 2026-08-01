@@ -195,3 +195,57 @@ Supersession is **on by default** in the `save` verb (unlike the field, which st
 is cue-gated and argmax-limited, so its worst case is retiring nothing, and the guard cases prove
 it does not delete additive or cross-slot facts. The RM-04 bi-temporal model (`valid_to`,
 `superseded_by`, `supersedes`, `revision`) now has its first live writer.
+
+---
+
+# RM-00 field experiment #1 — reciprocal (mutual) kNN
+
+**Date:** 2026-08-01 · same harness. **Scorecard: 20/27 → 21/27**, `noise-schedule [field:on]`
+flips **fail → pass**, no regressions. First experiment run *against* the parked field, judged by
+the golden the way RM-00 said it must be.
+
+## Hypothesis
+
+RM-00 measured the field's one concrete harm: on "when is my doctor's appointment," the field
+appended "the mechanic said the car will be ready **Thursday**" — a false positive on a shared
+token. Diagnosis: **directional** kNN edges are asymmetric. A generic node that shares a word with
+many others lands in *their* top-k and gets dragged into a seed's neighborhood, even though it
+does not rank *them* back. Hypothesis: require the association to be **reciprocal** (edge a↔b only
+if each is in the other's top-k) and the one-sided hub link disappears.
+
+## Result — a cost removed, not value added
+
+```
+                    directional kNN (RM-00)      mutual kNN (this run)
+noise-schedule on   fail  (mechanic FP)          PASS   <-- FP pruned
+field-rescue*  on   fail  (leaf stranded)        fail   (unchanged)
+field lifted        0, and BROKE 1               0, and BROKE 0
+```
+
+Mutual kNN did exactly what it was meant to and **nothing more**:
+
+- **It removed the field's only measured precision cost.** The Thursday bleed is gone; the field
+  went from **net-negative** (breaks 1, earns 0) to **net-neutral** (breaks 0, earns 0).
+- **It did not earn a single rescue.** `field-rescue`/`-veg`/`-heights` are unchanged. That is
+  expected and worth stating plainly: leaf-stranding is a **traversal-reach** problem (the leaf's
+  edge exists but the walk doesn't reach it, or never formed), not an **edge-quality** problem.
+  Reciprocity prunes bad edges; it cannot manufacture a path to an isolated leaf.
+
+So the honest headline is unchanged from RM-00: **the field still does not beat cosine — it has
+stopped *losing* to it.** The RM-00 result ("topology not validated over cosine") stands; what
+moved is that turning the field on is no longer strictly a downgrade.
+
+## Decision
+
+Mutual kNN is a **Pareto improvement** on the corpus (one case up, none down), so per the ratchet
+it becomes the **default** edge construction and the golden is re-locked at **21/27**. This is the
+bar climbing on a real gain, not the bar being lowered to manufacture a pass — the distinction the
+RM-00 discipline turns on. Escape hatch `RESONANCE_FIELD_MUTUAL=0` restores directional kNN for
+comparison. Unit tests (`test.js`, "reciprocal kNN") lock the semantics: mutual is always a subset
+of directional, and it prunes exactly the un-reciprocated edges.
+
+**What this does NOT change:** the field is still **off by default**, and the product is still not
+marketed as "learns which memories belong together." Removing a cost is not earning a keep. The
+next field experiments (activation-spreading / 2-hop-with-a-precision-guard to attack traversal
+reach; a lower gate for edge *formation* on the `heights` never-forms case) must show a real
+**fail → pass on a rescue** against this 21/27 golden.
