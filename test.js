@@ -443,6 +443,33 @@ test("mutual kNN never keeps an edge directional kNN dropped (it only prunes)", 
   }
 });
 
+// ------------------------------------------------- ROC/TBR field signals (RM-00)
+section("field signals: ROC / TBR (RM-00)");
+
+const { fieldSignals } = require("./eval/metrics.js");
+
+const relOut =
+  "1. [id 1] I'm diabetic, so no sugary desserts for me\n" +
+  "2. [id 9] The potluck is on Friday\n\n" +
+  "Related:\n- [id 2] I always bring lemon bars\n- [id 3] Someone booked the room";
+
+test("fieldSignals: rescued reflects whether the constraint surfaced", () => {
+  assert.strictEqual(fieldSignals({ expect: { contains: ["diabetic"] } }, relOut).rescued, true);
+  assert.strictEqual(fieldSignals({ expect: { contains: ["vegetarian"] } }, relOut).rescued, false);
+});
+
+test("fieldSignals: bled counts forbidden terms that leaked", () => {
+  assert.strictEqual(fieldSignals({ expect: { excludes: ["mechanic"] } }, relOut).bled, 0);
+  const bledOut = relOut + "\n- [id 4] The mechanic said Thursday";
+  assert.strictEqual(fieldSignals({ expect: { excludes: ["mechanic"] } }, bledOut).bled, 1);
+});
+
+test("fieldSignals: appended counts the field's Related nodes (tangent surface)", () => {
+  assert.strictEqual(fieldSignals({ expect: {} }, relOut).appended, 2);
+  const noRel = "1. [id 1] just a direct cosine hit, no field additions";
+  assert.strictEqual(fieldSignals({ expect: {} }, noRel).appended, 0);
+});
+
 // ------------------------------------------------------------------- report
 console.log(`\n${passed} passed, ${failed} failed`);
 try { fs.rmSync(tmpRoot, { recursive: true, force: true }); } catch { }

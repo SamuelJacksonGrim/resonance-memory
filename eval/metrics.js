@@ -54,4 +54,24 @@ function scoreRepeat(c, outputs) {
   return { pass, reasons, byTurn, first_hit_turn: idx >= 0 ? idx + 1 : null };
 }
 
-module.exports = { scoreSingle, scoreRepeat, containsAll };
+/*
+ * ROC / TBR signals for a single recall output (RM-00 field metric split).
+ *
+ * A flat pass/fail scalar weights a fatal false negative ("forgot the user is diabetic")
+ * the same as an annoying false positive ("also mentioned the mechanic"). For a memory
+ * system those are not equal, so we track them apart:
+ *   rescued  - did the constraint the field is supposed to surface actually appear? (ROC)
+ *   bled     - how many forbidden/excluded terms leaked into the output? (TBR)
+ *   appended - how many memories the field added (the "Related:" block) = tangent surface.
+ */
+function fieldSignals(c, output) {
+  const e = c.expect || {};
+  const lc = String(output || "").toLowerCase();
+  const rescued = containsAll(output, e.contains || []);
+  const bledTerms = (e.excludes || []).filter((t) => lc.includes(String(t).toLowerCase()));
+  const rel = String(output || "").split(/related:/i)[1];
+  const appended = rel ? rel.split("\n").filter((l) => /^\s*-\s*\[id/i.test(l)).length : 0;
+  return { rescued, bled: bledTerms.length, bledTerms, appended };
+}
+
+module.exports = { scoreSingle, scoreRepeat, containsAll, fieldSignals };
