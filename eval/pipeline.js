@@ -8,114 +8,27 @@
  * (at your option) any later version. See <https://www.gnu.org/licenses/>.
  */
 /*
- * eval/pipeline.js - an injectable save/recall pipeline for the RM-00 harness.
+ * eval/pipeline.js - the harness's adapter onto the shared engine.
  *
- * This is a FAITHFUL composition of the real substrate modules (store.js,
- * field.js, ledger.js, record.js), mirroring server.js's saveMemory/recallMemory
- * exactly, but with the store, embedder, and field flag INJECTED so the harness
- * can:
- *   - use an isolated temp store per case,
- *   - feed a deterministic cached embedder (offline, repeatable),
- *   - force the associative field on or off per run.
+ * This USED to be a hand-copied "faithful mirror" of server.js's save/recall. That
+ * duplication was the exact drift the RM-00 harness exists to catch, so the shared
+ * behavior now lives in ../memory-core.js and BOTH server.js and this build on it.
+ * What remains here is only the impedance match the harness needs: a boolean field
+ * flag (not a live config read) and an injected ledger path (not a fixed data dir).
  *
- * The ONLY thing here that is not shared with server.js is this ~40-line
- * orchestration. Keep it byte-faithful to server.js's recallMemory. The planned
- * follow-up (its own commit) is to extract a shared memory-core.js that both
- * server.js and this import, so they cannot drift - and THIS harness is the guard
- * that proves that extraction preserved behavior.
+ * Because save/recall are now literally the same code the server runs, the RM-00
+ * golden is a regression guard on the server itself, not on a copy of it.
  */
 
-const field = require("../field.js");
 const { Ledger } = require("../ledger.js");
-const { normalize, isHistoricalQuery, detectSupersession, supersedePatches } = require("../record.js");
-
-// identical to server.js's cosine
-function cosine(a, b) {
-  if (!a || !b) return 0;
-  let dot = 0, na = 0, nb = 0;
-  for (let i = 0; i < a.length; i++) { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; }
-  return na && nb ? dot / (Math.sqrt(na) * Math.sqrt(nb)) : 0;
-}
+const { createCore, cosine } = require("../memory-core.js");
 
 function createMemory({ store, embed, fieldEnabled = false, ledgerPath }) {
+  // Lazy ledger, exactly as server.js does it, so a field-off run never touches disk.
   let _ledger = null;
   const getLedger = () => { if (!_ledger) _ledger = new Ledger(ledgerPath); return _ledger; };
-
-  async function save(content) {
-    content = (content || "").trim();
-    if (!content) return "Nothing to save.";
-    const now = new Date().toISOString();
-    const same = store.current().find((r) => r.text === content);
-    if (same) { store.update(same.id, { last_confirmed: now }); return "Already remembered."; }
-    let embedding = null;
-    try { embedding = (await embed([content]))[0]; } catch { embedding = null; }
-    const rec = normalize({
-      id: store.nextId(), created: now, modified: now, text: content,
-      embedding, valid_from: now, valid_to: null, last_confirmed: now,
-    });
-    // RM-03: mirror server.js exactly - retire the most-similar current memory when
-    // the new one carries an explicit correction cue. (Shared detector in record.js.)
-    const superseded = detectSupersession(rec, store.current(), cosine);
-    if (superseded) {
-      const p = supersedePatches(superseded, rec, now);
-      Object.assign(rec, p.new);
-      store.add(rec);
-      store.update(superseded.id, p.old);
-      return "Saved (superseded " + superseded.id + ").";
-    }
-    store.add(rec);
-    return "Saved.";
-  }
-
-  async function recall(query, k = 5) {
-    query = (query || "").trim();
-    if (!query) return "";
-    const historical = isHistoricalQuery(query);
-    const mems = historical ? store.active() : store.current();
-    if (!mems.length) return "";
-
-    let ranked;
-    try {
-      const vectorless = mems.filter((m) => !m.embedding);
-      const vecs = await embed([query, ...vectorless.map((m) => m.text)]);
-      const qv = vecs[0];
-      const fresh = new Map();
-      vectorless.forEach((m, i) => fresh.set(String(m.id), vecs[i + 1]));
-      ranked = mems
-        .map((m) => ({ m, s: cosine(qv, m.embedding || fresh.get(String(m.id))) }))
-        .sort((a, b) => b.s - a.s).slice(0, k).map((x) => x.m);
-      store.applyRecall(ranked.map((m) => m.id), fresh);
-    } catch {
-      // The cached embedder is deterministic and offline, so this path is not
-      // expected in eval; kept for parity with server.js's keyword fallback.
-      ranked = mems.slice(0, k);
-      store.applyRecall(ranked.map((m) => m.id), null);
-    }
-
-    let out = ranked.map((m, i) =>
-      (i + 1) + ". [id " + m.id + "] " + m.text +
-      (m.valid_to ? "  (no longer current - superseded " + m.valid_to.slice(0, 10) + ")" : "")
-    ).join("\n");
-
-    if (fieldEnabled && mems.length > ranked.length) {
-      try {
-        const L = getLedger();
-        const bonus = (a, b) => L.bonus(a, b);
-        const edges = field.buildEdges(mems, { k: 2, minSim: 0.55, bonus });
-        const rel = field.neighborhood(edges, ranked.map((m) => m.id), { hops: 1, max: 4 });
-        if (rel.length) {
-          const byId = new Map(mems.map((m) => [String(m.id), m]));
-          out += "\n\nRelated:\n" + rel.map((e) => "- [id " + e.id + "] " + byId.get(String(e.id)).text).join("\n");
-        }
-        L.reinforceRecall(ranked.map((m) => m.id), rel.map((e) => e.id));
-        L.tick();
-        L.save();
-      } catch { /* the field is additive; never let it break recall */ }
-    }
-    return out;
-  }
-
-  return { save, recall };
+  const core = createCore({ store, embed, fieldEnabled: () => fieldEnabled, getLedger });
+  return { save: core.save, recall: core.recall };
 }
 
 module.exports = { createMemory, cosine };
