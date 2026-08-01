@@ -1,7 +1,7 @@
 {
-  "generated": "2026-07-29T23:04:58.986Z",
-  "passed": 16,
-  "total": 25,
+  "generated": "2026-08-01T09:14:23.659Z",
+  "passed": 20,
+  "total": 27,
   "cases": {
     "basic-name": true,
     "basic-work": true,
@@ -14,8 +14,10 @@
     "constraint-far-rich [field:on]": true,
     "constraint-crowded [field:off]": true,
     "constraint-crowded [field:on]": true,
-    "contra-job": false,
-    "contra-city": false,
+    "contra-job": true,
+    "contra-city": true,
+    "contra-wrongslot": true,
+    "contra-additive-pets": true,
     "noise-schedule [field:off]": true,
     "noise-schedule [field:on]": false,
     "noise-homonym [field:off]": true,

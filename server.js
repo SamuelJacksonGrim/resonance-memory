@@ -45,7 +45,7 @@ const fs = require("fs");
 const path = require("path");
 const field = require("./field.js");
 const { Ledger } = require("./ledger.js");
-const { normalize, isHistoricalQuery } = require("./record.js");
+const { normalize, isHistoricalQuery, detectSupersession, supersedePatches } = require("./record.js");
 const { JsonlStore } = require("./store.js");
 // Single source of truth for the version, so serverInfo can't drift from package.json.
 // esbuild inlines this JSON into the bundle, so it resolves in the SEA build too.
@@ -131,10 +131,25 @@ async function saveMemory(content) {
 
   let embedding = null;
   try { embedding = (await embed([content]))[0]; } catch { embedding = null; }
-  store.add(normalize({
+  const rec = normalize({
     id: store.nextId(), created: now, modified: now, text: content,
     embedding, valid_from: now, valid_to: null, last_confirmed: now,
-  }));
+  });
+
+  // RM-03: does this correct a fact we already hold? A save carrying an explicit
+  // correction cue ("moved", "now", "no longer"...) retires the single most-similar
+  // current memory rather than piling a contradiction beside it. See docs/proposed
+  // /0002 and eval/RESULTS.md for why the cue - not cosine - is the precision gate.
+  const superseded = detectSupersession(rec, store.current(), cosine);
+  if (superseded) {
+    const p = supersedePatches(superseded, rec, now);
+    Object.assign(rec, p.new);            // new memory carries supersedes/revision
+    store.add(rec);                       // append the correction as current
+    store.update(superseded.id, p.old);   // retire the old row (valid_to/superseded_by)
+    return "Saved — updated what I knew, retiring memory " + superseded.id +
+           ". (" + store.current().length + " memories total.)";
+  }
+  store.add(rec);
   return "Saved. (" + store.current().length + " memories total.)";
 }
 

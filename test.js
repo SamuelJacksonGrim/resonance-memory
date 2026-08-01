@@ -32,6 +32,7 @@ const assert = require("assert");
 const {
   writeFileDurable, appendLineDurable,
   normalize, isCurrent, isHistoricalQuery, supersedePatches, AccessLog,
+  detectSupersession, hasSupersedeCue,
 } = require("./record.js");
 
 let passed = 0, failed = 0;
@@ -91,6 +92,60 @@ test("supersedePatches builds a non-overlapping validity chain", () => {
   assert.strictEqual(p.old.superseded_by, 2);
   assert.strictEqual(p.new.supersedes, 1);
   assert.strictEqual(p.new.revision, 2);
+});
+
+// ------------------------------------------------------- supersession detection
+section("supersession detection (RM-03)");
+
+// A deterministic stand-in for cosine: the "similarity" of a candidate is just the
+// first element of its embedding, so a test can dial in an exact geometry. detect-
+// Supersession only ever calls cosineFn(newRec.embedding, m.embedding).
+const simStub = (_new, mem) => mem[0];
+const mem = (id, text, sim) => ({ id, text, embedding: [sim] });
+
+test("hasSupersedeCue fires on correction language, not on history", () => {
+  assert.strictEqual(hasSupersedeCue("Actually I work at Globex now"), true);
+  assert.strictEqual(hasSupersedeCue("I moved to Denver last month"), true);
+  assert.strictEqual(hasSupersedeCue("I no longer eat meat"), true);
+  assert.strictEqual(hasSupersedeCue("I have a cat named Whiskers"), false);
+  assert.strictEqual(hasSupersedeCue("I used to work at Acme"), false, "'used to' is historical, not a retirement cue");
+});
+
+test("detectSupersession: cue + above floor retires the most-similar memory", () => {
+  const newRec = { id: 2, text: "Actually I work at Globex now", embedding: [1] };
+  const cur = [mem(1, "I work at Acme", 0.57)];
+  assert.strictEqual(detectSupersession(newRec, cur, simStub), cur[0]);
+});
+
+test("detectSupersession: no correction cue -> keep both (additive)", () => {
+  const newRec = { id: 2, text: "I have a cat named Whiskers", embedding: [1] };
+  const cur = [mem(1, "I have a dog named Rex", 0.9)];   // geometrically very close
+  assert.strictEqual(detectSupersession(newRec, cur, simStub), null);
+});
+
+test("detectSupersession: cue but below floor -> cross-slot, keep both", () => {
+  const newRec = { id: 2, text: "Actually I work at Globex now", embedding: [1] };
+  const cur = [mem(1, "I live in Austin", 0.51)];        // 0.51 < 0.535 floor
+  assert.strictEqual(detectSupersession(newRec, cur, simStub), null);
+});
+
+test("detectSupersession: picks the argmax, not just any above-floor memory", () => {
+  const newRec = { id: 3, text: "Actually I work at Globex now", embedding: [1] };
+  const cur = [mem(1, "I live in Austin", 0.54), mem(2, "I work at Acme", 0.57)];
+  assert.strictEqual(detectSupersession(newRec, cur, simStub), cur[1], "the employer, not the city");
+});
+
+test("detectSupersession: a vectorless new memory can't target anything", () => {
+  const newRec = { id: 2, text: "Actually I work at Globex now", embedding: null };
+  const cur = [mem(1, "I work at Acme", 0.99)];
+  assert.strictEqual(detectSupersession(newRec, cur, simStub), null);
+});
+
+test("detectSupersession: honors a custom minSim", () => {
+  const newRec = { id: 2, text: "I switched to decaf now", embedding: [1] };
+  const cur = [mem(1, "I drink regular coffee", 0.60)];
+  assert.strictEqual(detectSupersession(newRec, cur, simStub, { minSim: 0.7 }), null);
+  assert.strictEqual(detectSupersession(newRec, cur, simStub, { minSim: 0.5 }), cur[0]);
 });
 
 // ------------------------------------------------------------- historical query

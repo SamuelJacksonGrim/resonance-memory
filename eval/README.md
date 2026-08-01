@@ -36,10 +36,17 @@ and the scorecard prints the gap. A case that fails off and passes on is the fie
 its keep; a case that passes off and fails on is the field *breaking* recall (a regression
 the gate will catch).
 
-`constraint-learning` is a *repeated* case: it keeps one store across four turns so the
-Hebbian ledger can strengthen an edge with use. "Missed at turn 1, landed by turn 4" is a
-**success** for this architecture, and `first_hit_turn` is reported so a one-shot metric
-can't score it as a failure.
+The harness also supports *repeated* cases (a `repeat` array instead of `query`): one store
+held across turns so the Hebbian ledger can strengthen an edge with use, scored per-turn with
+`contains_by_turn`. "Missed at turn 1, landed by turn 4" is a **success** for this architecture,
+and `first_hit_turn` is reported so a one-shot metric can't score it as a failure. (No corpus
+case currently exercises this — the machinery is kept for the topology experiments ahead.)
+
+**Contradiction / supersession (RM-03).** `contradiction` cases save two facts and check that a
+correction retires the stale one: "I work at Acme" → "Actually I work at Globex now" should leave
+only Globex current. The `contra-wrongslot` and `contra-additive-pets` guards check the *inverse*
+— that a cross-slot or cue-less save does **not** delete an unrelated memory. See `RESULTS.md`
+("RM-03") for why detection is gated on a correction cue, not raw cosine.
 
 ## Layout
 

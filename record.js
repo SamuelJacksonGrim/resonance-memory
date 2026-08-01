@@ -143,6 +143,43 @@ const HISTORICAL_RE =
 function isHistoricalQuery(q) { return HISTORICAL_RE.test(String(q || "")); }
 
 /*
+ * Explicit user-correction cues that mark a NEW memory as RETIRING a prior state.
+ * Deliberately about replacement ("moved", "now", "no longer"), not history
+ * ("used to"), which is a HISTORICAL_RE cue that surfaces the old fact instead of
+ * retiring it. See detectSupersession for why this lexical gate is load-bearing.
+ */
+const SUPERSEDE_CUE_RE =
+  /\b(actually|now|nowadays|no longer|anymore|as of|currently|instead|moved|relocated|switched|became|update:|correction:)\b/i;
+function hasSupersedeCue(t) { return SUPERSEDE_CUE_RE.test(String(t || "")); }
+
+/*
+ * Decide whether a newly-saved memory supersedes an existing CURRENT one (RM-03).
+ *
+ * Measured reality (eval/RESULTS.md, "RM-03"): on the shipped embedder a same-slot
+ * update ("Actually I work at Globex now" vs "I work at Acme", cos 0.57) and a
+ * DIFFERENT-slot statement in the same voice ("...Globex now" vs "I live in Austin",
+ * cos 0.51) are only ~0.05 apart. Cosine alone cannot tell a correction from a
+ * coincidental resemblance, so we:
+ *   1. require an explicit correction cue in the new text (the precision gate), and
+ *   2. retire only the SINGLE most-similar current memory, and only above a floor.
+ * The cue carries the precision; cosine only picks which memory the cue targets.
+ *
+ * Pure: returns the memory record to supersede, or null. Caller owns persistence.
+ */
+function detectSupersession(newRec, currentMems, cosineFn, opts = {}) {
+  const minSim = typeof opts.minSim === "number" ? opts.minSim : 0.535;
+  if (!newRec || !newRec.embedding) return null;      // no vector -> can't target one
+  if (!hasSupersedeCue(newRec.text)) return null;     // no correction intent -> keep both
+  let best = null, bestSim = -Infinity;
+  for (const m of currentMems) {
+    if (!m || String(m.id) === String(newRec.id) || !m.embedding) continue;
+    const s = cosineFn(newRec.embedding, m.embedding);
+    if (s > bestSim) { bestSim = s; best = m; }
+  }
+  return (best && bestSim >= minSim) ? best : null;
+}
+
+/*
  * Mark `oldId` superseded by `newId`. Both rows survive.
  * Returns the patches to apply; the caller owns persistence so this stays pure
  * and testable.
@@ -238,5 +275,6 @@ class AccessLog {
 module.exports = {
   writeFileDurable, appendLineDurable,
   normalize, isCurrent, isHistoricalQuery, supersedePatches,
+  detectSupersession, hasSupersedeCue, SUPERSEDE_CUE_RE,
   AccessLog, HISTORICAL_RE,
 };
