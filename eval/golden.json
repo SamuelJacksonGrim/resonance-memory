@@ -1,6 +1,6 @@
 {
-  "generated": "2026-08-01T10:32:52.021Z",
-  "passed": 23,
+  "generated": "2026-08-01T10:34:44.027Z",
+  "passed": 24,
   "total": 27,
   "cases": {
     "basic-name": true,
@@ -27,7 +27,7 @@
     "field-rescue-veg [field:off]": false,
     "field-rescue-veg [field:on]": true,
     "field-rescue-heights [field:off]": false,
-    "field-rescue-heights [field:on]": false,
+    "field-rescue-heights [field:on]": true,
     "regress-direct [field:off]": true,
     "regress-direct [field:on]": true
   }

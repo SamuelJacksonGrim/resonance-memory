@@ -300,6 +300,29 @@ constraint rescues in the project's history. Three mechanisms, all local, no gat
 `heights` still fails: its only bridge (`rooftop`, cos 0.472) is below the 0.55 edge gate, so it forms
 no association at all. That is Stage 2's target — a constraint-only gate drop to ~0.45.
 
+## Stage 2 — constraint-only gate drop to 0.45: heights rescued, geometry wins
+
+**Result: ROC 75% → 100% (4/4), TBR held at 0%, golden 23 → 24/27.** `heights` — the case external
+review first conceded to a save-time NLI model, believing the bridge "does not exist (cos 0.395)" —
+flipped `fail → PASS` on **pure local geometry**. The lever was a single default change: the constraint
+gate (the min cosine for a *typed constraint* to claim a bridge in the seed pool) dropped 0.55 → **0.45**,
+which lets `heights → rooftop` (0.472) form. `RESONANCE_CONSTRAINT_GATE` A/Bs it.
+
+All three stranded constraints now rescue, with **zero tangent bleed and no LLM/NLI/cloud anywhere** —
+the geometric thesis holds end to end. The `heights` rescue in particular only exists because the
+`0.395 → 0.472` measurement error was caught; trusting the first read would have shipped a 30MB model
+the geometry did not need.
+
+### Honest boundary — what this corpus can and cannot prove about the 0.45 gate
+The gate only governs whether a **typed constraint** finds a bridge; it never loosens ordinary recall,
+and it is inert on any query whose store has no constraint memory — which is exactly why TBR stayed 0
+on the noise cases (they contain no constraints). **So this corpus does not yet stress the real
+precision risk of a 0.45 gate:** a store where a constraint has a *spurious* 0.45–0.55 link to an
+unrelated query's seeds, and would surface when it should not. The next adversarial corpus case should
+be exactly that — a constraint that must **not** fire — so TBR has something real to catch at 0.45.
+Until then, 0.45 is validated only on non-adversarial evidence (ROC 4/4, TBR 0), and that caveat is the
+honest state of it.
+
 ### Corrected geometry that sets up experiment #2 (measured, not assumed)
 External review initially conceded `heights` to a save-time NLI model, believing the `heights↔rooftop`
 edge "does not exist (cosine 0.395)." That 0.395 is `heights`-to-**query**; the actual **pair** cosine
