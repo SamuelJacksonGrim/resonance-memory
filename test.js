@@ -405,6 +405,44 @@ test("legacy store with no temporal fields loads as all-current", () => {
   assert.ok(cur.every((r) => r.valid_from && r.valid_to === null));
 });
 
+// ------------------------------------------------- associative field topology
+section("associative field: reciprocal kNN (RM-00)");
+
+const { buildEdges } = require("./field.js");
+
+// Three points on a circle so the nearest-neighbor graph is deliberately one-sided:
+//   A(0deg) - B(20deg) - C(35deg).  Gaps: A-B=20, B-C=15, A-C=35.
+// With k=1: A's nearest is B, but B's nearest is C (15 < 20), and C's nearest is B.
+// So A->B is NOT reciprocated: directional kNN gives A an edge, mutual kNN isolates A.
+const rad = (d) => (d * Math.PI) / 180;
+const ring = [
+  { id: "A", text: "A", embedding: [Math.cos(rad(0)), Math.sin(rad(0))] },
+  { id: "B", text: "B", embedding: [Math.cos(rad(20)), Math.sin(rad(20))] },
+  { id: "C", text: "C", embedding: [Math.cos(rad(35)), Math.sin(rad(35))] },
+];
+
+test("directional kNN gives A a one-sided edge to B", () => {
+  const e = buildEdges(ring, { k: 1, minSim: 0.5 });
+  assert.deepStrictEqual(e.get("A").map((x) => x.id), ["B"]);
+  assert.deepStrictEqual(e.get("B").map((x) => x.id), ["C"], "B prefers C, not A");
+});
+
+test("mutual kNN prunes the one-sided edge, isolating A", () => {
+  const e = buildEdges(ring, { k: 1, minSim: 0.5, mutual: true });
+  assert.deepStrictEqual(e.get("A"), [], "A->B dropped: B does not reciprocate");
+  assert.deepStrictEqual(e.get("B").map((x) => x.id), ["C"], "B<->C is reciprocal, kept");
+  assert.deepStrictEqual(e.get("C").map((x) => x.id), ["B"], "C<->B is reciprocal, kept");
+});
+
+test("mutual kNN never keeps an edge directional kNN dropped (it only prunes)", () => {
+  const dir = buildEdges(ring, { k: 2, minSim: 0.5 });
+  const mut = buildEdges(ring, { k: 2, minSim: 0.5, mutual: true });
+  for (const id of ["A", "B", "C"]) {
+    const dset = new Set(dir.get(id).map((x) => String(x.id)));
+    for (const e of mut.get(id)) assert.ok(dset.has(String(e.id)), "mutual is a subset of directional");
+  }
+});
+
 // ------------------------------------------------------------------- report
 console.log(`\n${passed} passed, ${failed} failed`);
 try { fs.rmSync(tmpRoot, { recursive: true, force: true }); } catch { }

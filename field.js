@@ -46,6 +46,13 @@ function cosine(a, b) {
  *   opts.bonus: (idA, idB) => number, a bounded Hebbian bonus added to cosine
  *               before gating/ranking (default: none). Lets a learned association
  *               lift a weak-cosine edge over the gate without erasing semantics.
+ *   opts.mutual: keep an edge a->b only if a is ALSO in b's top-k (reciprocal kNN).
+ *               Default false = the original directional kNN. Directional edges are
+ *               asymmetric: a generic "hub" node that shares a token with many others
+ *               lands in their top-k and gets dragged into a seed's neighborhood as a
+ *               false positive (measured: the noise-schedule 'Thursday' collision).
+ *               Mutual kNN requires the association to be reciprocated, pruning those
+ *               one-sided hub links. RM-00 judges whether it is a net improvement.
  * Returns Map<id, [{ id, sim }]> sorted by blended score desc.
  */
 function buildEdges(records, opts = {}) {
@@ -53,7 +60,9 @@ function buildEdges(records, opts = {}) {
   const minSim = opts.minSim != null ? opts.minSim : 0.55;
   const bonus = opts.bonus || (() => 0);
   const withVec = records.filter((r) => Array.isArray(r.embedding));
-  const edges = new Map();
+
+  // Pass 1: each node's gated top-k candidates (the directional kNN).
+  const topk = new Map();
   for (const a of withVec) {
     const sims = [];
     for (const b of withVec) {
@@ -62,7 +71,15 @@ function buildEdges(records, opts = {}) {
       if (s >= minSim) sims.push({ id: b.id, sim: s });
     }
     sims.sort((x, y) => y.sim - x.sim);
-    edges.set(a.id, sims.slice(0, k));
+    topk.set(a.id, sims.slice(0, k));
+  }
+  if (!opts.mutual) return topk;
+
+  // Pass 2 (mutual): drop any edge a->b that b does not reciprocate in its own top-k.
+  const reciprocates = (x, y) => (topk.get(x) || []).some((e) => String(e.id) === String(y));
+  const edges = new Map();
+  for (const a of withVec) {
+    edges.set(a.id, (topk.get(a.id) || []).filter((e) => reciprocates(e.id, a.id)));
   }
   return edges;
 }

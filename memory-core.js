@@ -41,6 +41,13 @@ const {
   normalize, isHistoricalQuery, detectSupersession, supersedePatches,
 } = require("./record.js");
 
+// Reciprocal-kNN edge construction (RM-00 field experiment, 2026-08-01). Directional
+// kNN let a one-sided "hub" node bleed into a seed's neighborhood as a false positive
+// (the noise-schedule 'Thursday' collision). Requiring the association to be mutual
+// pruned that FP with no regressions - a Pareto win on the corpus - so it is now the
+// DEFAULT topology. Set RESONANCE_FIELD_MUTUAL=0 to fall back to directional kNN.
+const FIELD_MUTUAL = !["0", "false", "no"].includes(String(process.env.RESONANCE_FIELD_MUTUAL || "").toLowerCase());
+
 function cosine(a, b) {
   if (!a || !b) return 0;
   let dot = 0, na = 0, nb = 0;
@@ -150,7 +157,7 @@ function createCore({ store, embed, fieldEnabled = () => false, getLedger }) {
       try {
         const L = getLedger();
         const bonus = (a, b) => L.bonus(a, b);
-        const edges = field.buildEdges(mems, { k: 2, minSim: 0.55, bonus });
+        const edges = field.buildEdges(mems, { k: 2, minSim: 0.55, bonus, mutual: FIELD_MUTUAL });
         const rel = field.neighborhood(edges, ranked.map((m) => m.id), { hops: 1, max: 4 });
         if (rel.length) {
           const byId = new Map(mems.map((m) => [String(m.id), m]));
