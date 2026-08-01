@@ -249,3 +249,46 @@ marketed as "learns which memories belong together." Removing a cost is not earn
 next field experiments (activation-spreading / 2-hop-with-a-precision-guard to attack traversal
 reach; a lower gate for edge *formation* on the `heights` never-forms case) must show a real
 **fail → pass on a rescue** against this 21/27 golden.
+
+---
+
+# RM-00 field experiment #2 — instrumentation first (ROC / TBR split)
+
+**Date:** 2026-08-01. **No behavior change** — pure measurement, golden still 21/27. Built before
+touching any traversal or gate, on external review's advice: a flat pass/fail scalar weights a *fatal
+false negative* ("forgot the user is diabetic") the same as an *annoying false positive* ("also
+mentioned the mechanic"), and for a memory system those are not equal. So the scorecard now reports
+two rates apart (`eval/metrics.js` `fieldSignals`, panels in `eval/run.js`):
+
+- **ROC — Constraint Rescue Rate:** did the apex rule surface? Measured over the `metric:"roc"` cases
+  (`constraint-crowded` + the three `field-rescue*`).
+- **TBR — Tangent Bleed Rate:** did a forbidden term leak in? Measured over the `metric:"tbr"` noise
+  cases, plus `+Nrel` = how many memories the field *appended* (tangent surface, the early-warning gauge).
+
+**Baseline (mutual-kNN default):**
+```
+ROC  off=1/4 (25%)  on=1/4 (25%)   field-attributable rescues: 0
+     (only constraint-crowded rescues, via cosine; the field rescues 0/3 stranded leaves)
+TBR  off=0/2 (0%)   on=0/2 (0%)    appended: noise-schedule +1rel, noise-homonym +4rel
+     (0 forbidden bleed, but the field already appends 1-4 non-answer nodes on precision queries)
+```
+
+This is the legibility foundation for experiment #2 (typed-constraint retrieval). The bar is now
+explicit and two-dimensional: **drive ROC up (rescue the diabetic/veg/heights leaves) while holding
+TBR at 0** — and watch `+Nrel` as the leading indicator that a gate loosening is about to bleed.
+
+### Corrected geometry that sets up experiment #2 (measured, not assumed)
+External review initially conceded `heights` to a save-time NLI model, believing the `heights↔rooftop`
+edge "does not exist (cosine 0.395)." That 0.395 is `heights`-to-**query**; the actual **pair** cosine
+`heights↔rooftop` is **0.472** — below the 0.55 edge gate but **above 0.45**. Measured best bridges:
+```
+diabetic  → "lemon bars"     0.613   (already forms at 0.55)
+vegetarian→ "dinner playlist"0.592 / "ribeye" 0.571  (forms — but to semantically INVERTED neighbors)
+heights   → "rooftop bar"    0.472   (forms only at a ~0.45 gate)
+```
+So all three leaves have a real geometric bridge at ≥0.45. **The rescue is reachable on local geometry
+alone — no LLM/NLI extraction needed.** Plan for #2: type constraints at save (server heuristic, not the
+model), give typed constraints a lower edge gate (~0.45) + exemption from mutual-kNN + a bidirectional
+1-hop restricted to them, and decouple the internal search radius (k_search≈15) from the returned k (5)
+so a rank-7 bridge like "lemon bars" becomes a seed. The typing keeps the aggressive reach settings off
+the ordinary nodes, so `noise-schedule` precision is not re-broken.

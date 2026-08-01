@@ -27,7 +27,7 @@ const os = require("os");
 const { JsonlStore } = require("../store.js");
 const { createMemory } = require("./pipeline.js");
 const { embed } = require("./embed-cache.js");
-const { scoreSingle, scoreRepeat } = require("./metrics.js");
+const { scoreSingle, scoreRepeat, fieldSignals } = require("./metrics.js");
 
 const CORPORA = path.join(__dirname, "corpora");
 const GOLDEN = path.join(__dirname, "golden.json");
@@ -50,11 +50,13 @@ async function runCase(c, fieldOn) {
   const outputs = [];
   for (const t of turns) outputs.push(await mem.recall(t.query));
   const scored = c.repeat ? scoreRepeat(c, outputs) : scoreSingle(c, outputs[0]);
+  const sig = fieldSignals(c, outputs[outputs.length - 1]);
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* temp */ }
   return {
-    id: c.id, kind: c.kind, field: fieldOn,
+    id: c.id, kind: c.kind, field: fieldOn, metric: c.metric || null,
     pass: scored.pass, reasons: scored.reasons,
     byTurn: scored.byTurn, first_hit_turn: scored.first_hit_turn,
+    rescued: sig.rescued, bled: sig.bled, appended: sig.appended,
   };
 }
 
@@ -111,6 +113,46 @@ function scorecard(results) {
     console.log("  " + line.slice(0, 60));
     console.log("  field lifted " + liftedToPass + " case(s) fail->pass" +
       (brokenByField ? ", and BROKE " + brokenByField + " (regression!)" : ""));
+  }
+
+  // ROC / TBR split (RM-00 field metric): a forgotten constraint and a hallucinated
+  // tangent are not the same failure. Track constraint rescue apart from tangent bleed.
+  const rocIds = [...new Set(results.filter((r) => r.metric === "roc").map((r) => r.id))];
+  if (rocIds.length) {
+    console.log("\n" + line);
+    console.log("CONSTRAINT RESCUE — ROC  (did the apex rule surface? off vs on)");
+    let onHit = 0, offHit = 0, attributable = 0;
+    for (const id of rocIds) {
+      const off = results.find((r) => r.id === id && r.field === false);
+      const on = results.find((r) => r.id === id && r.field === true);
+      const o = off && off.rescued, n = on && on.rescued;
+      if (n) onHit++; if (o) offHit++;
+      let mark = "";
+      if (!o && n) { mark = "  <== field rescued it"; attributable++; }
+      console.log("  " + id.padEnd(22) + " off=" + (o ? "RESCUED" : " miss  ") + "  on=" + (n ? "RESCUED" : " miss  ") + mark);
+    }
+    const pct = (x) => (100 * x / rocIds.length).toFixed(0) + "%";
+    console.log("  " + line.slice(0, 60));
+    console.log("  ROC  off=" + offHit + "/" + rocIds.length + " (" + pct(offHit) + ")   on=" +
+      onHit + "/" + rocIds.length + " (" + pct(onHit) + ")   field-attributable rescues: " + attributable);
+  }
+
+  const tbrIds = [...new Set(results.filter((r) => r.metric === "tbr").map((r) => r.id))];
+  if (tbrIds.length) {
+    console.log("\n" + line);
+    console.log("TANGENT BLEED — TBR  (did forbidden junk leak in? off vs on)");
+    let onBleed = 0, offBleed = 0;
+    for (const id of tbrIds) {
+      const off = results.find((r) => r.id === id && r.field === false);
+      const on = results.find((r) => r.id === id && r.field === true);
+      if (on && on.bled) onBleed++; if (off && off.bled) offBleed++;
+      const tag = (r) => r ? (r.bled ? "BLED(" + r.bled + ")" : "clean  ") + " +" + r.appended + "rel" : " - ";
+      console.log("  " + id.padEnd(22) + " off=" + tag(off) + "  on=" + tag(on));
+    }
+    const pct = (x) => (100 * x / tbrIds.length).toFixed(0) + "%";
+    console.log("  " + line.slice(0, 60));
+    console.log("  TBR  off=" + offBleed + "/" + tbrIds.length + " (" + pct(offBleed) + ")   on=" +
+      onBleed + "/" + tbrIds.length + " (" + pct(onBleed) + ")   (+Nrel = memories the field appended)");
   }
 
   // Totals
