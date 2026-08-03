@@ -1,8 +1,12 @@
 {
-  "generated": "2026-08-01T10:34:44.027Z",
-  "passed": 24,
-  "total": 27,
+  "generated": "2026-08-03T02:29:09.396Z",
+  "passed": 27,
+  "total": 31,
   "cases": {
+    "adv-height-homonym [field:off]": true,
+    "adv-height-homonym [field:on]": false,
+    "adv-offtopic-quiet [field:off]": true,
+    "adv-offtopic-quiet [field:on]": true,
     "basic-name": true,
     "basic-work": true,
     "basic-pref": true,

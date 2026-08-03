@@ -456,10 +456,12 @@ test("reachableConstraints: rescues a constraint via a bridge in the seed pool",
   assert.deepStrictEqual(ids(out), ["C"], "C reachable because its bridge B is a seed");
 });
 
-test("reachableConstraints: surfaces a constraint that is itself an unreturned seed", () => {
-  // the vegetarian bug: C ranked into the wider pool but not the returned top-k.
-  const out = reachableConstraints(recs, ["C", "B"], { gate: 0.55, exclude: [] });
-  assert.ok(ids(out).includes("C"), "C in the pool but not returned must still surface");
+test("reachableConstraints: a pooled constraint with NO bridge stays quiet (small-store guard)", () => {
+  // Adversarial finding (adv-offtopic-quiet): when the store <= k_search the pool is the
+  // whole store, so mere pool membership is not relevance. Without a bridge >= gate in the
+  // pool, a constraint must NOT surface - else a shellfish allergy fires for an oil-change.
+  const out = reachableConstraints([C, D], ["C", "D"], { gate: 0.55, exclude: [] });
+  assert.deepStrictEqual(ids(out), [], "existence in the pool is not relevance; needs a real bridge");
 });
 
 test("reachableConstraints: never re-surfaces an already-RETURNED constraint", () => {

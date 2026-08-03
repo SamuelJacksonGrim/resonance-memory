@@ -149,17 +149,20 @@ function reachableConstraints(records, seedIds, opts = {}) {
   const out = [];
   for (const c of withVec) {
     if (!c.is_constraint || exclude.has(String(c.id))) continue;
-    // (a) the constraint itself ranked into the wider pool but not the returned set:
-    // it's already query-relevant, surface it directly.
-    if (seeds.has(String(c.id))) { out.push({ id: c.id, sim: 1, via: "seed" }); continue; }
-    // (b) bridge rescue: the constraint's own top-k associations above the gate...
+    // Bridge rescue ONLY: the constraint must be associated (>= gate) with a memory
+    // that is itself in the query's seed pool. We deliberately do NOT auto-surface a
+    // constraint merely because it landed in the pool: when the store is smaller than
+    // k_search the pool IS the whole store, so "in the pool" carries no relevance
+    // signal and would surface every constraint (measured: a shellfish allergy fired
+    // for an oil-change query, adv-offtopic-quiet). A constraint must EARN its way in
+    // through a genuinely query-relevant bridge, not by mere existence.
     const nbrs = withVec
       .filter((b) => String(b.id) !== String(c.id))
       .map((b) => ({ id: b.id, sim: cosine(c.embedding, b.embedding) }))
       .filter((x) => x.sim >= gate)
       .sort((a, b) => b.sim - a.sim)
       .slice(0, k);
-    // ...reachable iff one of them landed in the seed pool (bidirectional 1-hop).
+    // reachable iff one of them landed in the seed pool (bidirectional 1-hop).
     const hit = nbrs.find((n) => seeds.has(String(n.id)));
     if (hit) out.push({ id: c.id, sim: hit.sim, via: hit.id });
   }

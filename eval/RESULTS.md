@@ -323,6 +323,49 @@ be exactly that — a constraint that must **not** fire — so TBR has something
 Until then, 0.45 is validated only on non-adversarial evidence (ROC 4/4, TBR 0), and that caveat is the
 honest state of it.
 
+## Stage 3 — the adversarial test paid off: one hole fixed, one hard boundary found
+
+Built the "constraint that must NOT fire" cases Stage 2 said it owed (`corpora/adversarial.jsonl`).
+Both bled on the first run (TBR 0 → 100%) — the test did exactly its job. Diagnosis found **two
+distinct failure modes**, not one:
+
+**Mode 1 — small-store over-reach (`adv-offtopic-quiet`): FIXED.** With `k_search=15`, a store of 8
+memories means the seed pool *is the whole store*. The old "surface a constraint that's in the pool but
+unreturned" path (the mechanism that had rescued vegetarian) then fired for **any** constraint in a small
+store — a shellfish allergy surfaced for "when should I change my oil" (constraint↔query cos 0.430, and
+it had *no* bridge at all). Fix: **removed the pool-membership auto-surface entirely.** A constraint must
+now EARN its way in through a genuinely query-relevant bridge (`reachableConstraints`, bridge path only).
+Vegetarian still rescues — via its "dinner playlist" bridge, not by mere existence — so **ROC held at
+4/4 while `adv-offtopic-quiet` flipped to pass.**
+
+**Mode 2 — lexical polysemy (`adv-height-homonym`): the measured boundary of pure geometry.** "I'm
+terrified of heights" surfaces for "how tall should I make the bookshelf" because *height/tall* tokens
+dominate the vector. This is not tunable — it is the distributional-vs-entailment gap, and three separate
+geometric separators were measured to **fail**:
+
+```
+signal                     legit rescue (veg)   spurious trap (heights→bookshelf)
+constraint↔query cosine    0.536                0.537        <- one thousandth apart
+bridge cosine              0.592 (playlist)     0.594 (top shelf)
+constraint's rank in the   #6 of 20             #6 of 10     <- same band; and the GOOD
+bridge's own neighbor list                                     heights rescue is #16
+```
+
+Cosine, query relevance, and reciprocal rank all overlap the good and bad cases. **No purely geometric
+rule separates "vegetarian bears on cooking" from "heights spuriously matches a tall bookshelf."** That
+is a real, honest result — and it is the first place in this whole line of work where a **tiny local
+semantic/entailment check is measurement-JUSTIFIED** rather than assumed: run only as a precision filter
+on the ≤4 constraints a query actually rescues (local, cheap, no per-recall-on-everything cost), to
+answer "does this rule bear on this query?" — the one question geometry provably cannot. Not built yet;
+it is now a defensible design option instead of a premature reflex.
+
+**Net:** golden 24/27 → **27/31** (2 adversarial cases added; `adv-offtopic-quiet` passes, the polysemy
+`adv-height-homonym [field:on]` is locked as a *documented known-fail boundary* — a future entailment
+filter flipping it to pass will register as the improvement it is). ROC 4/4 held; TBR 2/2 → **1/4**, the
+single remaining leak being the polysemy case we now understand exactly. The field stays behind its flag:
+the adversarial test **validated that decision** — the precision hole is real, one half is closed by
+geometry, and the other half has a named, measured path forward.
+
 ### Corrected geometry that sets up experiment #2 (measured, not assumed)
 External review initially conceded `heights` to a save-time NLI model, believing the `heights↔rooftop`
 edge "does not exist (cosine 0.395)." That 0.395 is `heights`-to-**query**; the actual **pair** cosine
