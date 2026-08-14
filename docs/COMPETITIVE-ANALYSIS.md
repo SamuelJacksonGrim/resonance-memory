@@ -22,7 +22,7 @@ The goal of this document is not to cheer. It is to answer three questions hones
 | **MemOS** | Research/OSS | — | Yes | "Memory OS", strong LOCOMO/LongMemEval numbers |
 | **Supermemory / Cognee / EverMind / Hindsight** | Mixed OSS | Varies; Hindsight ships all features at every tier | Yes | Consolidation-focused, graph retrieval |
 | **VEKTOR / OMEGA / Mnemosyne / memory-mcp** | OSS | Free | Yes, local-first | SQLite + `sqlite-vec` + FTS5, MCP-native, no cloud |
-| **Resonance Memory** | **GPL-3.0** | **$0** | Local-only by design | kNN associative field + **Hebbian co-activation reshaping** |
+| **Resonance Memory** | **AGPL-3.0** | **$0** | Local-only by design | kNN associative field + **Hebbian co-activation reshaping** |
 
 ### What the incumbents actually give you
 

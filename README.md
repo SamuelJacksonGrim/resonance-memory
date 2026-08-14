@@ -130,7 +130,7 @@ embedding model can be swapped in — it isn't tied to one vendor.
 
 ## License
 
-GPL-3.0 — see [`LICENSE`](LICENSE). Use it, fork it, build on it — just keep your version open too.
+AGPL-3.0 — see [`LICENSE`](LICENSE). Use it, fork it, build on it — just keep your version open too.
 
 ---
 

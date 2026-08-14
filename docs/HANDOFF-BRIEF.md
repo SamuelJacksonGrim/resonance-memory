@@ -10,7 +10,7 @@ verified vs unverified, exact commands, per-item context — lives in
 # Resonance Memory — handoff
 
 You're picking up https://github.com/SamuelJacksonGrim/resonance-memory — work from the
-tip of `main`. Recently landed: GPL-3.0 licensing, a 3D associative graph, the temporal
+tip of `main`. Recently landed: AGPL-3.0 licensing, a 3D associative graph, the temporal
 memory schema (`RM-04`), and fixes for three storage bugs. `CHANGELOG.md` has the current
 state.
 
@@ -74,7 +74,7 @@ part that earned suspicion.
 ## Already verified — don't redo
 
 The test suite passes; every file parses; the esbuild bundle builds and runs as an MCP server with
-all four verbs; `record.js`/`store.js` are bundled; exactly one GPL notice in the bundle;
+all four verbs; `record.js`/`store.js` are bundled; exactly one AGPL notice in the bundle;
 temporal recall works end-to-end over stdio (present-tense query excludes superseded facts,
 historical query returns them labelled); recall performs zero writes to the store; legacy
 stores load with no migration.
