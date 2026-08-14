@@ -18,7 +18,7 @@ set are *unverified* — this document is mostly about telling those two apart h
 | The whole test suite passes | `npm test` |
 | Every source file parses | `node --check` on each |
 | esbuild bundle builds and runs | bundled `entry.js`, ran it as `--mcp`, exercised all four verbs |
-| Bundle carries exactly one GPL notice | counted notices before/after the strip in `build-exe.js` |
+| Bundle carries exactly one AGPL notice | counted notices before/after the strip in `build-exe.js` |
 | `record.js` + `store.js` are bundled | grepped the module list in the output bundle |
 | Temporal recall works end-to-end | live stdio server: present-tense query excluded a superseded fact; historical query returned it labelled |
 | Restatement confirms instead of duplicating | live server, saved the same text twice, got one record |

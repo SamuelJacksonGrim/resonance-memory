@@ -3,16 +3,16 @@
  * Copyright (C) 2026 Samuel Jackson Grim
  *
  * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
+ * it under the terms of the GNU Affero General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
+ * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 /*
@@ -52,7 +52,7 @@ fs.writeFileSync(
 );
 
 console.log("[1/4] bundling sources with esbuild ...");
-// --legal-comments=none drops the per-file GPL header that sits atop every source,
+// --legal-comments=none drops the per-file AGPL header that sits atop every source,
 // so the bundle isn't peppered with a dozen identical notices. We add ONE notice
 // back as a top-of-file banner below.
 const bundleFile = path.join(build, "bundle.js");
@@ -66,16 +66,16 @@ const licenseBanner =
   " * Copyright (C) 2026 Samuel Jackson Grim\n" +
   " *\n" +
   " * This program is free software: you can redistribute it and/or modify\n" +
-  " * it under the terms of the GNU General Public License as published by\n" +
+  " * it under the terms of the GNU Affero General Public License as published by\n" +
   " * the Free Software Foundation, either version 3 of the License, or\n" +
   " * (at your option) any later version.\n" +
   " *\n" +
   " * This program is distributed in the hope that it will be useful,\n" +
   " * but WITHOUT ANY WARRANTY; without even the implied warranty of\n" +
   " * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n" +
-  " * GNU General Public License for more details.\n" +
+  " * GNU Affero General Public License for more details.\n" +
   " *\n" +
-  " * You should have received a copy of the GNU General Public License\n" +
+  " * You should have received a copy of the GNU Affero General Public License\n" +
   " * along with this program.  If not, see <https://www.gnu.org/licenses/>.\n" +
   " */\n";
 let bundled = fs.readFileSync(bundleFile, "utf8");

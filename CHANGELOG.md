@@ -10,6 +10,12 @@ stable; sophistication grows in the substrate, not in the API.
 
 Beta-readiness pass:
 
+### Changed
+- **Relicensed GPL-3.0 → AGPL-3.0.** Closes the SaaS / network-use loophole in plain GPL: a
+  hosted or networked derivative must now also release its source. `LICENSE`, `package.json`
+  (`AGPL-3.0-or-later`), and every per-file source header updated. This is the
+  "revisit only if hosted resale looms" trigger the backlog pre-registered, now pulled.
+
 ### Added
 - **Association graph view** in the panel — a live 3D force-directed constellation of your
   memories; hover a dot to read it, line thickness = similarity, reinforced-by-use edges
