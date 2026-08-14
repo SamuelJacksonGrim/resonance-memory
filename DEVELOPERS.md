@@ -37,7 +37,7 @@ an opaque `id`.
   we depend on the `/v1/embeddings` *interface*, not a specific model (`EMBED_MODEL` env var).
 - **Third-party attribution:** `nomic-embed-text-v1.5` is © Nomic AI, **Apache 2.0**
   (<https://huggingface.co/nomic-ai/nomic-embed-text-v1.5>). Not redistributed by this project.
-  Apache 2.0 is one-way compatible with our GPL-3.0, so bundling it later would be license-clean.
+  Apache 2.0 is one-way compatible with our AGPL-3.0, so bundling it later would be license-clean.
 - Embed **once** at save; recall embeds only the query, then cosine vs stored vectors.
 
 ## Build

@@ -166,7 +166,7 @@ load-bearing ones, enforced here:
   (`detectConstraint`) and supersession are lexical heuristics computed server-side, per the
   small-model-safety invariant. A false-positive constraint only *widens* retrieval (cheap);
   it never deletes.
-- **GPL-3.0 per-file header** tops every source file; the build collapses them to a single
+- **AGPL-3.0 per-file header** tops every source file; the build collapses them to a single
   notice in the bundle. Keep the header on new source files.
 - **Repo hygiene:** LF line endings (`.gitattributes`), except `.bat` (CRLF) and
   `.command`/`.sh` (LF). User state (`*.jsonl` except `demo-seed.jsonl`, sidecars, `config.json`,
