@@ -52,7 +52,7 @@ The ordering is not arbitrary. Three rules drive it:
 
 | Item | What |
 |---|---|
-| `RM-00` | Eval harness + seeded corpora + `npm run eval` |
+| ~~`RM-00`~~ | ~~Eval harness + seeded corpora + `npm run eval`~~ — ✅ **shipped** (`cf70448`) |
 
 **Deliverables**
 - A fixture corpus of messy, realistic inputs — including the cases nobody benchmarks:
@@ -79,14 +79,15 @@ includes ≥50 contradiction/update cases (the axis LOCOMO and LongMemEval both 
 |---|---|---|
 | `RM-01` | Extraction on write (heuristics first, optional local LLM pass) | `RM-00` |
 | `RM-02` | Near-duplicate detection + merge | `RM-00` |
-| `RM-03` | Contradiction / supersession (mark deprecated, prefer newer) | `RM-02`, `RM-04` |
+| `RM-03` | Contradiction / supersession — 🟡 **v1 (cue-gated) shipped** (`b143e2d`); fuller heuristics open | `RM-02`, `RM-04` |
 | ~~`RM-04`~~ | ~~Temporal metadata~~ — ✅ **shipped** | — |
 
 **Sequencing note.** `RM-04` went first for a reason: a *schema* change is cheap, and both
 `RM-03` and later retrieval work are impossible without the fields in place. It has shipped —
 `valid_from` / `valid_to` / `last_confirmed` / `superseded_by` are live, recall filters to
-currently-true memories, and `supersedePatches()` applies a supersession atomically. **Nothing
-calls it yet**: deciding *when* one fact replaces another is `RM-03`, still open.
+currently-true memories, and `supersedePatches()` applies a supersession atomically. **`RM-03`
+v1 now calls it** (cue-gated correction markers, on by default — worst case retires nothing); the
+fuller detection heuristics (negation flip, numeric/date change, optional LLM adjudication) remain open.
 
 **Design stance (see `proposed/0001`, `proposed/0002`):**
 - **Heuristics before LLMs.** A tiered write pipeline: cheap deterministic rules handle the

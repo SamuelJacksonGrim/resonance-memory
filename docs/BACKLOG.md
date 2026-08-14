@@ -14,26 +14,27 @@ the substrate. If an item seems to need a fifth verb, the design is wrong.
 
 ## Phase 0 — Measurement
 
-### `RM-00` — Evaluation harness and corpora · **XL** · `todo`
-> *Blocks everything. Nothing in Phase 1+ should merge before this exists.*
+### `RM-00` — Evaluation harness and corpora · **XL** · ✅ `done` — core harness shipped & in use
+> *Blocked everything; it now exists. Built `2026-07-29` (`cf70448`), and every field
+> experiment since ran against it. Extended corpora/metrics travel with the features they test.*
 
 Build `eval/` with seeded, offline, reproducible scoring.
 
-- [ ] Fixture corpora in `eval/corpora/*.jsonl`: `basic`, `contradictions`, `duplicates`,
-      `temporal`, `messy` (typos, fragments, pronouns, "actually no"), `constraints`,
-      `adversarial`.
-- [ ] ≥50 contradiction/update cases — **the axis LOCOMO and LongMemEval both under-test**,
-      so it's where we can lead rather than follow.
-- [ ] Metrics: `recall@k`, `MRR`, **`staleness_rate`** (answered from a superseded fact),
-      `false_supersession` (hard gate — must be 0), `duplicate_rate`, `constraint_surfacing`,
-      `extraction_precision/recall`, `write_latency_p95`, `store_growth`.
-- [ ] Constraint cases run with the field **off and on**; report both and the gap.
-- [ ] Repeated cases (`repeat` / `contains_by_turn`) keep one store across turns and report
+- [x] Fixture corpora in `eval/corpora/*.jsonl`: `basic`, `contradictions`, `constraints`,
+      `adversarial`, plus `field-noise` / `field-stress`. *(`duplicates` / `temporal` / `messy`
+      land with the features they test — RM-02 / RM-04 / RM-01.)*
+- [ ] ≥50 contradiction/update cases — **the axis LOCOMO and LongMemEval both under-test.**
+      *(4 today; expand as RM-03 detection matures.)*
+- [~] Metrics: `recall@k` shipped, plus the field-experiment **ROC / TBR** split.
+      *(`staleness_rate`, `false_supersession`, `duplicate_rate`, `extraction_precision/recall`
+      land with RM-01 / RM-02 / RM-03.)*
+- [x] Constraint cases run with the field **off and on**; report both and the gap.
+- [x] Repeated cases (`repeat` / `contains_by_turn`) keep one store across turns and report
       `first_hit_turn`, so a constraint that lands by turn 4 isn't scored as a miss.
-- [ ] `npm run eval` → scorecard table; `npm run eval -- --json` for CI.
-- [ ] Golden-set regression gate: any metric drop fails with a diff of which cases flipped.
-- [ ] Deterministic: fixed seeds, cached embeddings committed, **no network, no API key**.
-- [ ] Runs in <60s on a laptop.
+- [x] `npm run eval` → scorecard table. *(`--json` for CI still pending.)*
+- [x] Golden-set regression gate: any metric drop fails with a diff of which cases flipped.
+- [x] Deterministic: fixed seeds, cached embeddings committed, **no network, no API key**.
+- [x] Runs in <60s on a laptop.
 
 **Acceptance:** a deliberately-broken change (e.g. rank by recency) is caught by the gate.
 
@@ -107,20 +108,24 @@ Design: [`proposed/0001`](proposed/0001-write-pipeline.md).
 
 ---
 
-### `RM-03` — Contradiction and supersession · **L** · `todo`
+### `RM-03` — Contradiction and supersession · **L** · `in progress` — v1 (cue-gated) shipped & ON
 
-Follow Graphiti's proven shape: **invalidate, never delete.**
+Follow Graphiti's proven shape: **invalidate, never delete.** v1 landed in `b143e2d`
+(cue-gated, argmax-limited, on by default — worst case retires nothing).
 
-- [ ] On save, find high-similarity prior memories that are *not* duplicates (the
+- [x] On save, find high-similarity prior memories that are *not* duplicates (the
       "same subject, different value" band) via a contradiction check.
-- [ ] Detection: Tier 0 heuristics (negation flip, numeric/date change on a shared subject,
-      explicit correction markers — "actually", "no longer", "changed to") + optional Tier 2
-      LLM adjudication reusing the `RM-01` endpoint.
-- [ ] On confirmed contradiction: set old `valid_to = new.valid_from`, `superseded_by = new.id`.
-      **Both rows are kept** — non-overlapping validity chain, history preserved.
-- [ ] Recall prefers current facts; superseded surface only when the query is explicitly
+- [~] Detection: **explicit correction markers shipped** (cue-gated — "actually", "now",
+      "no longer", "moved to"…, argmax-limited). *(negation-flip and numeric/date-change
+      heuristics + optional Tier 2 LLM adjudication reusing the `RM-01` endpoint: still open.)*
+- [x] On confirmed contradiction: set old `valid_to = new.valid_from`, `superseded_by = new.id`.
+      **Both rows are kept** — non-overlapping validity chain, history preserved. *(first live
+      writer of the bi-temporal model, via `supersedePatches()`.)*
+- [x] Recall prefers current facts; superseded surface only when the query is explicitly
       historical ("used to", "before", "last year").
-- [ ] Ambiguous cases keep **both** and mark `needs_review` — never guess destructively.
+- [~] Ambiguous cases keep **both** and mark `needs_review` — never guess destructively.
+      *(the conservative cue-gate covers this today; richer adjudication rides with the
+      heuristics above.)*
 
 **Acceptance:** `staleness_rate` drops ≥70% on `eval/contradictions`; **zero** cases where a
 still-true fact is wrongly invalidated (this metric is a hard gate — a false supersession is
