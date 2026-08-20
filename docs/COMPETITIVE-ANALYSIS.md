@@ -1,7 +1,18 @@
 # Competitive analysis — the AI memory layer market
 
-*Compiled July 2026. Every claim here is sourced; re-verify before quoting numbers publicly,
+*Compiled July 2026; **repo-state refreshed August 2026** (`v0.2.0`) — the market facts below
+are unchanged, but Resonance's own column has moved and the matrix in §5 now reflects what has
+actually shipped. Every claim here is sourced; re-verify before quoting numbers publicly,
 because this market's published benchmarks are actively disputed (see §4).*
+
+> **What moved since July** (details in the matrix and §6): the **eval harness (`RM-00`)
+> shipped** — offline, deterministic, golden-gated, 57 unit tests + a 27/31 recall scorecard —
+> so "run it yourself" is now a claim we can make. **Contradiction *detection* (`RM-03` v1,
+> cue-gated) shipped** on top of the already-landed temporal metadata (`RM-04`), moving us from
+> "applies supersession but can't detect it" to "detects explicit corrections and applies them,
+> fuller heuristics still open." **Provenance (`source`) is now seeded in the record schema**
+> (the `RM-16` groundwork). The write path (extraction, cosine-banded dedup) and hybrid
+> retrieval remain the real open gaps.
 
 The goal of this document is not to cheer. It is to answer three questions honestly:
 
@@ -104,7 +115,9 @@ takeaways:
 - **Do compete on reproducibility.** Ship the harness, the corpus, the seeds, and a one-command
   reproduce script. "Run it yourself in 30 seconds on your own machine" is a *better* claim
   than a number, and it's one the hosted vendors structurally cannot match — their eval needs
-  their cloud.
+  their cloud. **This is now real, not aspirational:** `npm run eval` runs offline and
+  deterministic (cached embeddings committed, no network, no API key), gates against a golden
+  scorecard, and finishes in well under a minute. The reproduce-it-yourself claim is earned.
 
 Also note: **neither LOCOMO nor LongMemEval systematically tests contradictory memories**,
 even though conflict resolution is where production systems rot ("memory poisoning"). The
@@ -115,7 +128,8 @@ That's an under-served evaluation axis where we can lead rather than follow.
 
 ## 5. Capability gap matrix
 
-Honest scoring of Resonance Memory **today** against the field. ✅ have it · 🟡 partial · ❌ absent.
+Honest scoring of Resonance Memory **today** (`v0.2.0`, August 2026) against the field.
+✅ have it · 🟡 partial · ❌ absent.
 
 | Capability | Mem0 | Zep | Letta | **Resonance (today)** | Backlog item |
 |---|:--:|:--:|:--:|:--:|---|
@@ -123,7 +137,7 @@ Honest scoring of Resonance Memory **today** against the field. ✅ have it · �
 | Embed-once-on-save | ✅ | ✅ | ✅ | ✅ | — |
 | Automatic fact extraction on write | ✅ | ✅ | ✅ | ❌ | `RM-01` |
 | Deduplication | ✅ | ✅ | 🟡 | 🟡 *(exact-match only)* | `RM-02` |
-| Contradiction / supersession | 🟡 | ✅ | 🟡 | 🟡 *(applies it; can't yet detect it)* | `RM-03` |
+| Contradiction / supersession | 🟡 | ✅ | 🟡 | 🟡 *(v1: detects explicit correction cues + applies it; fuller heuristics open)* | `RM-03` |
 | Temporal metadata (valid-from/to) | 🟡 | ✅ | ❌ | ✅ | — |
 | Hybrid retrieval (semantic+keyword) | ✅ | ✅ | 🟡 | 🟡 *(keyword only as fallback)* | `RM-05` |
 | Graph retrieval | 💰 Pro | ✅ | ❌ | ✅ **free** | — |
@@ -133,17 +147,23 @@ Honest scoring of Resonance Memory **today** against the field. ✅ have it · �
 | Session vs long-term separation | ✅ | ✅ | ✅ | ❌ | `RM-06` |
 | Idle/sleep-time consolidation | 🟡 | ✅ | ✅ | ❌ | `RM-10` |
 | Pluggable store backend | ✅ | ✅ | ✅ | 🟡 *(seam extracted, one impl)* | `RM-07` |
-| Eval harness / regression suite | ✅ | ✅ | ✅ | ❌ | `RM-00` |
+| Eval harness / regression suite | ✅ | ✅ | ✅ | ✅ *(offline, deterministic, golden-gated)* | `RM-00` ✅ |
+| Provenance on records (poisoning defense) | 🟡 | 🟡 | 🟡 | 🟡 *(`source` field seeded; recall-weighting + filter open)* | `RM-16` |
 | SDKs | ✅ | ✅ | ✅ | ❌ | `RM-12` |
 | Hosted option | ✅ | ✅ | ✅ | ❌ *(deliberate)* | — |
 | Zero-terminal install | ❌ | ❌ | ❌ | ✅ **unique** | — |
 | Runs with no API key / no cloud | 🟡 | ❌ | 🟡 | ✅ | — |
 | Copyleft (forks stay open) | ❌ | ❌ | ❌ | ✅ | — |
 
-**Reading the matrix:** we are competitive on *substrate* and *distribution UX*, and behind on
-the **write path** (extraction, dedup, contradiction *detection*) plus **evaluation**. Temporal
-metadata has since shipped — the schema and plumbing are in; only `RM-03`'s detection is open.
-That is exactly the ordering the roadmap encodes.
+**Reading the matrix (August 2026):** we are competitive on *substrate* and *distribution UX*,
+and the **evaluation** gap has closed — `RM-00` shipped, so every claim from here on is
+measurable and the regression gate is live. Temporal metadata (`RM-04`) is in, and `RM-03` v1
+now *detects* explicit corrections rather than only applying supersession blindly. What remains
+behind is the rest of the **write path**: automatic fact extraction (`RM-01`) and cosine-banded
+dedup (`RM-02`, exact-match only today), plus first-class hybrid retrieval (`RM-05`, keyword is
+still fallback-only) and the store/scale work (`RM-07`). That is exactly the ordering the
+roadmap encodes: measurement first (done), then the write path, then the substrate tuning our
+moat depends on.
 
 ---
 
@@ -158,12 +178,21 @@ Three claims we can defend, and should lead with:
 2. **Nothing leaves the machine.** Not a privacy policy — an architecture. No API key exists to leak.
 3. **Association, not just retrieval.** The Hebbian field is genuinely not in any competitor.
    Memories reinforce each other through use; recall surfaces a *neighborhood*, not a list.
+4. **Reproducible, not benchmarked.** *(Newly earned, August 2026.)* The eval harness ships in
+   the repo and runs offline in under a minute — no cloud, no API key. "Verify our claims on
+   your own machine" is a claim the hosted vendors structurally cannot match, and it sidesteps
+   the LOCOMO number war entirely (§4).
 
-Three claims we must **not** make until earned:
-- ❌ "Beats Mem0 on LOCOMO" — not until `RM-00` lands and the number is independently reproducible.
-- ❌ "Handles contradictions" — not until `RM-03` ships *with* its eval.
-- ❌ "Production ready at scale" — recall no longer rewrites the store, but every *mutation*
-  still rewrites the whole JSONL file and `all()` parses it per call (see `RM-07`).
+Three claims we must **not** make until earned (updated August 2026):
+- ❌ "Beats Mem0 on LOCOMO" — still don't enter the number war (§4). `RM-00` has landed, so we
+  *can* now say "here's a harness, run it yourself" — but not "we score X," which invites the
+  same credibility spiral.
+- 🟡 "Handles contradictions" — **partially earned.** `RM-03` v1 (cue-gated detection) has
+  shipped *with* eval coverage and a hard false-supersession gate, so the honest claim today is
+  "detects and applies *explicit* corrections, conservatively." The unqualified "handles
+  contradictions" waits on the fuller detection heuristics (negation flip, numeric/date change).
+- ❌ "Production ready at scale" — unchanged: recall no longer rewrites the store, but every
+  *mutation* still rewrites the whole JSONL file and `all()` parses it per call (see `RM-07`).
 
 ---
 
