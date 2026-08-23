@@ -157,7 +157,7 @@ tested in isolation.
 ---
 
 ## `BUG-008` — `edit()` destroyed the embedding whenever the embedder was down
-**Severity:** critical (silent, permanent data loss) · **Status:** ✅ **fixed** · **Found by:**
+**Severity:** critical (silent data loss; recoverable only by re-editing, which nothing prompts) · **Status:** ✅ **fixed** · **Found by:**
 roadmap consolidation review, reading `edit()` to answer a schema question
 
 ### What
@@ -169,12 +169,12 @@ good vector.
 good vector -> embedder down -> edit() -> embedding: null -> Object.assign -> vector gone
 ```
 
-The memory silently dropped to keyword-fallback ranking for the rest of its life, `edit()`
+The memory silently dropped to keyword-fallback ranking until someone happened to edit it again, `edit()`
 returned `"Edited memory N."` as though nothing had happened, and nothing anywhere surfaced the
-degradation. An embedder outage is transient; the damage it caused was not.
+degradation. An embedder outage lasts minutes; the damage outlived it indefinitely.
 
 ### Why it mattered more than it looked
-Same shape as `BUG-002`: a read/write path quietly corrupting state nobody thought to check.
+Same shape as `BUG-007`: a patch path silently overwriting good state through `Object.assign`, with no error raised and nothing checking afterward.
 It also breaks a rule the design depends on — a *failed* embed was indistinguishable from a
 legitimate embedding change. `ROADMAP.md` Phase 0.0 keys semantic-cache validity on
 `embedding_version`, so under that scheme this bug would have had a failed embed masquerading as
@@ -182,8 +182,9 @@ a real mutation and silently invalidating every incident edge.
 
 ### Fix
 Omit `embedding` from the patch entirely when embedding fails, so the null can never reach
-`Object.assign`, and report the degraded state to the caller. Stale-text-with-valid-vector beats
-valid-text-with-no-vector: the former still ranks, and the next successful edit repairs it.
+`Object.assign`, and report the degraded state to the caller. The edit still applies in full;
+only the vector is left behind. A stale vector beats no vector: the record still ranks
+semantically, and the next successful edit repairs it.
 
 Guarded by four tests in `test.js` (`edit() embedding safety`), including one asserting a
 *successful* re-embed still replaces the vector — so the fix can't regress into never updating
