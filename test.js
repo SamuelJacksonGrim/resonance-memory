@@ -41,6 +41,11 @@ function test(name, fn) {
   catch (e) { console.log("  FAIL " + name + "\n       " + e.message); failed++; }
 }
 function section(s) { console.log("\n" + s); }
+// Async variant: same reporting, awaited before the summary block runs.
+async function atest(name, fn) {
+  try { await fn(); console.log("  ok   " + name); passed++; }
+  catch (e) { console.log("  FAIL " + name + "\n       " + e.message); failed++; }
+}
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "rm-test-"));
 const tmp = (n) => path.join(tmpRoot, n);
@@ -508,7 +513,73 @@ test("fieldSignals: appended counts the field's Related nodes (tangent surface)"
   assert.strictEqual(fieldSignals({ expect: {} }, noRel).appended, 0);
 });
 
+// ------------------------------------------------ edit() embedding safety
+// BUG-007. An embedder outage is transient; losing an embedding is not.
+const { createCore } = require("./memory-core.js");   // JsonlStore already required above
+
+async function asyncTests() {
+  section("edit() embedding safety (BUG-007)");
+
+  const makeCore = (file, liveRef) => {
+    const store = new JsonlStore(tmp(file));
+    const embed = async (texts) => {
+      if (!liveRef.live) throw new Error("embedder unreachable");
+      return texts.map(() => [1, 0, 0]);
+    };
+    return { store, core: createCore({ store, embed }) };
+  };
+
+  await atest("a failed re-embed leaves the prior embedding intact", async () => {
+    const ref = { live: true };
+    const { store, core } = makeCore("bug007a.jsonl", ref);
+    await core.save("the dentist is on Tuesday");
+    const before = store.all()[0].embedding;
+    assert.ok(Array.isArray(before) && before.length === 3, "saved with an embedding");
+
+    ref.live = false;                       // embedder goes down
+    const id = store.all()[0].id;
+    await core.edit(id, "the dentist is on Thursday");
+
+    const after = store.all()[0];
+    assert.strictEqual(after.text, "the dentist is on Thursday", "text still updates");
+    assert.deepStrictEqual(after.embedding, before, "prior embedding survives");
+  });
+
+  await atest("a failed re-embed is reported, not silent", async () => {
+    const ref = { live: true };
+    const { store, core } = makeCore("bug007b.jsonl", ref);
+    await core.save("coffee with Dana");
+    ref.live = false;
+    const msg = await core.edit(store.all()[0].id, "coffee with Dana on Friday");
+    assert.ok(/keyword/i.test(msg), "the degraded state is surfaced to the caller");
+  });
+
+  await atest("a successful re-embed still replaces the embedding", async () => {
+    const ref = { live: true };
+    const store = new JsonlStore(tmp("bug007c.jsonl"));
+    let vec = [1, 0, 0];
+    const embed = async (texts) => {
+      if (!ref.live) throw new Error("embedder unreachable");
+      return texts.map(() => vec.slice());
+    };
+    const core = createCore({ store, embed });
+    await core.save("first");
+    vec = [0, 1, 0];
+    await core.edit(store.all()[0].id, "second");
+    assert.deepStrictEqual(store.all()[0].embedding, [0, 1, 0], "fresh vector replaces the old one");
+  });
+
+  await atest("edit on a missing id still reports not-found", async () => {
+    const ref = { live: true };
+    const { core } = makeCore("bug007d.jsonl", ref);
+    const msg = await core.edit(99999, "nothing here");
+    assert.ok(/No memory with id/.test(msg));
+  });
+}
+
 // ------------------------------------------------------------------- report
-console.log(`\n${passed} passed, ${failed} failed`);
-try { fs.rmSync(tmpRoot, { recursive: true, force: true }); } catch { }
-process.exit(failed ? 1 : 0);
+asyncTests().then(() => {
+  console.log(`\n${passed} passed, ${failed} failed`);
+  try { fs.rmSync(tmpRoot, { recursive: true, force: true }); } catch { }
+  process.exit(failed ? 1 : 0);
+});
