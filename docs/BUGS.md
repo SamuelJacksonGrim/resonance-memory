@@ -5,7 +5,7 @@ so related ones read together — check the status line on each rather than the 
 leaves this list only when it is *fixed*, not when it is understood; if it's understood but
 unfixed, it stays here with an owner in the backlog.
 
-**Current:** 5 fixed (`BUG-001`, `002`, `003`, `006`, `007`) · 2 open (`BUG-004`, `005`) ·
+**Current:** 6 fixed (`BUG-001`, `002`, `003`, `006`, `007`, `008`) · 2 open (`BUG-004`, `005`) ·
 3 on the watch list (`W-02`, `W-03`, `W-04`; `W-01` was dismissed).
 
 **Severity:** `critical` data loss / corruption · `high` user-visible breakage ·
@@ -153,6 +153,41 @@ tested in isolation.
 > genuine and the sidecar is still the right design — but "the old code was wrong" does not
 > establish that the new code is right, and my tests were written to confirm the fix rather
 > than to attack it.
+
+---
+
+## `BUG-008` — `edit()` destroyed the embedding whenever the embedder was down
+**Severity:** critical (silent, permanent data loss) · **Status:** ✅ **fixed** · **Found by:**
+roadmap consolidation review, reading `edit()` to answer a schema question
+
+### What
+`edit()` set `embedding = null` when the embedder threw, then passed that straight into
+`store.update()` — which does `Object.assign(record, patch)`. The null overwrote a perfectly
+good vector.
+
+```
+good vector -> embedder down -> edit() -> embedding: null -> Object.assign -> vector gone
+```
+
+The memory silently dropped to keyword-fallback ranking for the rest of its life, `edit()`
+returned `"Edited memory N."` as though nothing had happened, and nothing anywhere surfaced the
+degradation. An embedder outage is transient; the damage it caused was not.
+
+### Why it mattered more than it looked
+Same shape as `BUG-002`: a read/write path quietly corrupting state nobody thought to check.
+It also breaks a rule the design depends on — a *failed* embed was indistinguishable from a
+legitimate embedding change. `ROADMAP.md` Phase 0.0 keys semantic-cache validity on
+`embedding_version`, so under that scheme this bug would have had a failed embed masquerading as
+a real mutation and silently invalidating every incident edge.
+
+### Fix
+Omit `embedding` from the patch entirely when embedding fails, so the null can never reach
+`Object.assign`, and report the degraded state to the caller. Stale-text-with-valid-vector beats
+valid-text-with-no-vector: the former still ranks, and the next successful edit repairs it.
+
+Guarded by four tests in `test.js` (`edit() embedding safety`), including one asserting a
+*successful* re-embed still replaces the vector — so the fix can't regress into never updating
+embeddings at all. Verified failing before the fix, passing after.
 
 ---
 
