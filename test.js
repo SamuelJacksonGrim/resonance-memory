@@ -514,11 +514,11 @@ test("fieldSignals: appended counts the field's Related nodes (tangent surface)"
 });
 
 // ------------------------------------------------ edit() embedding safety
-// BUG-007. An embedder outage is transient; losing an embedding is not.
+// An embedder outage is transient; losing an embedding is not.
 const { createCore } = require("./memory-core.js");   // JsonlStore already required above
 
 async function asyncTests() {
-  section("edit() embedding safety (BUG-007)");
+  section("edit() embedding safety");
 
   const makeCore = (file, liveRef) => {
     const store = new JsonlStore(tmp(file));
