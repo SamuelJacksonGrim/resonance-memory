@@ -206,12 +206,9 @@ function createCore({ store, embed, fieldEnabled = () => false, getLedger }) {
     if (id === undefined || id === null || id === "") return "Provide the `id` shown in a recall listing.";
     content = (content || "").trim();
     if (!content) return "Provide the new `content`.";
-    // BUG-008: a failed re-embed must NOT reach store.update(). It does
-    // Object.assign(record, patch), so a null embedding here overwrites a
-    // perfectly good vector and silently drops the memory to keyword-only
-    // until someone edits it again. The edit still applies; only the vector is
-    // left behind. A stale vector beats no vector - it still ranks, and the
-    // next successful edit repairs it. Either way the caller gets told.
+    // A failed re-embed must never reach store.update(): it Object.assigns the
+    // patch, so a null here would overwrite a good vector. Keep the old one - a
+    // stale vector still ranks, and the next successful edit repairs it.
     let embedding = null;
     try { embedding = (await embed([content]))[0]; } catch { embedding = null; }
     const embedded = Array.isArray(embedding) && embedding.length > 0;
