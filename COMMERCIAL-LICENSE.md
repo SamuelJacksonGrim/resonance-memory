@@ -227,3 +227,9 @@ Email: ____________________   Date: ____________________
 | Indemnity elected? | `[yes: §10 / no]` |
 | Governing law | South Dakota, USA (default) |
 | Special terms | `[...]` |
+
+---
+
+## Related
+
+[[LICENSING]] · [[LEGAL-BASIS]] · [[CONTRIBUTING]] · [[AUTHORSHIP]]

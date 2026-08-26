@@ -2,6 +2,14 @@
 
 **Status:** proposed · **Backlog:** `RM-08` · **Depends on:** `RM-04`, `RM-00`
 
+> **Scope banner (read first).** This doc owns two things, both about *records*: constraint
+> retrieval, and **importance** decay (`importance · exp(−λ·Δt)`, a retention signal). It does
+> **not** own the *edge* substrate or **learned-edge** decay — those moved to
+> [`phase-0`](../phases/phase-0-edge-substrate.md) (`RM-21`, roadmap Phase 0). The two decays are
+> distinct mechanisms on distinct objects; do not conflate them (see phase-0). And per the three
+> corrections below, treat the *constraint* half here as **measure-first, probably redundant** —
+> `field.js` + `ledger.js` may already do it (`RM-08` acceptance measures exactly that).
+
 ## Problem
 
 Three related failures, all about *which memories deserve to be present*.
@@ -349,3 +357,9 @@ possible moment, and they never trust the tool again. For a product whose entire
 - `store_growth` on the `RM-15` soak improves measurably with `compactSuperseded` on.
 - Ranked recall order is **byte-identical** with constraints on vs off (they add a section;
   they do not reorder).
+
+---
+
+## Related
+
+[[phase-0-edge-substrate]] · [[BACKLOG]] · [[ARCHITECTURE]] · [[RESULTS]] · [[proposed/README]]

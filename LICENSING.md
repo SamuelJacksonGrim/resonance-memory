@@ -109,3 +109,9 @@ commercial agreement, if you buy one. These documents were prepared by an AI
 assistant, not a lawyer — they're standard, usable forms, and you don't need to
 hire anyone to start using them. If you ever want a human lawyer's eyes for
 free, see [`legal/USING-THIS-WITHOUT-A-LAWYER.md`](legal/USING-THIS-WITHOUT-A-LAWYER.md).*
+
+---
+
+## Related
+
+[[COMMERCIAL-LICENSE]] · [[CONTRIBUTING]] · [[NOTICE]] · [[LEGAL-BASIS]] · [[licensing-faq]] · [[README]] · [[AUTHORSHIP]]

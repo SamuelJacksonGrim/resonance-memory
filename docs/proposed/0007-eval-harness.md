@@ -312,3 +312,9 @@ project can make.
   gap — the associative field's measured value, which the project has never had.
 - Repeated cases keep one store across turns and report `first_hit_turn`, so "missed at turn 1,
   landed by turn 4" scores as the success it is rather than a failure.
+
+---
+
+## Related
+
+[[phase-2-retrieval-dynamics]] · [[eval/README]] · [[RESULTS]] · [[BACKLOG]] · [[ARCHITECTURE]] · [[proposed/README]]

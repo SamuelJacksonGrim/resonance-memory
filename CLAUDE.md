@@ -67,7 +67,6 @@ roadmap, and per-repo backlog live in the companion repo
 |---|---|
 | `test.js` | The dependency-free unit/regression suite (`npm test`). 57 tests, runs in under a second. |
 | `eval/` | **RM-00**, the evaluation harness — the measurement system the roadmap depends on. `eval/pipeline.js` wires `memory-core.js` to a cached embedder; `eval/run.js` runs the corpora and gates against `golden.json`. See `eval/README.md`. |
-| `docs/HANDOFF.md` | **Start here on a fresh machine** — what's verified, what isn't, what to check first. |
 | `docs/ROADMAP.md`, `docs/BACKLOG.md` | Phased plan and itemized work (`RM-00`…`RM-20`) with acceptance criteria. |
 | `docs/BUGS.md` | Known defects (fixed and open) with a watch list. `BUG-001`/`BUG-002`/`BUG-006` are referenced throughout the code. |
 | `docs/proposed/` | RFC-style designs (`0001`–`0007`) with code and pseudocode. |
@@ -193,3 +192,9 @@ load-bearing ones, enforced here:
 - Do not push directly to `main`. Develop on a feature branch, commit with clear messages,
   and open a PR only when explicitly asked.
 - Do not create a pull request unless the user explicitly requests one.
+
+---
+
+## Related
+
+[[ARCHITECTURE]] · [[ROADMAP]] · [[BACKLOG]] · [[BUGS]] · [[DEVELOPERS]] · [[CONTRIBUTING]] · [[proposed/README]]

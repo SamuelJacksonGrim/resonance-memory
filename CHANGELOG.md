@@ -113,3 +113,9 @@ First packaged, double-click build. Everything below is the baseline going forwa
   build ships today.
 - The data directory currently defaults to `~/.lmstudio/…` even for Claude-only users.
 - The associative field is **off by default** pending validation on a real corpus.
+
+---
+
+## Related
+
+[[README]] · [[ROADMAP]] · [[BACKLOG]] · [[BUGS]] · [[DEVELOPERS]]

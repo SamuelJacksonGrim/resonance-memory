@@ -381,3 +381,9 @@ model), give typed constraints a lower edge gate (~0.45) + exemption from mutual
 1-hop restricted to them, and decouple the internal search radius (k_search≈15) from the returned k (5)
 so a rank-7 bridge like "lemon bars" becomes a seed. The typing keeps the aggressive reach settings off
 the ordinary nodes, so `noise-schedule` precision is not re-broken.
+
+---
+
+## Related
+
+[[eval/README]] · [[0007-eval-harness]] · [[phase-0-edge-substrate]] · [[phase-2-retrieval-dynamics]] · [[BACKLOG]] · [[ARCHITECTURE]]

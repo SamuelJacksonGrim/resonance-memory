@@ -263,3 +263,9 @@ well-trodden, court-tested commercial model:
 - Contributor agreements — <https://producingoss.com/en/contributor-agreements.html>
 - Dual-licensing business model — <http://oss-watch.ac.uk/resources/duallicence2>
 - MySQL commercial licensing — <https://www.mysql.com/about/legal/licensing/oem/>
+
+---
+
+## Related
+
+[[LICENSING]] · [[COMMERCIAL-LICENSE]] · [[CLA-individual]] · [[AUTHORSHIP]] · [[USING-THIS-WITHOUT-A-LAWYER]] · [[licensing-faq]]

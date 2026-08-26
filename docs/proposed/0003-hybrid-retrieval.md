@@ -196,3 +196,9 @@ invariant that actually matters.
 - Wins specifically on the `rare_noun`, `identifier`, and `negation` eval categories.
 - With the embedding endpoint killed, hybrid still returns non-empty, sane results.
 - Per-arm rank contributions visible in the panel (`RM-19`).
+
+---
+
+## Related
+
+[[phase-2-retrieval-dynamics]] · [[BACKLOG]] · [[ARCHITECTURE]] · [[ROADMAP]] · [[proposed/README]]
