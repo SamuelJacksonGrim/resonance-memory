@@ -24,32 +24,71 @@ in the user's home directory.
 The one design principle everything else serves: **a small model cannot misuse it.** The
 interface may get *simpler*, never more cognitively demanding.
 
+The second principle governs *time*: **time is a function, not a process.** There is no
+permanent heartbeat, no dream loop, no rhythm engine, no background decay daemon. Every
+operation is event-driven — observe state at time *T*, compute temporal effects (decay,
+validity), retrieve or mutate, persist durable changes — and then nothing runs until the next
+event. Autonomous cognition belongs in the *consuming agent*, never in the memory layer; the MCP
+boundary is that line. This is why decay is *computed at access* from an elapsed-time delta
+rather than ticked by a loop (the move `RM-21`/Phase 0.2 completes — see `I6`).
+
 ---
 
 ## 2. Design invariants (the shape is load-bearing)
 
-These are enforced by the code, not just aspirational. They are the reason the modules are
+These are enforced by the code, not just aspirational — they are the reason the modules are
 split the way they are. The canonical list lives in `INVARIANTS.md` in the companion
-`resonance-memory-stack` repo; the load-bearing ones here:
+`resonance-memory-stack` repo (which still carries the older five-item numbering; the **I1–I9**
+scheme below is the current one and should be synced there). [`ROADMAP.md`](ROADMAP.md) indexes
+these by ID and asserts only *held vs. target* per phase; the definitions, rationale, and
+backing code live **here**.
 
-1. **Four verbs, nothing more.** The public tool surface is fixed. New capability lands in the
-   substrate, never as a fifth tool. If a feature seems to need one, the design is wrong.
-2. **Ranking is cosine only.** `importance` / `access_count` govern *retention*, never
-   *retrieval order*. This is measured: adding a durability weight to cosine inverts rankings.
-   (`proposed/0003` proposes a flag-gated hybrid arm, promoted only on a measured A/B win.)
-3. **The associative layer is discovery, not ordering.** Co-activation and the kNN graph
-   *expand* the candidate set (the `Related:` block); they never reorder the primary cosine
-   result. Primary results are **byte-identical** whether the field is on or off, and the whole
-   field path is wrapped in a `try/catch` that must never break recall.
-4. **Embed once at save; the server owns all metadata; the model assigns none of it.** A
-   `Store` abstraction sits behind the verbs so the backend can be swapped without touching
-   the MCP API.
-5. **All store writes go through `writeFileDurable()` (temp → fsync → atomic rename), and
-   nothing on a read path writes to the store.** Both were violated once — `BUG-001` (a
-   non-atomic write that could truncate the entire memory) and `BUG-002` (recall rewriting the
-   store to bump a counter). See [`BUGS.md`](BUGS.md).
+**Held** = enforced by shipping code today. **Target** = a property a named phase must
+establish; stated now, with its phase, precisely because an invariant claimed more strongly
+than the code supports is worse than none — it stops anyone from looking.
 
-Two supporting rules follow from #4: the server assigns metadata *from text* (constraint
+| | Invariant | Status | Backed by |
+|---|---|---|---|
+| **I1** | **Four verbs, nothing more.** The public tool surface is fixed; new capability lands in the substrate, never a fifth tool. If a feature seems to need one, the design is wrong. | ✅ held | `server.js` tool schemas |
+| **I2** | **No *unmeasured* signal touches rank.** Ranking is cosine today; a second arm may enter *only* on a measured A/B win, flag-off until then. `importance`/`access_count` govern *retention*, never *retrieval order* — measured: a durability weight on cosine inverts rankings. | ✅ held (amended) | `memory-core.js` recall; `proposed/0003` |
+| **I2b** | **Access-frequency signals are telemetry only.** `access_count`/`last_access`/read frequency may be logged and charted; they may **not** feed rank, decay, reinforcement, or pruning. | ✅ held | `record.js` `AccessLog`; `BUG-002` |
+| **I3** | **The associative layer fails open.** The entire field/ledger path is wrapped in a `try/catch` that must never break recall; losing it degrades to plain cosine. | ✅ held | `memory-core.js` field block |
+| **I4** | **Embed once at save; the server owns all metadata; the model assigns none of it.** A `Store` seam sits behind the verbs so the backend swaps without touching the MCP API. | ✅ held¹ | `memory-core.js` `save`; `store.js` |
+| **I5** | **Durable writes; no *unbounded* write on a read path.** Every store rewrite goes through `writeFileDurable()` (temp → fsync → atomic rename); recall performs zero store writes in steady state. | ✅ held¹ | `record.js`; `BUG-001`/`BUG-002` |
+| **I6** | **Reading does not drive the decay clock.** Co-recall *reinforcement* is retained (it is the differentiator); what must change is that edge **decay** stops being clocked by recall count and moves to wall-clock time. | ⬜ **target — Phase 0.2** | see below; `phases/phase-0` |
+| **I7** | **Activation never persists.** Spreading activation (Phase 1) is seeded per query, attenuated per hop, bounded, and never written to the edge store. | ⬜ n/a until Phase 1 | `phases/phase-0` |
+| **I8** | **No silent removal.** *Record* deletes are soft (`deleted`, compacted at `vacuum()`) and supersession keeps a non-overlapping validity chain. **Edge pruning is the open gap:** `ledger.decay()` drops below-floor edges with **no marker** today; Phase 0.4 makes it soft (`pruned_at`, reactivatable). | ✅ held (records) · ⬜ edges — Phase 0.4 | `store.js` `vacuum`; `ledger.js` `decay`; `phases/phase-0` |
+| **I9** | **Discovery nominates; it does not appoint.** The field/ledger *expand* the candidate set (the `Related:` block); they never reorder the primary cosine result. Primary results are **byte-identical** field on or off. | ✅ held | `memory-core.js` recall |
+
+¹ **I4/I5 each carry one self-extinguishing legacy exception:** a record saved while the
+embedder was down is stored vectorless and back-filled on a later recall (one bounded, durable
+write on a read path, for legacy/outage rows only). The exception heals itself the first time
+the row is recalled with the embedder up.
+
+**I6, precisely** (the one label that could mislead an implementer): today `recall` calls
+`ledger.reinforceRecall(...)` **and then** `ledger.tick()`, and `tick()` advances a
+**recall-count** clock (`recalls % epoch`, `epoch = 10`) that triggers `decay()`. Two
+consequences: a store that is never recalled never decays, and read *frequency* — not elapsed
+time — governs fading. Phase 0.2 replaces that clock with **lazy wall-clock decay computed at
+access time**, and leaves `reinforceRecall` exactly as it is. "Reading ≠ reinforcement" in
+`ROADMAP.md` is shorthand for *"reading no longer drives the **decay clock**"* — co-recall
+still reinforces. Design and edge state-transition table:
+[`phases/phase-0`](phases/phase-0-edge-substrate.md).
+
+**On I2 vs I2b — two different strengths of "no."** I2 was originally *"ranking = cosine only,"*
+justified by a real measurement: adding a **durability** weight (`importance`/`access_count`) to
+cosine inverted rankings. That finding is sound but narrower than the phrasing it produced —
+`access_count` is a *retention* signal wearing a relevance costume (popular ≠ apt). It does not
+follow that *all* fusion is harmful; Hebbian weight and activation are relevance-adjacent in a way
+durability is not. So the durable form is **"no *unmeasured* signal touches rank"** (I2): rank
+changes are permitted, unmeasured ones are not, and Phase 2's promotion gate is the experiment.
+**I2b is stricter** because its family was already measured *and failed* — overturning it needs a
+positive result strong enough to reverse a prior negative, not merely the absence of evidence
+against it. The trap ("memories accessed often should rank a little higher…") arrives wearing a
+different variable name each time, which is why `last_access` is named in the record as telemetry
+rather than left to judgement.
+
+**Two supporting rules follow from I4:** the server assigns metadata *from text* (constraint
 typing, supersession cues are lexical heuristics computed server-side), and there is one
 implementation of the four verbs (`memory-core.js`) shared by both callers, so the MCP server
 and the eval harness can never drift.
@@ -125,7 +164,7 @@ same record the panel renders and the installer's target reads.
 |---|---|
 | `test.js` | The dependency-free unit/regression suite (`npm test`). **57 tests, <1s.** |
 | `eval/` | **RM-00**, the evaluation harness (§8). `eval/pipeline.js` wires `memory-core.js` to a cached embedder; `eval/run.js` runs the corpora and gates against `golden.json`. |
-| `docs/` | `ARCHITECTURE.md` (this file), `HANDOFF.md`, `ROADMAP.md`, `BACKLOG.md`, `BUGS.md`, `COMPETITIVE-ANALYSIS.md`, `proposed/` RFCs. |
+| `docs/` | `ARCHITECTURE.md` (this file), `ROADMAP.md`, `phases/` (buildable phase specs), `BACKLOG.md`, `BUGS.md`, `COMPETITIVE-ANALYSIS.md`, `proposed/` RFCs. |
 
 ---
 
@@ -361,6 +400,12 @@ not yet a documented stable API (`RM-12`), and has no CSRF/`Origin` check today 
 The architecture is built to absorb the roadmap without touching the MCP API or forking the
 recall path:
 
+- **Substrate unification** → the two association layers (`field.js` static kNN rebuilt per
+  recall, `ledger.js` Hebbian sidecar) merge into one **persistent edge store with two
+  independent signals** — semantic (derived / recomputable from vectors) and learned
+  (source-of-truth / irreplaceable). This is where I6 becomes true and where activation (I7)
+  plugs in. It is a **migration, not greenfield** — existing `.assoc.json` sidecars are carried
+  in (`RM-21`, design in [`phases/phase-0`](phases/phase-0-edge-substrate.md)).
 - **New store backend** → implement the `JsonlStore` method surface (`RM-07`, SQLite).
 - **Write-path cleanup** (extraction, dedup) → in `save()` inside `memory-core.js`, before the
   store append (`RM-01`, `RM-02`). A save must never fail because a cleanup tier did.
@@ -379,10 +424,17 @@ fixed, and no unmeasured signal touches ranking.
 
 ## 13. Where to read next
 
-- Building or verifying on a real machine → [`HANDOFF.md`](HANDOFF.md).
+- Building, running, and verifying → [`../DEVELOPERS.md`](../DEVELOPERS.md).
+- What's being built now, and in what order → [`ROADMAP.md`](ROADMAP.md) + [`phases/`](phases/).
 - What's done, in progress, and open → [`BACKLOG.md`](BACKLOG.md) (`RM-00`…`RM-20`).
 - Known defects and the watch list → [`BUGS.md`](BUGS.md).
 - Why the roadmap is ordered the way it is → [`COMPETITIVE-ANALYSIS.md`](COMPETITIVE-ANALYSIS.md).
 - Deep designs with pseudocode → [`proposed/`](proposed/).
 </content>
 </invoke>
+
+---
+
+## Related
+
+[[ROADMAP]] · [[BACKLOG]] · [[BUGS]] · [[CLAUDE]] · [[DEVELOPERS]] · [[phase-0-edge-substrate]] · [[phase-2-retrieval-dynamics]] · [[phase-7-reconsolidation]] · [[RESULTS]] · [[proposed/README]] · [[COMPETITIVE-ANALYSIS]]

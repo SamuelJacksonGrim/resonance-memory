@@ -275,3 +275,9 @@ capability matrix distorts the roadmap it was written to justify.
 - **No bandaids.** If the correct fix is a rewrite, do the rewrite or write the bug down
   honestly with its real owner — don't wrap it in a mitigation that adds a layer without
   removing the failure.
+
+---
+
+## Related
+
+[[ARCHITECTURE]] · [[BACKLOG]] · [[ROADMAP]] · [[phase-0-edge-substrate]] · [[DEVELOPERS]]

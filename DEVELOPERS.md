@@ -75,9 +75,8 @@ in the `resonance-memory-stack` repo. The load-bearing ones:
 
 | Document | What |
 |---|---|
-| [`docs/HANDOFF.md`](docs/HANDOFF.md) | **Start here on a fresh machine** — what's verified, what isn't, and what to check first |
-| [`docs/HANDOFF-BRIEF.md`](docs/HANDOFF-BRIEF.md) | The same handoff as a short, paste-able onboarding message |
-| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Phased plan and the reasoning behind the ordering |
+| [`docs/ROADMAP.md`](docs/ROADMAP.md) | **Start here** — the scope/status map and phase index; current work is Phase 0 |
+| [`docs/phases/`](docs/phases/) | The buildable phase specs (`phase-0` … `phase-8`): scope, steps, per-phase metrics + tests |
 | [`docs/BACKLOG.md`](docs/BACKLOG.md) | Itemized work (`RM-00` … `RM-20`) with acceptance criteria |
 | [`docs/BUGS.md`](docs/BUGS.md) | Known defects, fixed and open, with a watch list |
 | [`docs/COMPETITIVE-ANALYSIS.md`](docs/COMPETITIVE-ANALYSIS.md) | Mem0 / Zep / Letta capability + pricing landscape, and our gaps |
@@ -99,3 +98,9 @@ Things a contributor should know before touching the code:
 This is **Phase 1** of the Resonance memory stack. The portable work-order (roadmap +
 per-repo backlog + architecture invariants) lives at
 https://github.com/SamuelJacksonGrim/resonance-memory-stack.
+
+---
+
+## Related
+
+[[README]] · [[ARCHITECTURE]] · [[ROADMAP]] · [[BACKLOG]] · [[CLAUDE]] · [[CHANGELOG]] · [[BUGS]]

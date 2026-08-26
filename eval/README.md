@@ -74,3 +74,9 @@ eval/
 `excludes` matters as much as `contains` — most memory bugs are *extra wrong stuff*, not
 missing right stuff. `kind:"constraint"` triggers the off/on double-run. A `repeat` array
 (instead of `query`) keeps one store across turns; pair it with `contains_by_turn`.
+
+---
+
+## Related
+
+[[RESULTS]] · [[0007-eval-harness]] · [[BACKLOG]] · [[phase-2-retrieval-dynamics]] · [[ARCHITECTURE]] · [[ROADMAP]]

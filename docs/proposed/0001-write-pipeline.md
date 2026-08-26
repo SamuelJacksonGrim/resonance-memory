@@ -226,3 +226,9 @@ the toggle applies without restarting the client — same as the associative fie
 - Tier 2 on improves `recall@5` without reducing precision.
 - Write latency p95 unchanged when Tier 2 is off.
 - Every secret-shaped input in `eval/adversarial` is refused.
+
+---
+
+## Related
+
+[[BACKLOG]] · [[ARCHITECTURE]] · [[ROADMAP]] · [[proposed/README]]

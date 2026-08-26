@@ -217,3 +217,9 @@ Three claims we must **not** make until earned (updated August 2026):
 - [Hybrid search: BM25, vector & reranking reference 2026](https://www.digitalapplied.com/blog/hybrid-search-bm25-vector-reranking-reference-2026)
 - [Understanding reciprocal rank fusion](https://glaforge.dev/posts/2026/02/10/advanced-rag-understanding-reciprocal-rank-fusion-in-hybrid-search/)
 - [Memory MCP servers directory](https://mcpservers.org/category/memory)
+
+---
+
+## Related
+
+[[ROADMAP]] · [[README]] · [[BACKLOG]] · [[LICENSING]]

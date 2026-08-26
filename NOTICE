@@ -20,3 +20,9 @@ third-party components added in the future, and their licenses, must be listed
 here and must be compatible with BOTH license tracks (AGPL-3.0 and the
 commercial license). Do not add code that cannot be relicensed commercially
 without first recording its provenance and license in this file.
+
+---
+
+## Related
+
+[[LICENSING]] · [[README]] · [[CONTRIBUTING]]

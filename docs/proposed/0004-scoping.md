@@ -200,3 +200,9 @@ memories." Once scoping exists:
 - Existing single-user stores behave **identically** after the change (everything lands in
   `default` / `long_term`).
 - No change to the four MCP verbs.
+
+---
+
+## Related
+
+[[phase-3-episodic-context]] · [[BACKLOG]] · [[ARCHITECTURE]] · [[proposed/README]]

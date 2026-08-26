@@ -23,3 +23,9 @@ To remove it later: double-click  uninstall.bat
 
 Made by the Architect of Resonance. If it helps you, there's a Ko-fi link
 in the app. Enjoy.
+
+---
+
+## Related
+
+[[README]] · [[DEVELOPERS]] · [[ROADMAP]]

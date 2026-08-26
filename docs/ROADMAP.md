@@ -1,201 +1,279 @@
-# Resonance Memory — roadmap
+# Resonance Memory — Roadmap
 
-*Last updated July 2026. Companion documents: [`BACKLOG.md`](BACKLOG.md) (itemized work),
-[`COMPETITIVE-ANALYSIS.md`](COMPETITIVE-ANALYSIS.md) (why this ordering),
-[`proposed/`](proposed/) (design docs with pseudocode).*
+**Supersedes** the previous `docs/ROADMAP.md` (product track, `RM-00`…`RM-20`) and the root
+`ROADMAP-IMPLEMENTATION.md` (substrate mechanisms, Phases 0–8) — both described one system at two
+altitudes. Prior versions remain in git history.
 
-## The goal
+## What this document is — and what it deliberately isn't
 
-Be the memory layer people choose **instead of** paying $19–$249/month to Mem0, Zep, or a
-hosted competitor — by being free, local-only, copyleft, and *architecturally* better at the
-thing memory is actually for: association.
+A roadmap holds **route and status**: what is done, what isn't, what's in progress, shelved, or
+rescinded, in what order, and why that order. Nothing else. Every claim of *fact* — how a thing is
+built, what an invariant protects, what "done" means, whether a claim is currently true — lives in
+the doc whose **function** owns it, referenced here by **stable name** (an item ID, an invariant
+ID, a bug ID, a proposed-design number), never by line number or code excerpt. A roadmap that
+restates mechanism goes stale the moment the mechanism changes — and it did (`BUG-006`).
 
-## The strategy in one paragraph
-
-We are behind on the **write path** (extraction, dedup, contradiction, temporal) and on
-**evaluation**, and ahead on **substrate** (Hebbian associative field — genuinely unique) and
-**distribution UX** (zero-terminal single file, no API key). So: build the evaluation harness
-first so every later claim is measurable, then close the write-path gap in the order that
-compounds, and only then chase infrastructure. Never enter the benchmark number war —
-compete on *reproducibility* instead, which hosted vendors structurally cannot match.
-
----
-
-## Phase ordering (and why)
-
-```
-Phase 0  Measurement          ← nothing ships without it
-Phase 1  Write path           ← the actual competitive gap
-Phase 2  Retrieval + shape    ← where our substrate advantage compounds
-Phase 3  Scope + scale        ← multi-agent, real storage
-Phase 4  Reach                ← SDKs, platforms, ecosystem
-```
-
-The ordering is not arbitrary. Three rules drive it:
-
-1. **Measurement precedes cleverness.** Extraction, dedup and conflict handling are all
-   features that can make the system *worse*. Without a regression suite you cannot tell.
-   Mem0 and Zep are locked in a public credibility fight *precisely* because numbers shipped
-   ahead of methodology. Phase 0 is the cheapest insurance we will ever buy.
-2. **The write path gates everything downstream.** Retrieval quality is capped by what got
-   stored. Temporal reasoning is impossible without temporal metadata written at save time.
-   Scoping is impossible without a scope field. All of it is Phase 1 or earlier.
-3. **Our moat compounds only after the basics.** The Hebbian field is our differentiator, but
-   tuning it (`RM-09`) on top of a store full of duplicates and contradictions is tuning
-   noise. It comes *after* the store is clean.
-
----
-
-## Phase 0 — Measurement (the foundation)
-
-**Goal:** any change to memory behaviour can be shown to help or hurt, on one command.
-
-| Item | What |
+| For… | Ask… |
 |---|---|
-| ~~`RM-00`~~ | ~~Eval harness + seeded corpora + `npm run eval`~~ — ✅ **shipped** (`cf70448`) |
+| What "done" means for an item — acceptance criteria, scope | [`BACKLOG.md`](BACKLOG.md) (`RM-00`…`RM-21`, **authoritative**) |
+| How it's built; what each invariant protects | [`ARCHITECTURE.md`](ARCHITECTURE.md) |
+| What broke, how, whether it's fixed | [`BUGS.md`](BUGS.md) |
+| The measured state — is a claim actually true now | [`../eval/`](../eval/), `../eval/RESULTS.md`, `npm run eval` |
+| The buildable phase specs (scope · steps · metrics · tests) | [`phases/`](phases/) — `phase-0` … `phase-8` |
+| Deep designs that gate a phase | [`proposed/`](proposed/) — `0003` (Phase 2.2 gate), `0007` (the harness), `0002`/`0004`/`0006` (referenced by their phases) |
+| What shipped when | [`../CHANGELOG.md`](../CHANGELOG.md) |
+| Pricing / positioning | [`COMPETITIVE-ANALYSIS.md`](COMPETITIVE-ANALYSIS.md) |
+| Working agreement; build/run/test | [`../CLAUDE.md`](../CLAUDE.md), [`../DEVELOPERS.md`](../DEVELOPERS.md) |
 
-**Deliverables**
-- A fixture corpus of messy, realistic inputs — including the cases nobody benchmarks:
-  contradictions, restatements, partial updates, "actually, no", relative dates.
-- Metrics: recall@k, MRR, **staleness rate** (answered from a superseded fact),
-  false-supersession (hard gate — must be zero), duplicate rate, constraint surfacing,
-  extraction precision/recall, write-latency, store growth.
-- A **golden-set** regression gate: a change that drops any metric fails loudly.
-- Reproducible with fixed seeds, offline, no API key, in under a minute.
-
-**Exit criteria:** `npm run eval` prints a scorecard; CI fails on regression; the corpus
-includes ≥50 contradiction/update cases (the axis LOCOMO and LongMemEval both under-test).
-
-> **This phase is the single highest-leverage thing in this document.** Everything after it
-> is guesswork without it.
+If this roadmap and any of those disagree, **the other doc wins** — and this file is the one to fix.
 
 ---
 
-## Phase 1 — The write path (closing the real gap)
+## What this is
 
-**Goal:** what gets stored is clean, current, and structured — without a cloud LLM.
+A persistent, event-driven associative memory substrate, exposed over MCP, that runs entirely on
+the user's machine, tied to no account, sent to no cloud. **Substrate and product are the same
+claim:** the substrate *is* what ships; any model can drive it and any host can run it precisely
+because the interface stays dumb and the sophistication stays underneath.
 
-| Item | What | Depends on |
+**Core principle: time is a function, not a process** — no heartbeat, no dream loop, no decay
+daemon; every operation observes state at *T*, computes temporal effects, mutates, persists.
+Autonomous cognition belongs in the consuming agent; the MCP boundary is that line. (Mechanism:
+`ARCHITECTURE.md` §1.)
+
+**The goal.** Be the memory layer people choose *instead of* a paid hosted service — free,
+local-only, copyleft, architecturally better at association. Never enter the benchmark-number war;
+compete on **reproducibility**, which hosted vendors structurally cannot match. (Pricing:
+`COMPETITIVE-ANALYSIS.md`.)
+
+### Where we stand *(August 2026 — recheck before trusting)*
+
+| Area | Position | Owned by |
 |---|---|---|
-| `RM-01` | Extraction on write (heuristics first, optional local LLM pass) | `RM-00` |
-| `RM-02` | Near-duplicate detection + merge | `RM-00` |
-| `RM-03` | Contradiction / supersession — 🟡 **v1 (cue-gated) shipped** (`b143e2d`); fuller heuristics open | `RM-02`, `RM-04` |
-| ~~`RM-04`~~ | ~~Temporal metadata~~ — ✅ **shipped** | — |
+| Evaluation | **No longer a gap.** `RM-00` shipped: offline, deterministic, golden-gated. IR metrics (recall@k, MRR, staleness, dup-rate) not built — Phase 2.5. | `RM-00`, `eval/` |
+| Write path | **The real gap.** `RM-04` + `RM-03` v1 landed; `RM-01`/`RM-02` have not. | `RM-01`–`RM-04` |
+| Substrate | **Differentiated, working, not yet unified.** Two mechanisms, one idea — cooperating; unification is an improvement, not a repair. | Phase 0, `ARCHITECTURE.md` |
+| Distribution | **Ahead.** Single file, zero terminal, no API key. | `DEVELOPERS.md` |
 
-**Sequencing note.** `RM-04` went first for a reason: a *schema* change is cheap, and both
-`RM-03` and later retrieval work are impossible without the fields in place. It has shipped —
-`valid_from` / `valid_to` / `last_confirmed` / `superseded_by` are live, recall filters to
-currently-true memories, and `supersedePatches()` applies a supersession atomically. **`RM-03`
-v1 now calls it** (cue-gated correction markers, on by default — worst case retires nothing); the
-fuller detection heuristics (negation flip, numeric/date change, optional LLM adjudication) remain open.
-
-**Design stance (see `proposed/0001`, `proposed/0002`):**
-- **Heuristics before LLMs.** A tiered write pipeline: cheap deterministic rules handle the
-  common cases; the local LLM pass is *optional*, off by default, and never blocks the save.
-  Mem0's own 2026 move to single-pass ADD-only extraction (cutting write LLM calls 60–70%)
-  is evidence that write-time LLM work is the expensive mistake, not the feature.
-- **Invalidate, never delete.** Follow Graphiti's bi-temporal model: a superseded fact gets
-  `valid_to` set to the superseding fact's `valid_from`, producing a non-overlapping validity
-  chain. History is preserved; recall just prefers the current one.
-- **The four verbs do not change.** All of this lives in the substrate. `save_memory` still
-  takes `{content}`. This is a hard invariant (see DEVELOPERS.md).
-
-**Exit criteria:** staleness rate and duplicate rate both drop measurably on the `RM-00`
-corpus, with no regression in recall@k.
+Which fixes the order: **unify the substrate (Phase 0), then close the write-path gap, then tune
+what sits on top.** Tuning first tunes a substrate about to change.
 
 ---
 
-## Phase 2 — Retrieval and shape
+## Status legend
 
-**Goal:** find the right memory more often, and let the associative substrate earn its keep.
-
-| Item | What | Depends on |
-|---|---|---|
-| `RM-05` | Hybrid retrieval — semantic + keyword (+ optional graph) via RRF | `RM-00` |
-| `RM-08` | Soft constraints, importance decay, pruning rules | `RM-04` |
-| `RM-09` | Neighborhood / Hebbian tuning | `RM-00`, Phase 1 |
-
-**⚠️ Invariant conflict — must be resolved explicitly.** `DEVELOPERS.md` states
-**"Ranking = cosine only"**, justified by a measurement showing durability-weighted ranking
-inverts results. Hybrid retrieval *changes ranking*. This is a real conflict, not an
-oversight. The resolution (detailed in `proposed/0003`):
-
-- Hybrid ranking ships **behind a flag, off by default**.
-- It is promoted to default **only** on an A/B win on the `RM-00` golden set.
-- If it wins, `DEVELOPERS.md` is amended in the same PR with the measurement that earned it.
-- The invariant's *spirit* — "no unmeasured signal touches rank" — is preserved, which is what
-  actually matters. Rank changes are permitted; **unmeasured** rank changes are not.
-
-**Exit criteria:** RRF hybrid beats cosine-only on the golden set, or is dropped and the
-result documented.
-
----
-
-## Phase 3 — Scope and scale
-
-**Goal:** more than one user, more than one agent, more than a flat file.
-
-| Item | What | Depends on |
-|---|---|---|
-| `RM-06` | Multi-user / multi-agent scoping; session vs long-term separation | `RM-00` |
-| `RM-07` | Real store abstraction + SQLite backend | `RM-00` |
-| `RM-10` | Idle-time consolidation ("sleep-time compute") | Phase 1 |
-
-**`RM-07`'s dangerous half is already done.** `applyRecall()` used to rewrite the entire store
-on every recall, which was both a stall and a whole-file data-loss window on power failure.
-Both are fixed (`BUG-001`/`BUG-002` in [`BUGS.md`](BUGS.md)): writes are atomic, and access
-counts moved to a sidecar so a recall performs no store writes at all. What remains is the
-*performance* half — `all()` still parses the whole store per call and mutations still rewrite
-it — which is a scaling limit, not a correctness one. SQLite with `sqlite-vec` + FTS5 is what
-every local-first competitor already uses, and it makes `RM-05`'s keyword half nearly free.
-
-**Exit criteria:** 100k-memory store recalls in <100ms p95; scoping isolates agents in the
-eval; no MCP API change.
-
----
-
-## Phase 4 — Reach
-
-**Goal:** more places, more people, more failure modes observed.
-
-| Item | What |
+| Mark | Meaning |
 |---|---|
-| `RM-11` | Cross-platform builds (macOS/Linux), signing |
-| `RM-12` | SDKs — Python/TS client against a documented local HTTP API |
-| `RM-13` | Opt-in, local-only telemetry + a reproducible failure-report bundle |
-| `RM-14` | Hosted/enterprise — **deliberately deferred**, see below |
+| ✅ | Shipped and tested — do not rebuild |
+| 🟡 | Partially shipped — the roadmap wants more than exists |
+| ⬜ | Open |
+| 🔀 | **Migration, not greenfield** — working code exists and must change |
+| ⛔ | Gated — cannot become default without a named measurement |
+| 🛑 | **Rescinded** — decided against (distinct from a *measured* "no," which is a shipped result) |
+| ⏸ | **Shelved** — deliberately parked; may return. Kept visible on purpose |
 
-**On hosting and enterprise features.** This is the one item where the honest answer is
-*"probably not, and that's a strategy, not a limitation."* The moment there is a hosted tier,
-the local path starts to rot — that is visibly what happened to Zep's deprecated community
-edition. Our whole claim is "nothing leaves this machine." If hosting ever happens it should
-be a **separate product with a separate name**, so the local one can never be hollowed out to
-protect revenue. Enterprise features that *don't* require hosting (SSO-free multi-user
-scoping, audit logs, policy files) are fine and live in `RM-06`.
-
-**On the distribution/failure-mode gap.** The competitive analysis identifies this as a
-genuine moat we cannot code our way past: incumbents see the long tail of real abuse. `RM-13`
-is the counter — *local-only, opt-in* telemetry plus a one-command "export a reproducible
-failure bundle" so a user can hand us a case without handing us their memories. Ship it with
-the eval corpus so contributions are directly runnable.
+🔀 is the load-bearing one: roughly a third of Phase 0 reads as new construction but is a rewrite
+of the shipping `field.js`/`ledger.js`. Greenfield produces a second, parallel associative system.
 
 ---
 
-## What we are deliberately NOT doing
+## Invariant guardrails
 
-- **Not entering the benchmark number war.** No "we beat Mem0 on LOCOMO" marketing. The
-  LOCOMO dispute (84% → 58.44% → 75.14%, all contested) is a cautionary tale. We publish a
-  harness and let people run it.
-- **Not adding a fifth verb.** Every capability here lands in the substrate. The tool surface
-  may get *simpler*, never more demanding.
-- **Not requiring a cloud LLM anywhere on the critical path.** Optional, local, off by default.
-- **Not shipping a feature without its eval.** "It has a conflict handler" is worthless; "the
-  conflict handler measurably reduces staleness" is the product.
+Every phase must leave these standing. **Definitions, rationale, and the backing code live in
+[`ARCHITECTURE.md`](ARCHITECTURE.md) §2** — the only roadmap-relevant fact is *held vs. target*.
+
+| | Invariant (one line) | Status |
+|---|---|---|
+| I1 | Four verbs, nothing more | ✅ held |
+| I2 | No *unmeasured* signal touches rank | ✅ held (amended — see ARCHITECTURE) |
+| I2b | Access-frequency signals are telemetry only | ✅ held |
+| I3 | The associative layer fails open | ✅ held |
+| I4 | Embed at save; server owns all metadata | ✅ held (one self-extinguishing legacy exception) |
+| I5 | Durable writes; no *unbounded* write on a read path | ✅ held (one self-extinguishing legacy exception) |
+| I6 | Reading does not drive the decay clock | ⬜ **target — Phase 0.2** |
+| I7 | Activation never persists | ⬜ n/a until Phase 1 |
+| I8 | No silent removal | ✅ held (records) · ⬜ edges — Phase 0.4 |
+| I9 | Discovery nominates; it does not appoint | ✅ held |
+
+The I4/I5 exceptions and I6's target status are real and named on purpose; an invariant claimed
+more strongly than the code supports stops anyone from looking. Full accounting in ARCHITECTURE.
+
+---
+
+## Already shipped — do not rebuild
+
+Status only. Where each lives and how it works: `ARCHITECTURE.md`. What each satisfies: `BACKLOG.md`.
+
+| Capability | Item | Note |
+|---|---|---|
+| Four-verb MCP surface; single shared core (server + eval) | — | Foundation — do not fork |
+| Embed-at-save, cosine recall, keyword fallback | — | Foundation |
+| Durable atomic writes; recall does no *unbounded* store write | — | `BUG-001`/`BUG-002` |
+| Soft delete + `vacuum()` compaction | — | Precedent for Phase 0.4 — **reuse the pattern** |
+| Store abstraction behind the verbs | — | SQLite swap is `RM-07` |
+| kNN semantic graph, neighborhood expansion, constraint rescue | — | 🟡 ephemeral, rebuilt per recall |
+| Hebbian weights, bounded `maxBonus·tanh(w)`, provenance-discounted | — | 🟡 per-edge bounding solved; wall-clock decay not |
+| Decay + prune | — | 🔀 recall-epoch based — Phase 0.2 replaces it |
+| Bi-temporal validity + current-gating | `RM-04` | ✅ extended by Phase 7, not started by it |
+| Cue-gated supersession detection v1 | `RM-03` v1 | 🟡 continued by Phase 7.2 |
+| Offline deterministic eval + golden gate | `RM-00` | ✅ **this is Phase 2.5** — extend, don't rebuild |
+| Dependency-free test suite (61 after PRE-0) | — | Count in `CHANGELOG.md`; run it, don't cite it |
+
+---
+
+## PRE-0 — before any Phase 0 code
+
+- [x] **`BUG-008`** — `edit()` embedding-destruction fix + 4 regression tests (`test.js` 57 → 61). ✅ (`BUGS.md`)
+- [ ] **Edge state-transition table ratified** — every cell decided, incl. `superseded → inherited?` (deferred to Phase 7). Table: [`phase-0`](phases/phase-0-edge-substrate.md).
+
+---
+
+## Phases — the build track
+
+Each phase is a **self-contained, individually buildable + testable** doc in [`phases/`](phases/):
+scope, build steps, its **own** success/failure metrics + test plan, exit criteria. This roadmap
+holds only *where we are*; the phase doc holds *what to build and how to know it worked*.
+
+**Rule carried into every phase doc:** pre-declare the success **and** failure signature → build
+one mechanism → test → measure → break it → fix → document → then the next. **No phase ships
+without its own custom eval** — a blanket metric does not fit a phase scope.
+
+| Phase | Focus | Status | Doc |
+|---|---|---|---|
+| **0** | Unify time & persistence (edge substrate) 🔀 | **← current work** | [`phase-0`](phases/phase-0-edge-substrate.md) |
+| 1 | Transient activation | ⬜ | [`phase-1`](phases/phase-1-transient-activation.md) |
+| 2 | Retrieval & association dynamics | ⬜ ⛔ | [`phase-2`](phases/phase-2-retrieval-dynamics.md) |
+| 3 | Episodic working context *(overlaps `RM-06`)* | ⬜ | [`phase-3`](phases/phase-3-episodic-context.md) |
+| 4 | Consolidation *(weakest prior — cut if unproven)* | ⬜ | [`phase-4`](phases/phase-4-consolidation.md) |
+| 5 | Temporal & predictive 🔀 | ⬜ | [`phase-5`](phases/phase-5-temporal-predictive.md) |
+| 6 | Rich structure *(watch `I1`)* | ⬜ | [`phase-6`](phases/phase-6-rich-structure.md) |
+| 7 | Reconsolidation *(extends `RM-04`/`RM-03`)* | 🟡 | [`phase-7`](phases/phase-7-reconsolidation.md) |
+| 8 | Cognitive integration | ⬜ | [`phase-8`](phases/phase-8-cognitive-integration.md) |
+
+Phase 0 is in flight; everything after Phase 1 is **planned, not committed** — the code must earn it.
+
+### Phase 0 — live sub-phase tracker
+
+The one phase in flight. Full spec + metrics + tests: [`phase-0`](phases/phase-0-edge-substrate.md).
+
+| Sub-phase | Purpose | Status |
+|---|---|---|
+| **0.0** | One edge store, two signals; `embedding_version` schema; migrate `.assoc.json` (one-way) | ⬜ 🔀 |
+| **0.1** | Save-time semantic edges + edge timestamps; save-latency cost sweep | ⬜ |
+| **0.2** | Lazy wall-clock decay of the learned signal (**I6 becomes true**) | ⬜ 🔀 |
+| **0.3** | Materialize-on-mutation; MCP request-ID idempotency (atomic dedup) | ⬜ |
+| **0.4** | Soft pruning (mirror `vacuum()`); server-side reactivation | ⬜ |
+| **0.5** | Phase 0 tests — every transition row, *reading ≠ decay*, *fails-open* | ⬜ |
+| **0.6** | Threat-model sketch (design only; `RM-16` stays gated to Phase 2) | ⬜ |
+
+**Exit:** golden green and reliable. Do not proceed to Phase 1 until it is.
+
+### The promotion gate ⛔ (Phase 2)
+
+The one cross-phase gate worth stating at the route level. Fusion becomes default **only when all
+four hold** — (1) A/B win on the `RM-00` golden set *(needs metrics that don't exist yet — Phase
+2.5)* · (2) Phase 2.3 + 2.4 landed (competition + normalization damp rich-get-richer before learned
+weight enters rank) · (3) `RM-16` landed · (4) `DEVELOPERS.md` + `CLAUDE.md` amended in the same PR.
+A failed gate keeps the flag off and writes the negative result down. A measured "no" is a shipped
+result. Full form: [`phase-2`](phases/phase-2-retrieval-dynamics.md), `BACKLOG.md` `RM-05`.
+
+---
+
+## Product track — items with no mechanism phase
+
+Not substrate work; what makes it runnable by anyone. Scope + acceptance: `BACKLOG.md`.
+
+| Item | What | Status |
+|---|---|---|
+| `RM-01` | Write-side extraction (heuristics first; local LLM optional, off by default, never blocks save) | ⬜ |
+| `RM-02` | Near-duplicate detection + merge | ⬜ |
+| `RM-07` | SQLite backend behind the Store seam (`sqlite-vec` + FTS5) | ⬜ |
+| `RM-11` | Cross-platform builds + signing | ⬜ |
+| `RM-12` | SDKs against a documented local HTTP API | ⬜ |
+| `RM-13` | Opt-in local-only telemetry + failure-report bundle | ⬜ |
+| `RM-15` | Longitudinal coherence soak test | ⬜ |
+| `RM-16` | Poisoning / injection defense | ⬜ **gates Phase 2.2 promotion** |
+| `RM-17` | Export / import / backup | ⬜ — priority rises once the sidecar holds irreplaceable state |
+| `RM-18` | Encryption at rest (optional) | ⬜ |
+| `RM-19` | Recall explainability | ⬜ — near-free once 2.2 tracing exists |
+| `RM-20` | First-run quality | ⬜ |
+| `RM-14` | Hosted / enterprise | ⛔ **deliberately deferred** — a separate product with a separate name |
+
+---
+
+## What we are deliberately not doing
+
+- **Not entering the benchmark-number war.** (LOCOMO: 84 % → 58.44 % → 75.14 %, all contested.) Publish a harness; compete on reproducibility.
+- **Not adding a fifth verb.** Every capability lands in the substrate.
+- **Not requiring a cloud LLM on the critical path.** Optional, local, off by default.
+- **Not shipping a feature without its eval.** "It has a conflict handler" is worthless; "measurably reduces staleness" is the product.
+- **Not building a future phase because you can see where it goes.** The architecture may anticipate; the code must earn it.
+
+---
 
 ## Success measures
 
-| Horizon | Measure |
-|---|---|
-| Near | `npm run eval` is green and public; staleness + duplicate rates trending down |
-| Mid | A user with 10k memories has a better experience than on Mem0 Starter, for $0 |
-| Long | "Just use Resonance" is the default answer to "what memory layer should I use?" for anyone privacy-sensitive or price-sensitive |
+Only the first is a measure; the others are aims, labelled so they can't pass for measurements.
+
+| Horizon | | |
+|---|---|---|
+| Near | **Measurable now** | `npm run eval` green and public; staleness + duplicate rates trending down; no golden regressions across Phase 0 |
+| Mid | *Aim — no harness exists* | A user with 10k memories has a better experience than a paid hosted starter tier, for $0 |
+| Long | *Aim — unfalsifiable* | "Just use Resonance" is the default answer for anyone privacy- or price-sensitive |
+
+---
+
+## Development loop
+
+Pre-declare the success **and** failure signature → implement one mechanism → test → measure →
+deliberately break it → find the failure mode → fix → document → only then add the next. A clean
+confirming result is the alarm, not the trophy. A behaviour change isn't done until the docs that
+describe it change with it (`BUG-006`).
+
+---
+
+## Current build target
+
+```
+PRE-0     ✅ BUG-008 fixed · ⬜ transition table ratified
+  ↓
+Phase 0.0   one substrate, two signals · embedding_version · migrate .assoc.json
+  ↓
+Phase 0.1   save-time semantic edges · edge timestamps · cost sweep
+  ↓
+Phase 0.2   lazy wall-clock decay of the learned signal   (I6 becomes true)
+  ↓
+Phase 0.3   materialize-on-mutation · request-ID idempotency
+  ↓
+Phase 0.4   soft pruning · server-side reactivation
+  ↓
+Phase 0.5   tests — reading ≠ reinforcement · fails-open
+  ↓
+GREEN (npm test + npm run eval)
+  ↓
+Phase 1
+```
+
+Everything after Phase 1 is planned, not committed.
+
+---
+
+## Accepted risks & open problems
+
+Route-level only. The mechanism behind each lives in its owning doc (Phase 0 risks:
+[`phase-0`](phases/phase-0-edge-substrate.md)).
+
+1. **Save-time cost is unmeasured** — Phase 0.1's per-write scan may make `RM-07` mandatory. Sweep before deciding.
+2. **Two cosine thresholds serve different jobs** (recall gate 0.55 vs. save-time bind ~0.25) — deliberate and documented, not accidental.
+3. **Consolidation (Phase 4) may not earn its place** — exit criterion is measurable retrieval gain; absent that, cut it.
+4. **Fusion may lose the Phase 2.2 gate** — valid and publishable; the flag stays off.
+5. **Edge inheritance across supersession is undecided** (Phase 7) — the quietest data-loss path.
+6. **Phases 5–8 have no eval design yet** — metrics before code.
+7. **Sidecar migration is one-way** — an old build reading a new sidecar must fail cleanly, not silently drop edges.
+8. **The sidecar now holds irreplaceable state** — semantic rebuilds, learned weight does not; `RM-17` backup rises in priority.
+
+---
+
+## Related
+
+[[ARCHITECTURE]] · [[BACKLOG]] · [[BUGS]] · [[COMPETITIVE-ANALYSIS]] · [[proposed/README]] · [[phase-0-edge-substrate]] · [[phase-1-transient-activation]] · [[phase-2-retrieval-dynamics]] · [[phase-3-episodic-context]] · [[phase-4-consolidation]] · [[phase-5-temporal-predictive]] · [[phase-6-rich-structure]] · [[phase-7-reconsolidation]] · [[phase-8-cognitive-integration]] · [[CLAUDE]] · [[DEVELOPERS]] · [[roadmap-dissemination-log]] · [[RESULTS]]

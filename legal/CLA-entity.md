@@ -96,3 +96,9 @@ that would make these representations inaccurate.
 
 *You may update Schedule A by written notice to
 collectiveaifamily@gmail.com.*
+
+---
+
+## Related
+
+[[CLA-individual]] · [[CONTRIBUTING]] · [[DCO]] · [[LEGAL-BASIS]]

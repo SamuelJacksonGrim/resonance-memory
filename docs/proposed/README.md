@@ -11,8 +11,13 @@ before anyone writes the implementation.
 | [0003](0003-hybrid-retrieval.md) | Hybrid retrieval (semantic + keyword + graph) via RRF | `RM-05` | proposed ⚠️ |
 | [0004](0004-scoping.md) | Scoping: multi-user, multi-agent, session vs long-term | `RM-06` | proposed |
 | [0005](0005-store-abstraction.md) | Store abstraction and the SQLite backend | `RM-07` | proposed (`store.js` seam extracted) |
-| [0006](0006-constraints-decay-pruning.md) | Soft constraints, importance decay, pruning | `RM-08` | proposed — **scope likely much smaller than written**; measure first |
+| [0006](0006-constraints-decay-pruning.md) | Soft constraints, *importance* decay, pruning | `RM-08` | proposed — **scope likely much smaller than written**; measure first. *Substrate-level (learned-edge) decay moved to [`phase-0`](../phases/phase-0-edge-substrate.md).* |
 | [0007](0007-eval-harness.md) | The evaluation harness | `RM-00` | proposed |
+
+> **Phase specs live in [`../phases/`](../phases/), not here.** These `proposed/` docs are RFC-style
+> *rationale* — reference material a phase links to. The edge-substrate design that was drafted here
+> as `0008` graduated to [`phase-0`](../phases/phase-0-edge-substrate.md) (the canonical build spec
+> for roadmap Phase 0).
 
 ⚠️ **0003 touches a ratified invariant** (`ranking = cosine only`) and proposes a specific,
 measured process for amending it. Read that section before implementing anything in it.
@@ -33,6 +38,10 @@ If you're picking this up cold:
    doc describes is **fixed** (see [`../BUGS.md`](../BUGS.md) `BUG-001`/`BUG-002`); the
    remaining O(N) parse/rewrite is what SQLite is for.
 6. **[0003](0003-hybrid-retrieval.md)** — the one with an invariant fight in it.
+7. **[`phase-0`](../phases/phase-0-edge-substrate.md)** *(in `phases/`, not here)* — the current
+   work: unify `field.js` and `ledger.js` into one persistent edge store with two signals
+   (semantic = derived, learned = source-of-truth). Where `I6` becomes true and where activation
+   plugs in.
 
 ## Conventions
 
@@ -44,3 +53,9 @@ If you're picking this up cold:
   degrades silently.
 - **Negative results are deliverables.** "We tried it and it lost" written down is worth more
   than an untested idea left open.
+
+---
+
+## Related
+
+[[ROADMAP]] · [[ARCHITECTURE]] · [[BACKLOG]] · [[0001-write-pipeline]] · [[0002-temporal-supersession]] · [[0003-hybrid-retrieval]] · [[0004-scoping]] · [[0005-store-abstraction]] · [[0006-constraints-decay-pruning]] · [[0007-eval-harness]] · [[phase-0-edge-substrate]] · [[phase-2-retrieval-dynamics]]
