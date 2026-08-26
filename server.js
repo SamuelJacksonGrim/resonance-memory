@@ -45,7 +45,8 @@ const fs = require("fs");
 const path = require("path");
 const { Ledger } = require("./ledger.js");
 const { JsonlStore } = require("./store.js");
-const { createCore } = require("./memory-core.js");
+const { createCore, defaultGetEdges } = require("./memory-core.js");
+const { WarmField } = require("./warm.js");
 // Single source of truth for the version, so serverInfo can't drift from package.json.
 // esbuild inlines this JSON into the bundle, so it resolves in the SEA build too.
 const VERSION = require("./package.json").version;
@@ -66,6 +67,16 @@ const STORE_PATH = process.env.MEMORY_FILE_PATH ||
 const CONFIG_PATH = process.env.RESONANCE_MEMORY_CONFIG ||
   path.join(path.dirname(STORE_PATH), "resonance-memory.config.json");
 const ENV_FIELD = ["1", "true", "yes"].includes(String(process.env.RESONANCE_MEMORY_FIELD || "").toLowerCase());
+const ENV_WARM = ["1", "true", "yes"].includes(String(process.env.RESONANCE_WARM_FIELD || "").toLowerCase());
+const ENV_WARM_RANK = String(process.env.RESONANCE_WARM_RANK || "off").toLowerCase() || "off";
+const ENV_WARM_TRACE = ["1", "true", "yes"].includes(String(process.env.RESONANCE_WARM_TRACE || "").toLowerCase());
+function envInt(name, fallback) {
+  const raw = process.env[name];
+  if (raw == null || raw === "") return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : fallback;
+}
+const ENV_WARM_EDGE_CAP = envInt("RESONANCE_WARM_EDGE_CAP", 512);
 function fieldEnabled() {
   try {
     const c = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
@@ -82,6 +93,16 @@ fs.mkdirSync(path.dirname(STORE_PATH), { recursive: true });
 // toggle can turn it on without a restart.
 let _ledger = null;
 function getLedger() { if (!_ledger) _ledger = new Ledger(STORE_PATH + ".assoc.json"); return _ledger; }
+
+// Warm field (Phase 1). In-proc Map, never persisted (I7). Flags default off so
+// the 27/31 golden is untouched. RESONANCE_WARM_RANK is read here so the MCP
+// process actually ships the flag; ranking consumption is PR3 and ignored until then.
+let _warm = null;
+function getWarm() { if (!_warm) _warm = new WarmField(); return _warm; }
+function warmEnabled() { return ENV_WARM; }
+function warmTrace() { return ENV_WARM_TRACE; }
+function warmEdgeCap() { return ENV_WARM_EDGE_CAP; }
+// ENV_WARM_RANK is read (so the MCP process ships the flag) and ignored until PR3.
 
 // --------------------------------------------------------------- embedding
 async function embed(texts) {
@@ -102,7 +123,12 @@ const store = new JsonlStore(STORE_PATH);
 // the environment into it - network embed, the live field toggle, the lazy ledger.
 // eval/pipeline.js wires the SAME core to a cached embedder, so there is exactly one
 // implementation of save/recall and the RM-00 golden guards that they never diverge.
-const core = createCore({ store, embed, fieldEnabled, getLedger });
+const core = createCore({
+  store, embed, fieldEnabled, getLedger,
+  warmEnabled, getWarm, getEdges: defaultGetEdges,
+  saveSeed: () => true,          // production: a just-saved fact is warm without a recall
+  warmTrace, warmEdgeCap,
+});
 
 // -------------------------------------------------------------------- tools
 const TOOLS = [

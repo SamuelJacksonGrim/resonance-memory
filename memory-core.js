@@ -31,12 +31,22 @@
  *   fieldEnabled  () -> boolean   (live config read in prod, a fixed flag in eval)
  *   getLedger     () -> Ledger    (lazy: the Hebbian sidecar is only built on first
  *                                  field use, so the field toggle needs no restart)
+ *   warmEnabled   () -> boolean   (RESONANCE_WARM_FIELD; default off)
+ *   getWarm       () -> WarmField (lazy, like getLedger; in-proc Map, never persisted)
+ *   getEdges      (mems, L) -> Map  ALWAYS a Map, never null. Cap is at spread().
+ *   saveSeed      () -> boolean   (production may pass true; eval MUST pass false)
+ *   warmTrace     () -> boolean   (RESONANCE_WARM_TRACE; default off, zero-cost)
+ *   warmEdgeCap   () -> number    (RESONANCE_WARM_EDGE_CAP; default 512)
  *
  * Ranking is COSINE ONLY (see server.js's invariants); the field is additive and
- * never allowed to throw into the recall path.
+ * never allowed to throw into the recall path. Warmth in PR1 is the same: seed
+ * and spread run when enabled, but nothing is read into the output string.
  */
 
 const field = require("./field.js");
+const {
+  WarmField, shouldSpread, WARM_EDGE_CAP, emitWarmTrace,
+} = require("./warm.js");
 const {
   normalize, isHistoricalQuery, detectSupersession, supersedePatches,
 } = require("./record.js");
@@ -61,6 +71,23 @@ const K_SEARCH = Number(process.env.RESONANCE_FIELD_KSEARCH) || 15;
 // governs whether a TYPED constraint finds a bridge, so it cannot loosen ordinary recall.
 const CONSTRAINT_GATE = process.env.RESONANCE_CONSTRAINT_GATE ? Number(process.env.RESONANCE_CONSTRAINT_GATE) : 0.45;
 
+/*
+ * Default edge source for warmth (and, later, a Phase 0 swap). ALWAYS returns a
+ * Map (possibly empty). NEVER null — null-as-sentinel would disable field
+ * neighborhood on large stores (WARM_EDGE_CAP gates spread(), not Related:).
+ */
+function defaultGetEdges(mems, L) {
+  return field.buildEdges(mems || [], {
+    k: 2, minSim: 0.55,
+    bonus: L ? (a, b) => L.bonus(a, b) : () => 0,
+    mutual: FIELD_MUTUAL,
+  });
+}
+
+function asEdgeMap(edges) {
+  return edges instanceof Map ? edges : new Map();
+}
+
 function cosine(a, b) {
   if (!a || !b) return 0;
   let dot = 0, na = 0, nb = 0;
@@ -83,8 +110,54 @@ function keywordScore(query, text) {
  * Build the four verbs over an injected environment. Returns { save, recall, edit,
  * remove }. `remove` (not `delete`) avoids the reserved word; callers map their own
  * verb name onto it.
+ *
+ * Warmth flags default off: decay/seed/spread do not run, output is today's
+ * cosine (+ field). When warmEnabled is true, the silent hook still must not
+ * change the output string (PR1); Related: consumption is PR2, rank is PR3.
  */
-function createCore({ store, embed, fieldEnabled = () => false, getLedger }) {
+function createCore({
+  store, embed,
+  fieldEnabled = () => false,
+  getLedger,
+  warmEnabled = () => false,
+  saveSeed = () => false,
+  getWarm,
+  getEdges,
+  warmTrace = () => false,
+  warmEdgeCap = () => WARM_EDGE_CAP,
+}) {
+
+  // Lazy fallback so a test can pass warmEnabled without getWarm. Production
+  // always injects getWarm (one Map per MCP process).
+  let _warm = null;
+  function warm() {
+    if (getWarm) return getWarm();
+    if (!_warm) _warm = new WarmField();
+    return _warm;
+  }
+
+  function edgesFor(mems) {
+    const L = getLedger ? getLedger() : null;
+    return asEdgeMap((getEdges || defaultGetEdges)(mems, L));
+  }
+
+  function pruneWarm(W, mems) {
+    const live = new Set((mems || []).map((m) => String(m.id)));
+    for (const [id] of [...W.entries()]) {
+      if (!live.has(String(id))) W.forget(id);
+    }
+  }
+
+  // Internal prime (I1: not a tool). Whole path in try/catch — I3.
+  function tryPrimeSave(id) {
+    try {
+      if (!warmEnabled() || !saveSeed() || id == null) return;
+      const W = warm();
+      W.seed([id], 1.0);
+      const mems = store.current();
+      if (shouldSpread(mems, warmEdgeCap())) W.spread(edgesFor(mems));
+    } catch { /* warmth must never break save */ }
+  }
 
   async function save(content) {
     content = (content || "").trim();
@@ -97,6 +170,7 @@ function createCore({ store, embed, fieldEnabled = () => false, getLedger }) {
     const same = store.current().find((r) => r.text === content);
     if (same) {
       store.update(same.id, { last_confirmed: now });
+      tryPrimeSave(same.id);
       return "Already remembered — confirmed it's still current. (" + store.current().length + " memories total.)";
     }
 
@@ -117,10 +191,12 @@ function createCore({ store, embed, fieldEnabled = () => false, getLedger }) {
       Object.assign(rec, p.new);            // new memory carries supersedes/revision
       store.add(rec);                       // append the correction as current
       store.update(superseded.id, p.old);   // retire the old row (valid_to/superseded_by)
+      tryPrimeSave(rec.id);
       return "Saved — updated what I knew, retiring memory " + superseded.id +
              ". (" + store.current().length + " memories total.)";
     }
     store.add(rec);
+    tryPrimeSave(rec.id);
     return "Saved. (" + store.current().length + " memories total.)";
   }
 
@@ -199,6 +275,25 @@ function createCore({ store, embed, fieldEnabled = () => false, getLedger }) {
         L.save();
       } catch { /* the field is additive; never let it break recall */ }
     }
+
+    // Silent warm hook (PR1). Flags default off → this block does not run and
+    // 27/31 is the field's A/B, unchanged. When warmEnabled, decay/seed/spread
+    // run and E is observable via WarmField.trace, but `out` is not consulted
+    // — byte-identical to warm-off. Related: consumption is PR2; rank is PR3.
+    // I3: the whole path is in try/catch and degrades to the cosine `out` already
+    // built. I7: nothing here writes E to disk.
+    try {
+      if (warmEnabled()) {
+        const W = warm();
+        W.decayAll({ turns: 1 });
+        pruneWarm(W, mems);
+        W.seed(ranked.map((m) => m.id), 1.0);
+        if (shouldSpread(mems, warmEdgeCap())) W.spread(edgesFor(mems));
+        // Zero-cost when off: one boolean, no stringify, no iteration.
+        if (warmTrace()) emitWarmTrace(W, { query, primary: ranked });
+      }
+    } catch { /* warmth is additive; never let it break recall */ }
+
     return out;
   }
 
@@ -226,10 +321,13 @@ function createCore({ store, embed, fieldEnabled = () => false, getLedger }) {
   function remove(id) {
     if (id === undefined || id === null || id === "") return "Provide the `id` shown in a recall listing.";
     const ok = store.update(id, { deleted: true, modified: new Date().toISOString() });
+    if (ok) {
+      try { if (warmEnabled()) warm().forget(id); } catch { /* I3 */ }
+    }
     return ok ? "Deleted memory " + id + "." : "No memory with id " + id + ".";
   }
 
   return { save, recall, edit, remove };
 }
 
-module.exports = { createCore, cosine, keywordScore };
+module.exports = { createCore, cosine, keywordScore, defaultGetEdges, asEdgeMap };
