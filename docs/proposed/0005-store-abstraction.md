@@ -225,3 +225,9 @@ test so no future backend reintroduces it.
 - **No change to the four MCP verbs.**
 - Kill-9 during a write leaves a readable store. *(Already true for JSONL as of `BUG-001` —
   the SQLite backend must not regress it. Encoded in the conformance suite.)*
+
+---
+
+## Related
+
+[[BACKLOG]] · [[ARCHITECTURE]] · [[BUGS]] · [[proposed/README]]

@@ -71,3 +71,9 @@ commercial build.
   restrict the commercial track. Record any third-party code in `NOTICE`.
 - Consider registering the copyright before you need to enforce. See
   `legal/LEGAL-BASIS.md` §6.
+
+---
+
+## Related
+
+[[LICENSING]] · [[USING-THIS-WITHOUT-A-LAWYER]] · [[LEGAL-BASIS]] · [[CLA-individual]] · [[CONTRIBUTING]]

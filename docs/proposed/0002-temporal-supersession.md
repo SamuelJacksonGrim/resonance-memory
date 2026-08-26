@@ -262,3 +262,9 @@ recall "where did I used to work" → both, ordered   (HISTORICAL matched)
 - `eval/temporal` historical queries return superseded facts correctly.
 - Legacy stores load with no migration step.
 - `RM-15` soak: staleness stays flat from update 100 → 1000.
+
+---
+
+## Related
+
+[[phase-7-reconsolidation]] · [[BACKLOG]] · [[ARCHITECTURE]] · [[BUGS]] · [[proposed/README]]

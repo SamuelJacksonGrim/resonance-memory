@@ -59,3 +59,9 @@ This record should stay truthful. As the work grows, the author should continue
 to exercise real creative control (design, selection, arrangement, editing) and
 can keep evidence of the process — prompt/revision history, commit history, and
 notes — which further supports the authorship claim if it is ever questioned.
+
+---
+
+## Related
+
+[[LEGAL-BASIS]] · [[LICENSING]] · [[CONTRIBUTING]] · [[COMMERCIAL-LICENSE]]

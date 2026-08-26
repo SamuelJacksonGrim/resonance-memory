@@ -74,3 +74,9 @@ Please don't file public issues for security problems. Email
 
 See [`LICENSING.md`](LICENSING.md) and [`legal/licensing-faq.md`](legal/licensing-faq.md),
 or email the address above.
+
+---
+
+## Related
+
+[[LICENSING]] · [[CLA-individual]] · [[CLA-entity]] · [[DCO]] · [[LEGAL-BASIS]] · [[CLAUDE]] · [[COMMERCIAL-LICENSE]]

@@ -108,3 +108,9 @@ that would make these representations inaccurate in any respect.
 *Return a signed copy to: Samuel Jackson Grim — collectiveaifamily@gmail.com,
 or record your agreement in your pull request exactly as `CONTRIBUTING.md`
 describes.*
+
+---
+
+## Related
+
+[[CLA-entity]] · [[CONTRIBUTING]] · [[DCO]] · [[LEGAL-BASIS]] · [[licensing-faq]]

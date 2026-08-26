@@ -137,6 +137,51 @@ Design: [`proposed/0002`](proposed/0002-temporal-supersession.md).
 
 ## Phase 2 — Retrieval and shape
 
+### `RM-21` — Edge substrate unification (one store, two signals) · **L** · `todo` — **roadmap Phase 0, current work** 🔀
+
+> **Migration, not greenfield.** `field.js` (static kNN, rebuilt per recall, persists nothing)
+> and `ledger.js` (Hebbian sidecar, persists, decays on a recall-count clock) merge into **one
+> persistent edge store with two independent signals**: `semantic` (derived / recomputable) and
+> `learned` (source-of-truth / irreplaceable). Building it fresh produces a *second* parallel
+> associative system beside the one already running. Design: [`phases/phase-0`](phases/phase-0-edge-substrate.md).
+
+- [ ] **PRE-0:** `BUG-008` fixed (✅, see [`BUGS.md`](BUGS.md)); **edge state-transition table
+      ratified** — including the `superseded → inherited?` cell (deferred-decision, Phase 7).
+- [ ] **0.0** One edge store, two signals (semantic derived, learned source-of-truth), typed
+      provenance. `embedding_version` added to `record.js normalize()` (defaults legacy rows to
+      `1`). **Migrate every `.assoc.json` edge in, one-way**: an old build reading a new sidecar
+      fails cleanly, never silently drops edges. `field.js` constraint-rescue + mutual-kNN
+      preserved through the move.
+- [ ] **0.1** Save-time semantic edges (K≈5, cosine ~0.25, `hebbian.weight=0`) + edge timestamps.
+      **Cost sweep:** record `save_latency` p50/p95/p99 at N=100/1k/10k/50k/100k; **pre-declare**
+      the p95 budget that triggers `RM-07` *before* running it.
+- [ ] **0.2** **Lazy wall-clock decay of the learned signal** (configurable half-life), replacing
+      the recall-count clock (`ledger.tick`). `reinforceRecall` untouched — **this is where `I6`
+      becomes true.** Not `RM-08` *importance* decay (different object, different law — see there).
+- [ ] **0.3** Materialize-on-mutation + MCP request-ID idempotency. **Dedup record and weight
+      change must commit atomically** (I5 makes each write durable, not the *pair* atomic — keep
+      the dedup LRU inside the sidecar); if not atomic, order dedup-first. Relates to `W-04`.
+- [ ] **0.4** Soft pruning — an edge whose learned signal hits zero survives if semantic still
+      clears the gate. Mirror soft-delete + `vacuum()` (`I8`). **Reactivation is server-side only**
+      (I1): revive in place, `created_at` preserved, `prune_count`/`first_pruned_at`/
+      `last_reactivated_at` kept bounded; no `reactivate_edge()` tool.
+- [ ] **0.5** Phase 0 tests — every transition-table row incl. the negatives (recall/edit write
+      nothing to the edge store), *reading ≠ decay-clock advance*, *signals stay separate*,
+      *stale-semantic self-heals by version compare*, *fails-open*.
+- [ ] **0.6** Threat-model sketch (design only; `RM-16` implementation stays gated to Phase 2).
+
+**Acceptance:** the `RM-00` golden set does **not** regress at any sub-phase boundary
+(`npm run eval`); a store recalled N times under a frozen clock shows **zero** learned-edge decay;
+migration is lossless and one-way; an `edit()` bumps `embedding_version` so incident edges fail the
+`src_versions` match on next read **with no invalidation event run**; a corrupted edge store
+degrades to plain cosine with no throw. Full criteria + mechanism in
+[`phases/phase-0`](phases/phase-0-edge-substrate.md).
+
+> **Ordering:** unify the substrate **before** tuning what sits on it (`RM-09`) or promoting a
+> fusion arm (`RM-05`) — tuning against a substrate that is about to change tunes noise.
+
+---
+
 ### `RM-05` — Hybrid retrieval · **M** · `todo`
 
 > **⚠️ Touches the "ranking = cosine only" invariant.** Ships behind a flag, off by default;
@@ -152,6 +197,15 @@ Design: [`proposed/0002`](proposed/0002-temporal-supersession.md).
 
 **Acceptance:** RRF beats cosine-only on `recall@5` and `MRR`, **or** it is dropped and the
 negative result is written down (a negative result is a real deliverable here).
+
+**Promotion gate (all four, per `ROADMAP.md`).** Fusion becomes default *only* when: (1) an A/B
+win on the `RM-00` golden set — **the metrics it needs (`MRR`, `staleness_rate`,
+`false_supersession`, `duplicate_rate`) don't exist yet** and building them is a prerequisite
+(they land with the features they test — see `RM-00`); (2) `RM-21` has landed (competition +
+normalization must exist before learned weight enters rank, or ranking reinforces what already
+ranked); (3) `RM-16` (poisoning defense) has landed; (4) `DEVELOPERS.md` + `CLAUDE.md` amended
+in the same PR with the measurement that earned it. A failed gate keeps the flag off and writes
+the negative result down.
 
 Design: [`proposed/0003`](proposed/0003-hybrid-retrieval.md).
 
@@ -172,7 +226,10 @@ Design: [`proposed/0003`](proposed/0003-hybrid-retrieval.md).
 - [ ] **Reserved slot** (~10 lines) for the cold-start case only.
 - [ ] The domain-probe machinery in `proposed/0006` is **probably redundant** — it statically
       reimplements what the field does dynamically. Build only if the above doesn't close it.
-- [ ] Importance decay: `importance *= exp(-λ·Δt)`, refreshed on access/confirm.
+- [ ] **Importance decay** (a *retention* signal on **records**): `importance *= exp(-λ·Δt)`,
+      refreshed on access/confirm. Distinct from `RM-21`'s **learned-edge** decay (an
+      *association* signal on **edges**) — different object, different law; never wire one into
+      the other (see [`phases/phase-0`](phases/phase-0-edge-substrate.md) §5).
 - [ ] Pruning proposals surfaced **in the panel for review** — never silent deletion.
 - [ ] Never auto-prune anything with `kind: "constraint"` or a manual pin.
 
@@ -185,8 +242,9 @@ deletions, ever.
 
 ### `RM-09` — Neighborhood and Hebbian tuning · **M** · `todo`
 
-> Our actual differentiator. Tune it *after* Phase 1, or you're tuning noise in a store full
-> of duplicates and contradictions.
+> Our actual differentiator. Tune it *after* Phase 1 (or you're tuning noise in a store full of
+> duplicates and contradictions) **and after `RM-21`** — tune the *unified* substrate, not the
+> two pre-unification mechanisms that are about to merge.
 
 - [ ] Sweep `k`, `minSim`, hop count, decay rate, bonus cap against `RM-00`.
 - [ ] Asymmetric edges (A→B ≠ B→A) — association is directional in minds.
@@ -341,9 +399,11 @@ RM-04 (temporal) ──┬──> RM-03 (conflict) ─┤
                    └──> RM-08 (decay)     │
 RM-01 (extract) ───┬──> RM-02 (dedup) ────┘
                    └──> RM-10 (idle consolidation)
-RM-05 (hybrid) ────────> RM-09 (Hebbian tuning)
+RM-21 (substrate) ─┬──> RM-09 (Hebbian tuning)
+                   └──> RM-05 (hybrid) ──> RM-09
+RM-16 (poisoning) ─────> RM-05 promotion gate
 RM-07 (store) ─────────> RM-06 (scoping) ──> RM-12 (SDKs)
-RM-15 (soak) ── validates ──> RM-03, RM-08, RM-10
+RM-15 (soak) ── validates ──> RM-03, RM-08, RM-10, RM-21
 ```
 
 ## Suggested first five
@@ -355,3 +415,9 @@ If you want a concrete "start Monday" list, in order:
 3. **`RM-02`** — dedup. Highest visible quality-per-hour; users *feel* duplicate bloat.
 4. **`RM-03`** — supersession. The headline capability gap vs Zep.
 5. **`RM-07`** — SQLite. Removes the full-file-rewrite bomb before anyone hits it.
+
+---
+
+## Related
+
+[[ROADMAP]] · [[ARCHITECTURE]] · [[BUGS]] · [[phase-0-edge-substrate]] · [[phase-2-retrieval-dynamics]] · [[proposed/README]] · [[RESULTS]]

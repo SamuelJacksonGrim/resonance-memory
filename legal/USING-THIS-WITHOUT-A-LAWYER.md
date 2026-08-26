@@ -57,3 +57,9 @@ entire product — that's worth a lot to them. Start high; you can negotiate dow
 - **SD Law Help** (income-qualified, general civil): <https://sdlawhelp.org/>
   · East River Legal Services (605) 336-9230 · Dakota Plains (605) 856-4444
 - **SCORE** — free business mentoring (not legal): <https://www.score.org/>
+
+---
+
+## Related
+
+[[LICENSING]] · [[LEGAL-BASIS]] · [[licensing-faq]] · [[CONTRIBUTING]]
