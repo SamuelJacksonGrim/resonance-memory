@@ -43,6 +43,11 @@
  *   saveSeed      () -> boolean   (production may pass true; eval MUST pass false)
  *   warmTrace     () -> boolean   (RESONANCE_WARM_TRACE; default off, zero-cost)
  *   warmEdgeCap   () -> number    (RESONANCE_WARM_EDGE_CAP; default 512)
+ *   dedupThresholds () -> { hi, lo }  (RM-02.b cosine bands. Production reads
+ *                                  live config + env; eval/tests use defaults
+ *                                  or inject. Never read CONFIG_PATH here —
+ *                                  that would make the golden depend on the
+ *                                  user's panel file.)
  *
  * Ranking is COSINE ONLY (see server.js's invariants); the field is additive and
  * never allowed to throw into the recall path. Warmth in PR1 is the same: seed
@@ -55,6 +60,7 @@ const {
 } = require("./warm.js");
 const {
   normalize, isHistoricalQuery, detectSupersession, supersedePatches,
+  detectNearDuplicate, pickMergeSurvivor,
 } = require("./record.js");
 const { makeEdge, setSemantic, semanticValid, hebbianDecayType, reactivateEdge } = require("./edges.js");
 
@@ -99,6 +105,54 @@ const CONSTRAINT_GATE = process.env.RESONANCE_CONSTRAINT_GATE ? Number(process.e
  */
 const SAVE_TIME_K = 5;
 const SAVE_TIME_MIN_COS = 0.25;
+
+/*
+ * Cosine-banded dedup at save (RM-02.b). Thresholds are CONFIG, not
+ * constants — env `RESONANCE_DEDUP_HI` / `RESONANCE_DEDUP_LO` plus the
+ * live-config keys `dedup_hi` / `dedup_lo` (same pattern as the field
+ * toggle). These defaults are the tuned values.
+ *
+ * Tuned on eval/duplicates (nomic-embed-text-v1.5, eval/RESULTS.md
+ * RM-02.a geometry, confirmed RM-02.b A/B):
+ *   HI paraphrases  0.9522–0.9883  (tea 0.9522 is the tightest HI)
+ *   mid (same fact, more specific)  0.9261–0.9435
+ *   controls  ≤ ~0.69  (dog/cat ~0.69, peanuts/peanut-allergy ~0.67)
+ *
+ * 0.95 / 0.88 separate those three bands. HI-only restatement leaves
+ * the three mid extras and misses the pre-declared 50% bar (0.1667
+ * vs ≤ 0.1591) — the mid merge is what acceptance actually demands.
+ * 0.88 sits well above the control ceiling, so dog/cat cannot merge
+ * (that would drop recall@5 below 1.0, a FAIL even if dup_rate looks
+ * great).
+ *
+ * ≥ hi (not >): the spec is "cosine ≥ DEDUP_HI". Tea at 0.9522 clears
+ * 0.95 with margin, so the equality case is hypothetical; if a pair
+ * sat exactly on 0.95 we treat it as restatement (keep the original,
+ * don't rewrite) rather than merge. That's the conservative I8 choice
+ * for near-identity.
+ *
+ * The scan is O(N) cosine, same cost class as the 0.1 save-time bind
+ * (eval/save-time-cost.js: p95 77.1 ms at N=100k). Not a reason to
+ * force RM-07 from this slice.
+ */
+const DEDUP_HI = 0.95;
+const DEDUP_LO = 0.88;
+
+function envNumber(name, fallback) {
+  const raw = process.env[name];
+  if (raw == null || raw === "") return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function readDedupThresholds(config) {
+  const hiEnv = envNumber("RESONANCE_DEDUP_HI", DEDUP_HI);
+  const loEnv = envNumber("RESONANCE_DEDUP_LO", DEDUP_LO);
+  const c = config && typeof config === "object" ? config : {};
+  const hi = typeof c.dedup_hi === "number" && Number.isFinite(c.dedup_hi) ? c.dedup_hi : hiEnv;
+  const lo = typeof c.dedup_lo === "number" && Number.isFinite(c.dedup_lo) ? c.dedup_lo : loEnv;
+  return { hi, lo };
+}
 
 /*
  * Default edge source for warmth (and, later, a Phase 0 swap). ALWAYS returns a
@@ -233,6 +287,7 @@ function createCore({
   getEdges,
   warmTrace = () => false,
   warmEdgeCap = () => WARM_EDGE_CAP,
+  dedupThresholds = () => readDedupThresholds(null),
 }) {
 
   // Lazy fallback so a test can pass warmEnabled without getWarm. Production
@@ -306,6 +361,65 @@ function createCore({
     } catch { /* save-time bind must never break save */ }
   }
 
+  // Restatement (byte-identical OR cosine ≥ DEDUP_HI): bump confirmation +
+  // access_count, do not append. access_count is a retention signal (I2:
+  // never rank). The original text stays; nothing is lost (I8).
+  function confirmRestatement(existing, now) {
+    store.update(existing.id, {
+      last_confirmed: now,
+      access_count: (existing.access_count || 0) + 1,
+    });
+    tryReactivateIncident(existing.id);  // save touching an existing endpoint (0.4)
+    tryPrimeSave(existing.id);
+    return "Already remembered — confirmed it's still current. (" + store.current().length + " memories total.)";
+  }
+
+  // Mid-band merge. Reuses supersedePatches (RM-03 machinery) so the loser
+  // is linked with superseded_by and recoverable, never hard-deleted (I8).
+  // Survivor text is one of the two originals (pickMergeSurvivor) — never a
+  // blend. Metadata is unioned onto the survivor.
+  function commitMerge(incoming, existing, mems, now, requestId) {
+    const survivor = pickMergeSurvivor(existing, incoming);
+    const loser = survivor === incoming ? existing : incoming;
+    const p = supersedePatches(loser, survivor, now);
+    const union = {
+      last_confirmed: now,
+      is_constraint: !!(existing.is_constraint || incoming.is_constraint),
+      access_count: (existing.access_count || 0) + (incoming.access_count || 0) + 1,
+    };
+    if (existing.source === "user_stated" || incoming.source === "user_stated") {
+      union.source = "user_stated";
+    }
+
+    if (survivor === incoming) {
+      Object.assign(incoming, p.new, union);
+      store.add(incoming);
+      store.update(existing.id, p.old);
+      tryBindSaveTime(incoming, mems.filter((m) => String(m.id) !== String(existing.id)), requestId);
+      tryPrimeSave(incoming.id);
+      return "Saved — merged a near-duplicate, retiring memory " + existing.id +
+             ". (" + store.current().length + " memories total.)";
+    }
+
+    // Existing text is longer or equal: keep it current, persist the
+    // incoming as already-superseded so the shorter wording is recoverable.
+    Object.assign(incoming, p.old);
+    store.add(incoming);
+    store.update(existing.id, Object.assign({}, p.new, union));
+    tryReactivateIncident(existing.id);
+    tryPrimeSave(existing.id);
+    return "Saved — merged a near-duplicate into memory " + existing.id +
+           ". (" + store.current().length + " memories total.)";
+  }
+
+  function resolveDedupBands() {
+    try {
+      const t = typeof dedupThresholds === "function" ? dedupThresholds() : dedupThresholds;
+      if (t && typeof t.hi === "number" && typeof t.lo === "number") return t;
+    } catch { /* injected getter must never break save */ }
+    return { hi: DEDUP_HI, lo: DEDUP_LO };
+  }
+
   async function save(content, opts) {
     const requestId = opts && opts.requestId;
     content = (content || "").trim();
@@ -313,16 +427,11 @@ function createCore({
     const now = new Date().toISOString();
 
     // Exact restatement of a memory that is still true: confirm it rather than
-    // storing a second copy. Near-duplicate detection (cosine-banded) is RM-02;
-    // this is only the free, unambiguous case.
+    // storing a second copy. Free (no embed). Cosine-banded HI restatement
+    // below generalizes this to semantic near-identity (RM-02.b).
     const mems = store.current();
     const same = mems.find((r) => r.text === content);
-    if (same) {
-      store.update(same.id, { last_confirmed: now });
-      tryReactivateIncident(same.id);  // save touching an existing endpoint (0.4)
-      tryPrimeSave(same.id);
-      return "Already remembered — confirmed it's still current. (" + store.current().length + " memories total.)";
-    }
+    if (same) return confirmRestatement(same, now);
 
     let embedding = null;
     try { embedding = (await embed([content]))[0]; } catch { embedding = null; }
@@ -331,6 +440,18 @@ function createCore({
       embedding, valid_from: now, valid_to: null, last_confirmed: now,
       embedding_version: 1,   // first generation, even if this save's embed failed
     });
+
+    // RM-02.b: cosine-banded dedup against already-stored vectors.
+    // No vector (embedder down) → can't compare → fall through to append,
+    // don't crash. Dedup before RM-03: a near-identical restatement is the
+    // same fact, not a correction. Scan is O(N) cosine, same class as the
+    // 0.1 save-time bind — not a reason to force RM-07 from this slice.
+    let dup = null;
+    try {
+      dup = detectNearDuplicate(rec, mems, cosine, resolveDedupBands());
+    } catch { dup = null; }
+    if (dup && dup.action === "restate") return confirmRestatement(dup.match, now);
+    if (dup && dup.action === "merge") return commitMerge(rec, dup.match, mems, now, requestId);
 
     // RM-03: does this correct a fact we already hold? A save carrying an explicit
     // correction cue ("moved", "now", "no longer"...) retires the single most-similar
@@ -528,4 +649,5 @@ function createCore({
 module.exports = {
   createCore, cosine, keywordScore, defaultGetEdges, asEdgeMap,
   bindSaveTimeNeighbors, SAVE_TIME_K, SAVE_TIME_MIN_COS,
+  DEDUP_HI, DEDUP_LO, readDedupThresholds,
 };

@@ -56,7 +56,7 @@ only Globex current. The `contra-wrongslot` and `contra-additive-pets` guards ch
 — that a cross-slot or cue-less save does **not** delete an unrelated memory. See `RESULTS.md`
 ("RM-03") for why detection is gated on a correction cue, not raw cosine.
 
-**Reporting metrics (RM-02.a), distinct from the golden gate.** `eval/metrics.js` now has a
+**Reporting metrics (RM-02), distinct from the golden gate.** `eval/metrics.js` has a
 **registry**: a metric is `{ name, compute(results, corpus, opts) -> number }`, plus optional
 `explain` for a breakdown. Builtins today: `recall_at_k` (success@k, default k=5) and
 `duplicate_rate` (extras beyond one-per-ground-truth-group / current stored count). They are
@@ -64,7 +64,8 @@ A/B numbers, not pass/fail — `node eval/run.js` still gates only the contains/
 scorecard, and measurement corpora (`kind: "duplicates"`, `gate: false`) are skipped there so
 a new fixture cannot flip golden. Run them with `node eval/measure.js` (reuses `pipeline.js`
 → `memory-core.js`; field off so rank stays cosine). See `RESULTS.md` ("RM-02.a") for the
-pre-dedup baseline and the pre-declared 50% bar.
+pre-dedup baseline and the pre-declared 50% bar, and ("RM-02.b") for the measured win:
+`duplicate_rate` 0.3182 → 0.0000, `recall@5` held at 1.0000.
 
 ## Layout
 
@@ -111,11 +112,11 @@ A store-level scenario, not a per-case golden. Stream JSONL so a diff is reviewa
 {"role":"query","id":"q-penicillin","query":"what am I allergic to","relevant_groups":["penicillin"]}
 ```
 
-`band` is `exact` (byte-identical; the shipping restatement path) / `hi` (cos ≥ ~0.95) /
-`mid` (cos ~0.88–0.95) / `control` (singleton; must not merge). `eval/measure.js` saves
+`band` is `exact` (byte-identical restatement) / `hi` (cos ≥ ~0.95, now restated) /
+`mid` (cos ~0.88–0.95, now merged) / `control` (singleton; must not merge). `eval/measure.js` saves
 every write into ONE store, then scores `duplicate_rate` on `store.current()` and
 `recall_at_k` on the queries (relevant ids resolved by matching stored text to the
-group's labeled writes). Self-contained `{writes, queries}` objects also load, so a
+group's labeled writes — a merge must keep an original text). Self-contained `{writes, queries}` objects also load, so a
 later slice can drop a one-line scenario without the stream format.
 
 ### Adding a reporting metric

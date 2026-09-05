@@ -40,8 +40,8 @@ roadmap, and per-repo backlog live in the companion repo
 |---|---|
 | `entry.js` | Bundle entry point / mode dispatch: `--mcp` → server, `--install`/`--uninstall` → installer, else → panel. |
 | `server.js` | The MCP server. Declares the four verbs (tool schemas + descriptions), wires the environment (network embed, live field toggle, lazy ledger) into the shared core, and runs the JSON-RPC stdio loop. Reads the version from `package.json` so `serverInfo` can't drift. |
-| `memory-core.js` | **The four cognitive verbs, as ONE implementation.** `createCore({ store, embed, fieldEnabled, getEdgeStore })` returns `{ save, recall, edit, remove }`. Everything environment-specific is *injected*, nothing reached for — so `server.js` (network embedder) and `eval/pipeline.js` (cached embedder) build on the exact same code. This is deliberate: two copies of the recall path is the drift the RM-00 harness exists to catch. |
-| `record.js` | The shared record schema (`normalize()`), durable atomic writes (`writeFileDurable()`), the access sidecar (`AccessLog`), and the lexical heuristics (constraint typing, historical-query detection, supersession cues + `detectSupersession`). Owned here so the server and panel agree on a record byte-for-byte. |
+| `memory-core.js` | **The four cognitive verbs, as ONE implementation.** `createCore({ store, embed, fieldEnabled, getEdgeStore, dedupThresholds })` returns `{ save, recall, edit, remove }`. Everything environment-specific is *injected*, nothing reached for — so `server.js` (network embedder) and `eval/pipeline.js` (cached embedder) build on the exact same code. This is deliberate: two copies of the recall path is the drift the RM-00 harness exists to catch. |
+| `record.js` | The shared record schema (`normalize()`), durable atomic writes (`writeFileDurable()`), the access sidecar (`AccessLog`), and the lexical heuristics (constraint typing, historical-query detection, supersession cues + `detectSupersession`, cosine-banded `detectNearDuplicate` + `pickMergeSurvivor`). Owned here so the server and panel agree on a record byte-for-byte. |
 | `store.js` | `JsonlStore` — the flat-JSONL storage backend behind the Store seam. Constructed and testable without the stdio loop; a SQLite/Lantern backend can replace it with the same method surface (see `docs/proposed/0005`). |
 | `field.js` | Associative layer (Phase 2a): a kNN semantic graph over stored vectors, neighborhood expansion, and constraint rescue. No new embedding calls, no LLM extraction — built from vectors already stored at save. |
 | `ledger.js` | Retired Hebbian sidecar (Phase 2b). Off the live recall/reinforce path as of Phase 0 Slice C; kept as the reference implementation of the epoch-decay math so tests can prove EdgeStore produces the same numbers. |
@@ -96,13 +96,18 @@ new golden case: `EVAL_REFRESH=1 npm run eval`. For a measurement corpus (`dupli
 
 ## How it works (data flow)
 
-1. **Save**: `save_memory({ content })` → embed the text once (via an OpenAI-compatible
-   `/v1/embeddings` endpoint, default LM Studio on `localhost:1234`,
-   `text-embedding-nomic-embed-text-v1.5`, 768-dim) → normalize into a record → append to
-   the JSONL store. If the embedder is down, the record is stored *without* a vector and
-   backfilled on a later recall. A record that got a real vector also binds its top-5
-   semantic neighbors (cosine ≥ 0.25) into the EdgeStore; Hebbian weight starts at 0.
-   Recall does not read those edges yet.
+1. **Save**: `save_memory({ content })` → trim → if a current memory is byte-identical,
+   confirm it (`last_confirmed` + `access_count`) instead of appending. Otherwise embed
+   the text once (via an OpenAI-compatible `/v1/embeddings` endpoint, default LM Studio
+   on `localhost:1234`, `text-embedding-nomic-embed-text-v1.5`, 768-dim) → cosine-banded
+   dedup against already-stored vectors (RM-02.b): cosine ≥ `DEDUP_HI` (0.95) is a
+   restatement (same confirm, no append); `DEDUP_LO..HI` (0.88–0.95) is a merge (keep
+   the longer original text, union metadata, link the loser with `superseded_by` — never
+   a hard delete). No vector (embedder down) → skip compare, append, don't crash.
+   Thresholds are config (`RESONANCE_DEDUP_HI`/`LO` + live-config `dedup_hi`/`dedup_lo`),
+   tuned on `eval/duplicates`. Then RM-03 cue-gated supersession, then append. A record
+   that got a real vector also binds its top-5 semantic neighbors (cosine ≥ 0.25) into
+   the EdgeStore; Hebbian weight starts at 0. Recall does not read those edges yet.
 2. **Recall**: `recall_memory({ query })` → embed only the query → cosine-rank stored
    vectors → return the top-k, each prefixed with `[id N]`. Keyword-overlap fallback if the
    embedder is unreachable. With the field on, a `Related:` section is appended from the
@@ -132,17 +137,19 @@ new golden case: `EVAL_REFRESH=1 npm run eval`. For a measurement corpus (`dupli
     old file is left untouched so a downgraded exe still reads its own stale sidecar.
   - `<store>.access.json` — access counts (`AccessLog` in `record.js`), kept out of the
     store so a recall never rewrites the store file (see `BUG-002`).
-- Live runtime state (the field toggle) lives in `resonance-memory.config.json` **beside
-  the data file**, so the panel toggle and the server read the same file — the field turns
-  on/off with no client restart.
+- Live runtime state (the field toggle, plus `dedup_hi` / `dedup_lo`) lives in
+  `resonance-memory.config.json` **beside the data file**, so the panel toggle and the
+  server read the same file — the field turns on/off with no client restart.
 
 ### Environment variables
 
 `MEMORY_FILE_PATH`, `RESONANCE_MEMORY_CONFIG`, `EMBED_ENDPOINT`, `EMBED_MODEL`,
 `RESONANCE_MEMORY_FIELD` (default field state), `RESONANCE_FIELD_MUTUAL`,
-`RESONANCE_FIELD_KSEARCH`, `RESONANCE_CONSTRAINT_GATE`. The embedder is **not bundled** —
-we depend on the `/v1/embeddings` *interface*, not a specific model, so any compatible
-embedding model can be swapped in.
+`RESONANCE_FIELD_KSEARCH`, `RESONANCE_CONSTRAINT_GATE`, `RESONANCE_DEDUP_HI`,
+`RESONANCE_DEDUP_LO` (RM-02.b cosine bands; defaults 0.95 / 0.88, live-config
+`dedup_hi` / `dedup_lo` win). The embedder is **not bundled** — we depend on the
+`/v1/embeddings` *interface*, not a specific model, so any compatible embedding
+model can be swapped in.
 
 ## Design invariants — DO NOT VIOLATE
 

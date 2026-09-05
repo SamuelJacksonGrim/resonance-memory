@@ -55,7 +55,7 @@ Build `eval/` with seeded, offline, reproducible scoring.
       change**. Covered by tests incl. the oldest `ts`-only shape.
 - [x] `save_memory` sets `valid_from = now`, `last_confirmed = now`.
 - [x] Re-saving an *identical* memory bumps `last_confirmed` instead of appending a duplicate.
-      (Near-duplicate detection is still `RM-02`.)
+      (Near-duplicate detection shipped in `RM-02.b`.)
 - [x] `store.current()` excludes superseded; `active()` keeps history.
 - [x] Recall answers from current facts; superseded surface only on explicitly historical
       queries and are labelled "no longer current".
@@ -97,19 +97,22 @@ Design: [`proposed/0001`](proposed/0001-write-pipeline.md).
 
 ---
 
-### `RM-02` — Deduplication and merge · **M** · `todo`
+### `RM-02` — Deduplication and merge · **M** · `in progress` — 02.a + 02.b shipped
 
-- [x] **02.a measurement seed** (this slice): metric registry (`recall_at_k`, `duplicate_rate`),
+- [x] **02.a measurement seed**: metric registry (`recall_at_k`, `duplicate_rate`),
       `eval/corpora/duplicates.jsonl`, pre-dedup baseline + pre-declared 50% bar in
       [`eval/RESULTS.md`](../eval/RESULTS.md). Product behaviour unchanged.
-- [ ] Near-duplicate detection at save: cosine ≥ `DEDUP_HI` (~0.95) → treat as restatement.
-- [ ] Restatement → bump `last_confirmed` + `access_count`, do **not** append.
-- [ ] Band `DEDUP_LO..DEDUP_HI` (~0.88–0.95) → candidate merge; keep the longer/more specific
+- [x] Near-duplicate detection at save: cosine ≥ `DEDUP_HI` (0.95) → treat as restatement.
+- [x] Restatement → bump `last_confirmed` + `access_count`, do **not** append.
+- [x] Band `DEDUP_LO..DEDUP_HI` (0.88–0.95) → candidate merge; keep the longer/more specific
       text, union the metadata, link the loser with `superseded_by`.
-- [ ] Thresholds are config, not constants, and are **tuned on `RM-00`, not vibes**.
+- [x] Thresholds are config, not constants, and are **tuned on `RM-00`, not vibes**.
+      (`DEDUP_HI` 0.95 / `DEDUP_LO` 0.88; env + live-config; A/B in RESULTS.md.)
 - [ ] Backfill mode: `--dedup-existing` reports what it *would* merge before doing it.
 
 **Acceptance:** `duplicate_rate` drops ≥50% on `eval/duplicates` with zero recall@5 regression.
+**Met (02.b):** 0.3182 → **0.0000** (100% drop), `recall@5` held at **1.0000**. See
+[`eval/RESULTS.md`](../eval/RESULTS.md) RM-02.b.
 
 ---
 

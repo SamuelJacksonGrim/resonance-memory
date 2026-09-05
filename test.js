@@ -40,6 +40,7 @@ const {
   writeFileDurable, appendLineDurable,
   normalize, isCurrent, isHistoricalQuery, supersedePatches, AccessLog,
   detectSupersession, hasSupersedeCue,
+  detectNearDuplicate, pickMergeSurvivor,
 } = require("./record.js");
 
 let passed = 0, failed = 0;
@@ -181,6 +182,92 @@ test("detectSupersession: honors a custom minSim", () => {
   const cur = [mem(1, "I drink regular coffee", 0.60)];
   assert.strictEqual(detectSupersession(newRec, cur, simStub, { minSim: 0.7 }), null);
   assert.strictEqual(detectSupersession(newRec, cur, simStub, { minSim: 0.5 }), cur[0]);
+});
+
+// ------------------------------------------------ cosine-banded dedup (RM-02.b)
+section("cosine-banded dedup detection (RM-02.b)");
+
+test("detectNearDuplicate: cosine ≥ hi is restatement", () => {
+  const newRec = { id: 2, text: "I am allergic to penicillin", embedding: [1] };
+  const cur = [mem(1, "I'm allergic to penicillin", 0.96)];
+  const d = detectNearDuplicate(newRec, cur, simStub, { hi: 0.95, lo: 0.88 });
+  assert.strictEqual(d.action, "restate");
+  assert.strictEqual(d.match, cur[0]);
+  assert.strictEqual(d.cosine, 0.96);
+});
+
+test("detectNearDuplicate: cosine exactly hi is restatement (≥, not >)", () => {
+  // Equality case is hypothetical on the corpus (tea is 0.9522) but the
+  // spec is ≥ HI: keep the original rather than merge/rewrite.
+  const newRec = { id: 2, text: "paraphrase", embedding: [1] };
+  const cur = [mem(1, "original", 0.95)];
+  const d = detectNearDuplicate(newRec, cur, simStub, { hi: 0.95, lo: 0.88 });
+  assert.strictEqual(d.action, "restate");
+});
+
+test("detectNearDuplicate: lo ≤ cosine < hi is merge", () => {
+  const newRec = { id: 2, text: "I work as a software architect, mostly on games", embedding: [1] };
+  const cur = [mem(1, "I work as a software architect", 0.926)];
+  const d = detectNearDuplicate(newRec, cur, simStub, { hi: 0.95, lo: 0.88 });
+  assert.strictEqual(d.action, "merge");
+  assert.strictEqual(d.match, cur[0]);
+});
+
+test("detectNearDuplicate: cosine < lo is not a duplicate (control)", () => {
+  // dog/cat live pair ~0.69; peanuts/peanut-allergy ~0.67. Must NOT merge.
+  const newRec = { id: 2, text: "I have a cat named Whiskers", embedding: [1] };
+  const cur = [mem(1, "I have a dog named Rex", 0.69)];
+  assert.strictEqual(detectNearDuplicate(newRec, cur, simStub, { hi: 0.95, lo: 0.88 }), null);
+});
+
+test("detectNearDuplicate: cosine exactly lo is merge (≥ lo, < hi)", () => {
+  const newRec = { id: 2, text: "incoming", embedding: [1] };
+  const cur = [mem(1, "existing", 0.88)];
+  const d = detectNearDuplicate(newRec, cur, simStub, { hi: 0.95, lo: 0.88 });
+  assert.strictEqual(d.action, "merge");
+});
+
+test("detectNearDuplicate: a vectorless new memory can't compare (append, don't crash)", () => {
+  const newRec = { id: 2, text: "I am allergic to penicillin", embedding: null };
+  const cur = [mem(1, "I'm allergic to penicillin", 0.99)];
+  assert.strictEqual(detectNearDuplicate(newRec, cur, simStub, { hi: 0.95, lo: 0.88 }), null);
+});
+
+test("detectNearDuplicate: skips vectorless existing rows", () => {
+  const newRec = { id: 3, text: "incoming", embedding: [1] };
+  const cur = [
+    { id: 1, text: "no vector", embedding: null },
+    mem(2, "has vector", 0.96),
+  ];
+  const d = detectNearDuplicate(newRec, cur, simStub, { hi: 0.95, lo: 0.88 });
+  assert.strictEqual(d.match, cur[1], "the vectored row, not the hole");
+});
+
+test("detectNearDuplicate: argmax, not the first above the floor", () => {
+  const newRec = { id: 3, text: "incoming", embedding: [1] };
+  const cur = [mem(1, "control", 0.69), mem(2, "paraphrase", 0.96)];
+  const d = detectNearDuplicate(newRec, cur, simStub, { hi: 0.95, lo: 0.88 });
+  assert.strictEqual(d.action, "restate");
+  assert.strictEqual(d.match, cur[1]);
+});
+
+test("detectNearDuplicate: honors injected thresholds (config, not constants)", () => {
+  const newRec = { id: 2, text: "incoming", embedding: [1] };
+  const cur = [mem(1, "existing", 0.96)];
+  // 0.96 is HI at default 0.95, but below a raised hi=0.99 / lo=0.97 → append
+  assert.strictEqual(detectNearDuplicate(newRec, cur, simStub, { hi: 0.99, lo: 0.97 }), null);
+  const d = detectNearDuplicate(newRec, cur, simStub, { hi: 0.99, lo: 0.90 });
+  assert.strictEqual(d.action, "merge", "same pair is merge when hi is raised past it");
+});
+
+test("pickMergeSurvivor: longer text wins; equal length keeps existing", () => {
+  const short = { id: 1, text: "I have a cat named Koneko" };
+  const longer = { id: 2, text: "I have a black cat named Koneko" };
+  assert.strictEqual(pickMergeSurvivor(short, longer), longer);
+  assert.strictEqual(pickMergeSurvivor(longer, short), longer);
+  const a = { id: 1, text: "same length!!" }; // 13
+  const b = { id: 2, text: "also 13 chars" }; // 13
+  assert.strictEqual(pickMergeSurvivor(a, b), a, "tie keeps the already-stored record");
 });
 
 // ------------------------------------------------------------- historical query
@@ -1688,6 +1775,7 @@ const {
 const {
   createCore, defaultGetEdges, cosine: coreCosine,
   bindSaveTimeNeighbors, SAVE_TIME_K, SAVE_TIME_MIN_COS,
+  DEDUP_HI, DEDUP_LO, readDedupThresholds,
 } = require("./memory-core.js");
 
 const LAMBDA_TURN = 0.357;
@@ -1902,6 +1990,187 @@ async function asyncTests() {
     assert.ok(r.n_stored_current >= 1 && r.n_stored_current <= r.n_writes);
     assert.ok(r.queries.every((q) => q.relevant_ids.length >= 1),
       "every query resolved to a stored id via group text (merge must keep an original text)");
+  });
+
+  section("RM-02.b cosine-banded dedup at save");
+
+  // Unit vectors: cosine([1,0], [c, sqrt(1-c²)]) = c. Lets a test dial an
+  // exact band without a live embedder.
+  function vecAt(cos) {
+    const c = Number(cos);
+    return [c, Math.sqrt(Math.max(0, 1 - c * c))];
+  }
+  const ORIGIN = [1, 0];
+
+  function dedupCore(file, table, thresholds) {
+    const store = new JsonlStore(tmp(file));
+    const embed = async (texts) => texts.map((t) => {
+      if (table[t]) return table[t].slice();
+      return ORIGIN.slice();
+    });
+    const opts = { store, embed };
+    if (thresholds) opts.dedupThresholds = () => thresholds;
+    return { store, core: createCore(opts) };
+  }
+
+  await atest("HI restatement bumps last_confirmed + access_count and does NOT append", async () => {
+    const table = {
+      "I prefer tea over coffee": ORIGIN,
+      "I like tea more than coffee": vecAt(0.9522),
+    };
+    const { store, core } = dedupCore("dedup-hi.jsonl", table);
+    await core.save("I prefer tea over coffee");
+    const id = store.current()[0].id;
+    store.update(id, { last_confirmed: "2020-01-01T00:00:00.000Z", access_count: 0 });
+    const msg = await core.save("I like tea more than coffee");
+    assert.ok(/Already remembered/.test(msg));
+    assert.strictEqual(store.current().length, 1, "HI paraphrase must not append");
+    assert.strictEqual(store.active().length, 1, "and must not persist a superseded copy either");
+    const rec = store.get(id);
+    assert.strictEqual(rec.text, "I prefer tea over coffee", "original text kept");
+    assert.notStrictEqual(rec.last_confirmed, "2020-01-01T00:00:00.000Z", "last_confirmed bumped");
+    assert.strictEqual(rec.access_count, 1, "access_count bumped");
+  });
+
+  await atest("mid-band merge keeps the longer original text, sets superseded_by, unions metadata", async () => {
+    const short = "I have a cat named Koneko";
+    const longer = "I have a black cat named Koneko";
+    const table = { [short]: ORIGIN, [longer]: vecAt(0.9435) };
+    const { store, core } = dedupCore("dedup-mid.jsonl", table);
+    await core.save(short);
+    const oldId = store.current()[0].id;
+    store.update(oldId, { is_constraint: true, access_count: 4, source: "user_stated" });
+    const msg = await core.save(longer);
+    assert.ok(/merged/i.test(msg), "merge is reported, not a silent restatement");
+    assert.strictEqual(store.current().length, 1, "one current survivor");
+    const survivor = store.current()[0];
+    assert.strictEqual(survivor.text, longer, "longer original text kept (not a blend)");
+    assert.notStrictEqual(survivor.id, oldId, "incoming was longer → new row is current");
+    assert.strictEqual(survivor.supersedes, oldId);
+    assert.strictEqual(survivor.is_constraint, true, "union: constraint flag carried onto survivor");
+    assert.ok(survivor.access_count >= 5, "union: access_count inherited + confirmation bump");
+    const loser = store.get(oldId);
+    assert.ok(loser.valid_to, "loser is superseded, not deleted");
+    assert.strictEqual(loser.superseded_by, survivor.id);
+    assert.strictEqual(loser.text, short, "loser original text is recoverable");
+    assert.strictEqual(store.active().length, 2, "both rows kept (I8)");
+  });
+
+  await atest("mid-band merge: existing longer text stays current, incoming is the superseded loser", async () => {
+    const longer = "I work as a software architect, mostly on games";
+    const short = "I work as a software architect";
+    const table = { [longer]: ORIGIN, [short]: vecAt(0.9261) };
+    const { store, core } = dedupCore("dedup-mid-keep.jsonl", table);
+    await core.save(longer);
+    const keepId = store.current()[0].id;
+    await core.save(short);
+    assert.strictEqual(store.current().length, 1);
+    assert.strictEqual(store.current()[0].id, keepId);
+    assert.strictEqual(store.current()[0].text, longer);
+    const loser = store.active().find((r) => String(r.id) !== String(keepId));
+    assert.ok(loser, "shorter incoming was persisted as superseded");
+    assert.strictEqual(loser.text, short);
+    assert.strictEqual(loser.superseded_by, keepId);
+    assert.ok(loser.valid_to);
+  });
+
+  await atest("control pair (~0.69, distinct) is NOT merged", async () => {
+    const dog = "I have a dog named Rex";
+    const cat = "I have a cat named Whiskers";
+    const table = { [dog]: ORIGIN, [cat]: vecAt(0.69) };
+    const { store, core } = dedupCore("dedup-control.jsonl", table);
+    await core.save(dog);
+    await core.save(cat);
+    assert.strictEqual(store.current().length, 2, "both current — dog/cat must not collapse");
+    assert.ok(store.current().every((r) => !r.valid_to && r.superseded_by == null));
+  });
+
+  await atest("a save below DEDUP_LO appends normally", async () => {
+    const table = {
+      "My name is Samuel": ORIGIN,
+      "The garage code is 4821": vecAt(0.20),
+    };
+    const { store, core } = dedupCore("dedup-below-lo.jsonl", table);
+    await core.save("My name is Samuel");
+    const msg = await core.save("The garage code is 4821");
+    assert.ok(/^Saved\./.test(msg), "plain append, not merge/restate");
+    assert.strictEqual(store.current().length, 2);
+  });
+
+  await atest("thresholds are read from the injected config getter", async () => {
+    const table = {
+      "I prefer tea over coffee": ORIGIN,
+      "I like tea more than coffee": vecAt(0.9522),
+    };
+    // Raise HI past the tea pair so the default restatement becomes an append.
+    const { store, core } = dedupCore("dedup-cfg.jsonl", table, { hi: 0.99, lo: 0.97 });
+    await core.save("I prefer tea over coffee");
+    await core.save("I like tea more than coffee");
+    assert.strictEqual(store.current().length, 2, "pair that is HI at 0.95 appends when config hi=0.99");
+  });
+
+  await atest("readDedupThresholds: live config wins over env, env over defaults", async () => {
+    assert.deepStrictEqual(readDedupThresholds(null), { hi: DEDUP_HI, lo: DEDUP_LO });
+    assert.strictEqual(DEDUP_HI, 0.95);
+    assert.strictEqual(DEDUP_LO, 0.88);
+    assert.deepStrictEqual(
+      readDedupThresholds({ dedup_hi: 0.99, dedup_lo: 0.90 }),
+      { hi: 0.99, lo: 0.90 },
+      "config keys dedup_hi / dedup_lo"
+    );
+    const prevHi = process.env.RESONANCE_DEDUP_HI;
+    const prevLo = process.env.RESONANCE_DEDUP_LO;
+    process.env.RESONANCE_DEDUP_HI = "0.97";
+    process.env.RESONANCE_DEDUP_LO = "0.91";
+    try {
+      assert.deepStrictEqual(readDedupThresholds(null), { hi: 0.97, lo: 0.91 }, "env when no config");
+      assert.deepStrictEqual(
+        readDedupThresholds({ dedup_hi: 0.93 }),
+        { hi: 0.93, lo: 0.91 },
+        "config hi wins; env lo fills the other"
+      );
+    } finally {
+      if (prevHi === undefined) delete process.env.RESONANCE_DEDUP_HI;
+      else process.env.RESONANCE_DEDUP_HI = prevHi;
+      if (prevLo === undefined) delete process.env.RESONANCE_DEDUP_LO;
+      else process.env.RESONANCE_DEDUP_LO = prevLo;
+    }
+  });
+
+  await atest("dedup degrades to append when the new record has no vector", async () => {
+    const store = new JsonlStore(tmp("dedup-novec.jsonl"));
+    let live = true;
+    const embed = async (texts) => {
+      if (!live) throw new Error("embedder down");
+      return texts.map(() => ORIGIN.slice());
+    };
+    const core = createCore({ store, embed });
+    await core.save("I'm allergic to penicillin");
+    live = false;
+    const msg = await core.save("I am allergic to penicillin");
+    assert.ok(/^Saved\./.test(msg) || /Saved/.test(msg), "save still succeeds");
+    assert.strictEqual(store.current().length, 2, "can't compare → append, don't crash or drop");
+    assert.strictEqual(store.current()[1].embedding, null);
+  });
+
+  await atest("exact byte-identical restatement still confirms (and now bumps access_count)", async () => {
+    const { store, core } = dedupCore("dedup-exact.jsonl", { "I drink tea": ORIGIN });
+    await core.save("I drink tea");
+    const id = store.current()[0].id;
+    const msg = await core.save("I drink tea");
+    assert.ok(/Already remembered/.test(msg));
+    assert.strictEqual(store.current().length, 1);
+    assert.strictEqual(store.get(id).access_count, 1);
+  });
+
+  await atest("RM-02.b A/B bar on the duplicates corpus: dup_rate ≤ 0.1591 and recall@5 = 1", async () => {
+    const { loadScenarios, runScenario } = require("./eval/measure.js");
+    const scenarios = loadScenarios(path.join(__dirname, "eval", "corpora", "duplicates.jsonl"));
+    const r = await runScenario(scenarios[0], { k: 5 });
+    assert.ok(r.metrics.duplicate_rate <= 0.1591,
+      "duplicate_rate " + r.metrics.duplicate_rate + " must drop ≥50% from 0.3182");
+    assert.strictEqual(r.metrics.recall_at_k, 1,
+      "recall@5 must hold (controls not over-merged); misses=" + (r.recall_at_k.misses || []).join(","));
   });
 
   section("edit() embedding safety");
@@ -2495,6 +2764,11 @@ async function asyncTests() {
       embed: embedFn,
       fieldEnabled: () => !!opts.fieldOn,
       getEdgeStore,
+      // Phase 0.1/0.3 bind tests construct many collinear vecAtCos()
+      // neighbors whose pairwise cosine is ≥ DEDUP_LO even though the
+      // texts are distinct labels ("n90" vs "n80"). Dedup is RM-02.b's
+      // job; these tests isolate bind. Bands above 1 disable it.
+      dedupThresholds: opts.dedupThresholds || (() => ({ hi: 2, lo: 2 })),
     });
     return { store, core, edgesPath, edges: () => getEdgeStore() };
   }

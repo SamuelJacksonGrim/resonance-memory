@@ -17,6 +17,19 @@ Beta-readiness pass:
   "revisit only if hosted resale looms" trigger the backlog pre-registered, now pulled.
 
 ### Added
+- **RM-02.b cosine-banded dedup/merge at save.** First measured A/B in the
+  project. After embed, `save()` compares the new vector to already-stored
+  ones: cosine ≥ `DEDUP_HI` (0.95) is a restatement (bump `last_confirmed` +
+  `access_count`, don't append — generalizes today's byte-identical confirm);
+  band `DEDUP_LO..HI` (0.88–0.95) is a merge (keep the longer original text,
+  union metadata, link the loser with `superseded_by` via `supersedePatches`;
+  never a blend, never a hard delete). Below LO: append as before. No vector
+  → append, don't crash. Thresholds are config (`RESONANCE_DEDUP_HI`/`LO` +
+  live-config `dedup_hi`/`dedup_lo`), tuned on `eval/duplicates` (tea 0.9522
+  is the tightest HI; controls ≤ ~0.69). **A/B vs the pre-declared bar:**
+  `duplicate_rate` 0.3182 → **0.0000** (100% drop, bar was ≤ 0.1591) AND
+  `recall@5` held at **1.0000** (controls not over-merged). Golden unmoved
+  ("No regressions vs golden."). See [`eval/RESULTS.md`](eval/RESULTS.md).
 - **RM-02.a measurement seed (write-path gap).** A reporting-metric registry in
   `eval/metrics.js` (`recall_at_k`, `duplicate_rate`) plus `eval/measure.js` and
   `eval/corpora/duplicates.jsonl`. Distinct from the golden contains/excludes

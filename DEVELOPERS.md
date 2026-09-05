@@ -41,6 +41,9 @@ an opaque `id`.
   (<https://huggingface.co/nomic-ai/nomic-embed-text-v1.5>). Not redistributed by this project.
   Apache 2.0 is one-way compatible with our AGPL-3.0, so bundling it later would be license-clean.
 - Embed **once** at save; recall embeds only the query, then cosine vs stored vectors.
+  Save also runs cosine-banded dedup (RM-02.b): ≥ 0.95 restates, 0.88–0.95 merges
+  (longer original text, loser linked with `superseded_by`). Thresholds are config
+  (`RESONANCE_DEDUP_HI` / `RESONANCE_DEDUP_LO`).
 
 ## Build
 

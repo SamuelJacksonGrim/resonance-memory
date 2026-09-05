@@ -41,6 +41,11 @@
  *                      invariant), they do not belong on the read path at all.
  *                      Same sidecar pattern as ledger.js.
  *
+ * Decision helpers also live here so they stay pure and testable: constraint
+ * typing, historical-query detection, RM-03 cue-gated detectSupersession, and
+ * RM-02.b cosine-banded detectNearDuplicate / pickMergeSurvivor. Callers own
+ * persistence.
+ *
  * Temporal fields (RM-04) are defined here too - see docs/proposed/0002.
  */
 
@@ -213,6 +218,58 @@ function detectSupersession(newRec, currentMems, cosineFn, opts = {}) {
   return (best && bestSim >= minSim) ? best : null;
 }
 
+function hasVector(r) {
+  return r && Array.isArray(r.embedding) && r.embedding.length > 0;
+}
+
+/*
+ * Cosine-banded near-duplicate decision (RM-02.b). Pure: returns
+ * `{ action, match, cosine }` or null. Caller owns persistence.
+ *
+ *   cosine ≥ hi  → restatement (bump the existing row, do not append)
+ *   lo ≤ cosine < hi → candidate merge (keep the longer original text)
+ *   cosine < lo  → not a duplicate (caller appends / runs RM-03)
+ *
+ * Argmax, same as detectSupersession: one save, one decision, the closest
+ * current memory. Vectorless new or existing rows are skipped — without a
+ * vector we cannot compare, so the caller must append rather than guess
+ * (embedder-down degrade). If lo ≥ hi the merge band is empty by construction.
+ *
+ * Thresholds are CONFIG (defaults 0.95 / 0.88), tuned on eval/duplicates
+ * against nomic-embed-text-v1.5 — see memory-core.js DEDUP_HI / DEDUP_LO
+ * and eval/RESULTS.md RM-02.a geometry. ≥ hi (not >): a pair sitting
+ * exactly on the restatement floor keeps the original rather than merging.
+ */
+function detectNearDuplicate(newRec, currentMems, cosineFn, opts = {}) {
+  const hi = typeof opts.hi === "number" ? opts.hi : 0.95;
+  const lo = typeof opts.lo === "number" ? opts.lo : 0.88;
+  if (!hasVector(newRec)) return null;
+  let best = null, bestSim = -Infinity;
+  for (const m of currentMems || []) {
+    if (!m || String(m.id) === String(newRec.id) || !hasVector(m)) continue;
+    const s = cosineFn(newRec.embedding, m.embedding);
+    if (s > bestSim) { bestSim = s; best = m; }
+  }
+  if (!best || !Number.isFinite(bestSim)) return null;
+  if (bestSim >= hi) return { action: "restate", match: best, cosine: bestSim };
+  if (bestSim >= lo) return { action: "merge", match: best, cosine: bestSim };
+  return null;
+}
+
+/*
+ * Survivor of a mid-band merge. MUST be one of the two original texts —
+ * the duplicate_rate metric maps stored `text` back to its labeled group,
+ * and recall relevance is by group, so a blended rewrite would break both
+ * (RM-02.a constraint). Longer wins (more specific); equal length keeps
+ * the already-stored record so a merge never rewrites without adding
+ * information.
+ */
+function pickMergeSurvivor(existing, incoming) {
+  const a = String(existing && existing.text || "");
+  const b = String(incoming && incoming.text || "");
+  return b.length > a.length ? incoming : existing;
+}
+
 /*
  * Mark `oldId` superseded by `newId`. Both rows survive.
  * Returns the patches to apply; the caller owns persistence so this stays pure
@@ -310,6 +367,7 @@ module.exports = {
   writeFileDurable, appendLineDurable,
   normalize, isCurrent, isHistoricalQuery, supersedePatches,
   detectSupersession, hasSupersedeCue, SUPERSEDE_CUE_RE,
+  detectNearDuplicate, pickMergeSurvivor,
   detectConstraint, CONSTRAINT_RE,
   AccessLog, HISTORICAL_RE,
 };

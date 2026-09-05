@@ -45,7 +45,7 @@ const fs = require("fs");
 const path = require("path");
 const { EdgeStore, hebbianDecayType } = require("./edges.js");
 const { JsonlStore } = require("./store.js");
-const { createCore, defaultGetEdges } = require("./memory-core.js");
+const { createCore, defaultGetEdges, readDedupThresholds } = require("./memory-core.js");
 const { WarmField } = require("./warm.js");
 // Single source of truth for the version, so serverInfo can't drift from package.json.
 // esbuild inlines this JSON into the bundle, so it resolves in the SEA build too.
@@ -83,6 +83,17 @@ function fieldEnabled() {
     if (typeof c.field === "boolean") return c.field;
   } catch { /* no config yet -> fall back to env */ }
   return ENV_FIELD;
+}
+// RM-02.b cosine bands. Live-config keys `dedup_hi` / `dedup_lo` win over
+// env RESONANCE_DEDUP_HI / RESONANCE_DEDUP_LO, which win over the tuned
+// defaults (0.95 / 0.88). Read per save so a config edit needs no restart,
+// same as the field toggle. memory-core itself never opens CONFIG_PATH
+// (eval/tests must not inherit the user's panel file).
+function dedupThresholds() {
+  try {
+    return readDedupThresholds(JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8")));
+  } catch { /* no config yet -> env / defaults */ }
+  return readDedupThresholds(null);
 }
 const EMBED_URL = process.env.EMBED_ENDPOINT || "http://localhost:1234/v1/embeddings";
 const EMBED_MODEL = process.env.EMBED_MODEL || "text-embedding-nomic-embed-text-v1.5";
@@ -131,7 +142,7 @@ const store = new JsonlStore(STORE_PATH);
 // eval/pipeline.js wires the SAME core to a cached embedder, so there is exactly one
 // implementation of save/recall and the RM-00 golden guards that they never diverge.
 const core = createCore({
-  store, embed, fieldEnabled, getEdgeStore,
+  store, embed, fieldEnabled, getEdgeStore, dedupThresholds,
   warmEnabled, getWarm, getEdges: defaultGetEdges,
   saveSeed: () => true,          // production: a just-saved fact is warm without a recall
   warmTrace, warmEdgeCap,

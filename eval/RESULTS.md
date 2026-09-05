@@ -516,6 +516,68 @@ Reproduce the before-column: `node eval/measure.js --corpus duplicates`.
 
 ---
 
+# RM-02.b — cosine-banded dedup/merge at save (measured A/B)
+
+**Date:** 2026-09-05 · **Product behaviour:** `save()` in `memory-core.js` now
+runs cosine-banded dedup against already-stored vectors after embed, before
+RM-03. **Embedder:** `text-embedding-nomic-embed-text-v1.5`, same committed
+cache. **Reproduce:** `node eval/measure.js --corpus duplicates` (offline).
+Golden: `node eval/run.js` → **No regressions vs golden.** (27/31 unmoved —
+the golden corpora are distinct memories, so the bands did not fire.)
+
+This is the first real measured A/B in the project: 02.a built the stick and
+locked the bar; this slice moved the number and proved it.
+
+## Tuned thresholds
+
+| knob | value | why |
+|---|---|---|
+| `DEDUP_HI` | **0.95** (`≥`) | HI paraphrases sit 0.9522–0.9883. Tea at **0.9522** is the tightest HI and clears 0.95 with margin. `≥` not `>`: a pair sitting exactly on 0.95 is treated as restatement (keep the original) rather than merge. Equality is hypothetical on this corpus. |
+| `DEDUP_LO` | **0.88** (`≥`, band is `[lo, hi)`) | Mid pairs sit 0.9261–0.9435; controls ≤ ~0.69 (dog/cat ~0.69, peanuts/peanut-allergy ~0.67). 0.88 sits well above the control ceiling so those traps cannot merge. |
+
+Config, not constants: env `RESONANCE_DEDUP_HI` / `RESONANCE_DEDUP_LO` plus
+live-config keys `dedup_hi` / `dedup_lo` (same pattern as the field toggle).
+Defaults are these tuned values.
+
+HI-only restatement would have left the three mid extras (`duplicate_rate`
+0.1667, shy of 0.1591). The mid-band merge is what the 50% bar actually
+demanded. Confirmed: no control crept in, no mid pair was missed.
+
+## After (02.b)
+
+```
+writes=23  stored_current=15  groups=15  exact_restatements_caught=5
+duplicate_rate  0.0000   (extras=0/15, G*=15)
+recall@5        1.0000   (17/17 queries hit)
+```
+
+`exact_restatements_caught` rose 1 → 5 because HI paraphrases now share the
+byte-identical confirm path ("Already remembered"): coffee-order (exact) +
+penicillin ×2 + tea + peanuts. The three mid extras (job, cat, diabetic) were
+merged via `supersedePatches` (loser linked with `superseded_by`, survivor
+kept one of the original texts). Controls untouched.
+
+## A/B vs the pre-declared bar
+
+| metric | baseline (02.a) | after (02.b) | pass iff | verdict |
+|---|---|---|---|---|
+| `duplicate_rate` | **0.3182** | **0.0000** | ≤ 0.1591 (≥50% relative drop) | **PASS** (100% drop) |
+| `recall@5` | **1.0000** | **1.0000** | = 1.0000 (17/17 holds) | **PASS** (controls not over-merged) |
+
+Both conditions. `q-cat` / `q-dog` / `q-peanut-allergy` still hit — the
+precision traps did not fire. Survivor texts are original labeled writes, so
+the group mapping did not break.
+
+## Decision
+
+Cosine-banded dedup is **on by default** in `save()` (unlike the field):
+worst case on a miss is "append as before"; a hit never hard-deletes (I8:
+restatement keeps the original; merge links the loser with `superseded_by`).
+No vector (embedder down) → append, don't crash. 02.c is the
+`--dedup-existing` dry-run backfill for stores written before this slice.
+
+---
+
 ## Related
 
 [[eval/README]] · [[0007-eval-harness]] · [[phase-0-edge-substrate]] · [[phase-2-retrieval-dynamics]] · [[BACKLOG]] · [[ARCHITECTURE]]

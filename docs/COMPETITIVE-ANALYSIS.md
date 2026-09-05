@@ -136,7 +136,7 @@ Honest scoring of Resonance Memory **today** (`v0.2.0`, August 2026) against the
 | Semantic recall | ✅ | ✅ | ✅ | ✅ | — |
 | Embed-once-on-save | ✅ | ✅ | ✅ | ✅ | — |
 | Automatic fact extraction on write | ✅ | ✅ | ✅ | ❌ | `RM-01` |
-| Deduplication | ✅ | ✅ | 🟡 | 🟡 *(exact-match only)* | `RM-02` |
+| Deduplication | ✅ | ✅ | 🟡 | ✅ *(cosine-banded at save; existing-store backfill is 02.c)* | `RM-02` |
 | Contradiction / supersession | 🟡 | ✅ | 🟡 | 🟡 *(v1: detects explicit correction cues + applies it; fuller heuristics open)* | `RM-03` |
 | Temporal metadata (valid-from/to) | 🟡 | ✅ | ❌ | ✅ | — |
 | Hybrid retrieval (semantic+keyword) | ✅ | ✅ | 🟡 | 🟡 *(keyword only as fallback)* | `RM-05` |
@@ -159,11 +159,12 @@ Honest scoring of Resonance Memory **today** (`v0.2.0`, August 2026) against the
 and the **evaluation** gap has closed — `RM-00` shipped, so every claim from here on is
 measurable and the regression gate is live. Temporal metadata (`RM-04`) is in, and `RM-03` v1
 now *detects* explicit corrections rather than only applying supersession blindly. What remains
-behind is the rest of the **write path**: automatic fact extraction (`RM-01`) and cosine-banded
-dedup (`RM-02`, exact-match only today), plus first-class hybrid retrieval (`RM-05`, keyword is
-still fallback-only) and the store/scale work (`RM-07`). That is exactly the ordering the
-roadmap encodes: measurement first (done), then the write path, then the substrate tuning our
-moat depends on.
+behind is the rest of the **write path**: automatic fact extraction (`RM-01`) and existing-store
+dedup backfill (`RM-02.c`), plus first-class hybrid retrieval (`RM-05`, keyword is still
+fallback-only) and the store/scale work (`RM-07`). Cosine-banded dedup at save (`RM-02.b`)
+landed: `duplicate_rate` 0.3182 → 0.0000 on `eval/duplicates` with `recall@5` held at 1.0.
+That is exactly the ordering the roadmap encodes: measurement first (done), then the write
+path, then the substrate tuning our moat depends on.
 
 ---
 

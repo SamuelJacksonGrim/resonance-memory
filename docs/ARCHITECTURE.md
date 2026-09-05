@@ -139,8 +139,8 @@ same record the panel renders and the installer's target reads.
 |---|---|---|
 | `entry.js` | Mode dispatch on `argv`. | server / panel / install |
 | `server.js` | MCP server. Declares the four tool schemas + descriptions, wires the *environment* (network embedder, live field toggle, lazy EdgeStore) into the shared core, runs the stdio JSON-RPC loop, vacuums soft-deletes and `pruneSweep`s faded+weak edges at startup. Reads the version from `package.json` so `serverInfo` can't drift. | `memory-core`, `store`, `edges`, `package.json` |
-| `memory-core.js` | **The four cognitive verbs, as one implementation.** `createCore({ store, embed, fieldEnabled, getEdgeStore })` → `{ save, recall, edit, remove }`. Everything environment-specific is *injected*. This is the code both `server.js` and `eval/pipeline.js` run — the RM-00 golden is the proof they never diverge. | `field`, `record` |
-| `record.js` | The shared record schema (`normalize()`), durable atomic writes (`writeFileDurable()`), the access sidecar (`AccessLog`), and the lexical heuristics (constraint typing, historical-query detection, supersession cues). Owned here so server and panel agree on a record byte-for-byte. | stdlib only |
+| `memory-core.js` | **The four cognitive verbs, as one implementation.** `createCore({ store, embed, fieldEnabled, getEdgeStore, dedupThresholds })` → `{ save, recall, edit, remove }`. Everything environment-specific is *injected*. This is the code both `server.js` and `eval/pipeline.js` run — the RM-00 golden is the proof they never diverge. | `field`, `record` |
+| `record.js` | The shared record schema (`normalize()`), durable atomic writes (`writeFileDurable()`), the access sidecar (`AccessLog`), and the lexical heuristics (constraint typing, historical-query detection, supersession cues, cosine-banded `detectNearDuplicate`). Owned here so server and panel agree on a record byte-for-byte. | stdlib only |
 | `store.js` | `JsonlStore` — the flat-JSONL backend behind the Store seam. Constructible and testable without the stdio loop; a SQLite backend can replace it with the same method surface. | `record` |
 | `field.js` | Associative layer (Phase 2a): a kNN semantic graph over stored vectors, neighborhood expansion, and constraint rescue. No new embedding calls, no LLM extraction. | stdlib only |
 | `ledger.js` | Retired Hebbian sidecar (Phase 2b). Off the live path as of Slice C; kept so tests can compare EdgeStore bonuses against the shipped epoch-decay math. | `record` |
@@ -180,22 +180,33 @@ argument is always the smallest possible thing (`content`, `query`, or `id`).
 ### `save_memory({ content })`
 
 1. **Exact restatement guard.** If a current memory has byte-identical `text`, bump its
-   `last_confirmed` and confirm — don't store a second copy. (Near-duplicate/cosine-banded
-   dedup is `RM-02`, still open; this is only the free, unambiguous case.) A confirm
-   also revives that id's pruned incident edges (Phase 0.4 — save touching an endpoint).
+   `last_confirmed` + `access_count` and confirm — don't store a second copy. Free (no
+   embed). A confirm also revives that id's pruned incident edges (Phase 0.4 — save
+   touching an endpoint).
 2. **Embed once.** POST `content` to the OpenAI-compatible `/v1/embeddings` endpoint (LM Studio
    default, `text-embedding-nomic-embed-text-v1.5`, 768-dim). If the embedder is down, the
    record is stored **without** a vector and backfilled on a later recall — a save never fails
    because the embedder is unreachable.
 3. **Normalize** into a record (`record.js` `normalize()` — the one schema definition).
-4. **Supersession check (RM-03 v1).** `detectSupersession()` fires only when the new text
+4. **Cosine-banded dedup (RM-02.b).** Against already-stored vectors, argmax. Cosine ≥
+   `DEDUP_HI` (0.95) is a restatement (same confirm path as step 1 — keep the original,
+   don't append). Band `DEDUP_LO..HI` (0.88–0.95) is a candidate merge: keep the longer
+   original text (never a blend — the `duplicate_rate` metric maps stored text back to
+   its labeled group), union metadata, link the loser with `superseded_by` via
+   `supersedePatches` (recoverable, never a hard delete). Below `DEDUP_LO`: fall through.
+   No vector → skip, append, don't crash. Thresholds are config (`RESONANCE_DEDUP_HI` /
+   `RESONANCE_DEDUP_LO` + live-config `dedup_hi` / `dedup_lo`), tuned on `eval/duplicates`
+   (tea 0.9522 is the tightest HI; controls ≤ ~0.69). Scan is O(N) cosine, same cost
+   class as the 0.1 save-time bind. Dedup runs *before* RM-03: a near-identical
+   restatement is the same fact, not a correction.
+5. **Supersession check (RM-03 v1).** `detectSupersession()` fires only when the new text
    carries an explicit correction cue ("actually", "now", "no longer", "moved"…) *and* it is
    the argmax-similar current memory above a floor. On a hit, the old row is retired
    (`valid_to`, `superseded_by`) and the new one appended, as one logical change — history is
    kept, never deleted. The cue is the precision gate; cosine only picks *which* memory the cue
    targets. Worst case: it retires nothing.
-5. **Append** the record to the JSONL store.
-6. **Save-time semantic bind (Phase 0.1).** If the record got a real vector, find its top-K=5
+6. **Append** the record to the JSONL store.
+7. **Save-time semantic bind (Phase 0.1).** If the record got a real vector, find its top-K=5
    neighbors among existing stored vectors above cosine **0.25** and persist them on the
    EdgeStore: measured `semantic.value` + `src_versions` tagged to the canonical endpoints,
    `hebbian.weight = 0` (no seeded baseline), `provenance.origin = "save-time-neighbor"`.
@@ -412,7 +423,8 @@ it reads `eval/embeddings.cache.json` and never touches the network or an API ke
   scorecard as the new golden. Measurement corpora (`duplicates`) are skipped here.
 - `eval/measure.js` runs reporting metrics from the registry in `eval/metrics.js`
   (`recall_at_k`, `duplicate_rate`; add more with `register(...)`). A/B numbers, not the
-  golden gate. See `eval/RESULTS.md` (RM-02.a) for the pre-dedup baseline.
+  golden gate. See `eval/RESULTS.md` (RM-02.a baseline, RM-02.b A/B: dup_rate
+  0.3182 → 0.0000, recall@5 held at 1.0000).
 - Current scorecard: **27/31 checks**, field lifts 3 cases fail→pass and the golden gate holds.
 
 `npm test` (57 tests) covers the substrate directly; `npm run eval` covers recall behavior.
