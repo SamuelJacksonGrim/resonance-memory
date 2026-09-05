@@ -83,6 +83,23 @@ test("normalize preserves explicit temporal values", () => {
   assert.strictEqual(r.revision, 2);
 });
 
+test("normalize backfills embedding_version on a legacy record (Phase 0)", () => {
+  const r = normalize({ id: 1, text: "hi", created: "2026-01-01T00:00:00Z" });
+  assert.strictEqual(r.embedding_version, 1, "missing field defaults to 1");
+});
+
+test("normalize preserves an explicit embedding_version", () => {
+  const r = normalize({ id: 1, text: "hi", embedding_version: 4 });
+  assert.strictEqual(r.embedding_version, 4);
+});
+
+test("normalize treats a JSON-null embedding_version as missing (defaults to 1)", () => {
+  // A bad patch that Object.assigned embedding_version: null would persist as
+  // JSON null. Next read must not keep null — version comparison needs a number.
+  const r = normalize({ id: 1, text: "hi", embedding_version: null });
+  assert.strictEqual(r.embedding_version, 1);
+});
+
 test("isCurrent: superseded and deleted are both excluded", () => {
   assert.strictEqual(isCurrent(normalize({ id: 1, text: "a" })), true);
   assert.strictEqual(isCurrent(normalize({ id: 2, text: "b", valid_to: "2026-01-01" })), false);
@@ -97,6 +114,12 @@ test("supersedePatches builds a non-overlapping validity chain", () => {
   assert.strictEqual(p.old.superseded_by, 2);
   assert.strictEqual(p.new.supersedes, 1);
   assert.strictEqual(p.new.revision, 2);
+  // Neither patch may carry embedding / embedding_version: Object.assign would
+  // clobber the live vector (BUG-008 class) or reset the generation counter.
+  assert.strictEqual("embedding" in p.old, false);
+  assert.strictEqual("embedding" in p.new, false);
+  assert.strictEqual("embedding_version" in p.old, false);
+  assert.strictEqual("embedding_version" in p.new, false);
 });
 
 // ------------------------------------------------------- supersession detection
@@ -408,6 +431,25 @@ test("legacy store with no temporal fields loads as all-current", () => {
   const cur = s.current();
   assert.strictEqual(cur.length, 2, "no migration step needed");
   assert.ok(cur.every((r) => r.valid_from && r.valid_to === null));
+});
+
+test("legacy store with no embedding_version loads as version 1", () => {
+  const s = freshStore();
+  fs.writeFileSync(s.file,
+    JSON.stringify({ id: 1, text: "old one", embedding: [1, 0] }) + "\n");
+  assert.strictEqual(s.get(1).embedding_version, 1);
+  assert.deepStrictEqual(s.get(1).embedding, [1, 0], "vector untouched by the backfill");
+});
+
+test("recall backfill of a vectorless row does NOT increment embedding_version", () => {
+  // First-time embed of current text is generation 1, not a re-embed. Bumping
+  // here would make a save-time embedder outage look like an edit() mutation.
+  const s = freshStore();
+  s.add(normalize({ id: 1, text: "a" }));      // no embedding, version 1
+  assert.strictEqual(s.get(1).embedding_version, 1);
+  s.applyRecall([1], new Map([["1", [0.5, 0.5]]]));
+  assert.deepStrictEqual(s.get(1).embedding, [0.5, 0.5]);
+  assert.strictEqual(s.get(1).embedding_version, 1, "backfill is not a re-embed");
 });
 
 // ------------------------------------------------- associative field topology
@@ -777,6 +819,98 @@ async function asyncTests() {
     const { core } = makeCore("bug007d.jsonl", ref);
     const msg = await core.edit(99999, "nothing here");
     assert.ok(/No memory with id/.test(msg));
+  });
+
+  // ------------------------------------------------ embedding_version (Phase 0.0)
+  // Validity of cached semantic edges is a version comparison. These four
+  // (plus the attack cases) must fail without the schema change / lockstep bump.
+  section("embedding_version");
+
+  await atest("a fresh save is embedding_version 1", async () => {
+    const ref = { live: true };
+    const { store, core } = makeCore("embver-save.jsonl", ref);
+    await core.save("brand new memory");
+    assert.strictEqual(store.all()[0].embedding_version, 1);
+  });
+
+  await atest("a successful edit() re-embed increments embedding_version", async () => {
+    const ref = { live: true };
+    const store = new JsonlStore(tmp("embver-edit.jsonl"));
+    let vec = [1, 0, 0];
+    const embed = async (texts) => texts.map(() => vec.slice());
+    const core = createCore({ store, embed });
+    await core.save("first");
+    assert.strictEqual(store.all()[0].embedding_version, 1, "save starts at 1");
+    vec = [0, 1, 0];
+    await core.edit(store.all()[0].id, "second");
+    assert.strictEqual(store.all()[0].embedding_version, 2, "first re-embed -> 2");
+    assert.deepStrictEqual(store.all()[0].embedding, [0, 1, 0]);
+    vec = [0, 0, 1];
+    await core.edit(store.all()[0].id, "third");
+    assert.strictEqual(store.all()[0].embedding_version, 3, "second re-embed -> 3");
+  });
+
+  await atest("a dead embedder does NOT increment embedding_version AND keeps the vector", async () => {
+    const ref = { live: true };
+    const { store, core } = makeCore("embver-dead.jsonl", ref);
+    await core.save("the dentist is on Tuesday");
+    const before = store.all()[0];
+    assert.strictEqual(before.embedding_version, 1);
+    assert.ok(Array.isArray(before.embedding) && before.embedding.length === 3);
+
+    ref.live = false;
+    const id = before.id;
+    const msg = await core.edit(id, "the dentist is on Thursday");
+    const after = store.all()[0];
+    assert.strictEqual(after.text, "the dentist is on Thursday", "text still updates");
+    assert.strictEqual(after.embedding_version, 1, "failed embed must not bump the version");
+    assert.deepStrictEqual(after.embedding, before.embedding, "prior embedding survives (BUG-008)");
+    assert.ok(/keyword/i.test(msg), "degraded state is reported");
+  });
+
+  await atest("a save with a dead embedder is still version 1 (not 0, not missing)", async () => {
+    const ref = { live: false };
+    const { store, core } = makeCore("embver-save-dead.jsonl", ref);
+    await core.save("saved while the embedder was down");
+    const rec = store.all()[0];
+    assert.strictEqual(rec.embedding_version, 1);
+    assert.strictEqual(rec.embedding, null, "no vector, but version is still 1");
+  });
+
+  await atest("embed returning empty/null without throwing does not bump or clobber", async () => {
+    // The throw path is the common outage; a broken embedder that returns a
+    // hole instead of throwing is the same class and must take the omit path.
+    const store = new JsonlStore(tmp("embver-hole.jsonl"));
+    let mode = "ok";
+    const embed = async (texts) => {
+      if (mode === "ok") return texts.map(() => [1, 0, 0]);
+      if (mode === "empty") return texts.map(() => []);
+      return texts.map(() => null);
+    };
+    const core = createCore({ store, embed });
+    await core.save("original");
+    const before = store.all()[0];
+    mode = "empty";
+    await core.edit(before.id, "edited with empty vector");
+    let after = store.all()[0];
+    assert.strictEqual(after.embedding_version, 1, "empty array is not a successful re-embed");
+    assert.deepStrictEqual(after.embedding, before.embedding);
+    mode = "null";
+    await core.edit(before.id, "edited with null vector");
+    after = store.all()[0];
+    assert.strictEqual(after.embedding_version, 1, "null vector is not a successful re-embed");
+    assert.deepStrictEqual(after.embedding, before.embedding);
+    assert.strictEqual(after.text, "edited with null vector");
+  });
+
+  await atest("exact restatement confirm does not increment embedding_version", async () => {
+    const ref = { live: true };
+    const { store, core } = makeCore("embver-confirm.jsonl", ref);
+    await core.save("I drink tea");
+    const id = store.all()[0].id;
+    await core.save("I drink tea");          // confirm, not a new row
+    assert.strictEqual(store.all().length, 1);
+    assert.strictEqual(store.get(id).embedding_version, 1);
   });
 
   section("warm hook in createCore (silent, flags-off default)");

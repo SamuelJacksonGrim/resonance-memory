@@ -179,6 +179,7 @@ function createCore({
     const rec = normalize({
       id: store.nextId(), created: now, modified: now, text: content,
       embedding, valid_from: now, valid_to: null, last_confirmed: now,
+      embedding_version: 1,   // first generation, even if this save's embed failed
     });
 
     // RM-03: does this correct a fact we already hold? A save carrying an explicit
@@ -304,13 +305,23 @@ function createCore({
     // A failed re-embed must never reach store.update(): it Object.assigns the
     // patch, so a null here would overwrite a good vector. Keep the old one - a
     // stale vector still ranks, and the next successful edit repairs it.
+    // embedding_version moves in lockstep with the vector. Bumping it on a
+    // failed embed would make text-drifted-from-vector look like a genuine
+    // re-embed, and every incident edge would falsely self-invalidate
+    // (Phase 0 validity-by-comparison; BUG-008 class). Omit both fields.
     let embedding = null;
     try { embedding = (await embed([content]))[0]; } catch { embedding = null; }
     const embedded = Array.isArray(embedding) && embedding.length > 0;
     const now = new Date().toISOString();
     // An edit is a correction in place: the fact is current again as of now.
     const patch = { text: content, modified: now, last_confirmed: now };
-    if (embedded) patch.embedding = embedding;   // omitted entirely on failure
+    if (embedded) {
+      patch.embedding = embedding;   // omitted entirely on failure
+      const current = store.get(id);
+      if (!current) return "No memory with id " + id + ".";
+      const prev = typeof current.embedding_version === "number" ? current.embedding_version : 1;
+      patch.embedding_version = prev + 1;
+    }
     const ok = store.update(id, patch);
     if (!ok) return "No memory with id " + id + ".";
     return embedded

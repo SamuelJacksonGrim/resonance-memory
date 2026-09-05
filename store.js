@@ -109,6 +109,11 @@ class JsonlStore {
       let n = 0;
       for (const r of recs) {
         const v = embeddingById.get(String(r.id));
+        // First-time backfill of a vectorless row (legacy, or a save-time
+        // embedder outage). The vector now matches the text, but this is not
+        // a re-embed: embedding_version stays at the normalize() default (1).
+        // Bumping here would make a save-time failure look like an edit()
+        // mutation, which Phase 0's version-comparison cache cannot tell apart.
         if (v) { r.embedding = v; n++; }
       }
       if (n) this._writeAll(recs);

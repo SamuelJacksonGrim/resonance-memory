@@ -212,7 +212,9 @@ argument is always the smallest possible thing (`content`, `query`, or `id`).
 ### `edit_memory({ id, content })`
 
 Replace `text`, re-embed, refresh `modified` + `last_confirmed` (an edit is a correction in
-place; the fact is current again as of now). One durable rewrite.
+place; the fact is current again as of now). A successful re-embed increments
+`embedding_version` in lockstep with the new vector; a failed one omits both fields from
+the patch so a good embedding cannot be clobbered (`BUG-008`). One durable rewrite.
 
 ### `delete_memory({ id })`
 
@@ -315,6 +317,7 @@ migration step.
 | `needs_review` | an ambiguous conflict both kept for a human to look at |
 | `source` | provenance (`user_stated` default) — the `RM-16` groundwork |
 | `is_constraint` | server-assigned constraint type (lexical, from text) |
+| `embedding_version` | generation of the stored vector (Phase 0). Starts at `1`; increments only when `edit()` writes a real new vector. A failed embed omits it from the patch (`BUG-008` class). Cached semantic edges later compare this against `src_versions`. |
 
 A superseded memory is **never deleted**: `valid_to` is set to the successor's `valid_from`,
 producing a non-overlapping validity chain you can walk backwards. `store.current()` excludes

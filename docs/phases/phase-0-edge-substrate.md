@@ -108,7 +108,7 @@ re-embed — which is why `BUG-008` was fixed in PRE-0 before this schema harden
 
 ### 0.0 — Edge store unification 🔀 *(start here)*
 - [ ] One edge table, two signals, typed provenance.
-- [ ] `embedding_version` in `record.js normalize()` (legacy rows default `1`).
+- [x] `embedding_version` in `record.js normalize()` (legacy rows default `1`).
 - [ ] Migrate every `.assoc.json` edge in: weight → `hebbian.weight`; stamp `hebbian.last_updated`
       + `created_at` at migration time (both **lower bounds** — note it); origin `co-activation`,
       `migrated_from: "assoc.json"`; semantic empty, computed on first use.
@@ -225,7 +225,7 @@ batched through the `AccessLog` pattern. Telemetry does not get to violate an in
 - [ ] **Stale semantic structurally detectable** (edit → version++ → incident edges fail
       `src_versions` on read, no event run; also: persist memory, crash before touching edges,
       edge still seen stale).
-- [ ] `edit()` with a dead embedder does **not** increment `embedding_version`.
+- [x] `edit()` with a dead embedder does **not** increment `embedding_version`.
 - [ ] **Reading does not reinforce (I6):** read one edge 100× → weight + `last_updated` unchanged,
       *then* genuine reinforcement does change them.
 - [ ] Reactivation preserves history (`created_at` unmoved, `prune_count === 1`, weight carried).

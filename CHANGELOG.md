@@ -17,6 +17,11 @@ Beta-readiness pass:
   "revisit only if hosted resale looms" trigger the backlog pre-registered, now pulled.
 
 ### Added
+- **`embedding_version` on every memory** (Phase 0.0 schema). `record.js` `normalize()`
+  backfills it to `1` for legacy rows. A successful `edit()` re-embed increments it; an
+  embedder failure does not — the version moves in lockstep with the vector so a
+  text-drifted-from-vector record stays distinguishable from a genuine re-embed
+  (`BUG-008` class). See [`docs/phases/phase-0-edge-substrate.md`](docs/phases/phase-0-edge-substrate.md).
 - **Association graph view** in the panel — a live 3D force-directed constellation of your
   memories; hover a dot to read it, line thickness = similarity, reinforced-by-use edges
   highlighted. Refreshes as the graph learns.

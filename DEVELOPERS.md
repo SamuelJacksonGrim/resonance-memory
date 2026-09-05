@@ -10,7 +10,7 @@ an opaque `id`.
 | File | What it is |
 |---|---|
 | `server.js` | The MCP server. Four verbs: `save_memory`, `recall_memory`, `edit_memory`, `delete_memory`. |
-| `record.js` | The shared record schema (incl. temporal fields), durable atomic writes, and the access sidecar. |
+| `record.js` | The shared record schema (incl. temporal fields and `embedding_version`), durable atomic writes, and the access sidecar. |
 | `store.js` | `JsonlStore` — the storage backend behind the Store seam. Separate module so it's testable without the stdio loop. |
 | `test.js` | Dependency-free test suite: `npm test`. |
 | `package.json` | No dependencies — scripts only (`test`, `build`, `panel`, `mcp`, `seed`, `inspect`). Sole source of the version string; `server.js` reads it so `serverInfo` can't drift. |

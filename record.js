@@ -97,6 +97,13 @@ function appendLineDurable(file, line) {
  *   revision       position in the supersession chain (1 = original)
  *   needs_review   an ambiguous conflict: BOTH were kept, a human should look
  *
+ *   embedding_version  generation of the stored vector (Phase 0). Starts at 1;
+ *                      increments only when a successful re-embed writes a new
+ *                      vector. Cached semantic edges later compare this against
+ *                      src_versions — a failed embed must NEVER bump it, or a
+ *                      text-drifted-from-vector record looks freshly embedded
+ *                      (BUG-008 class; see docs/phases/phase-0-edge-substrate.md).
+ *
  * A superseded memory is never deleted. valid_to is set to the successor's
  * valid_from, producing a non-overlapping validity chain you can walk backwards.
  */
@@ -123,6 +130,12 @@ function normalize(r) {
     supersedes: r.supersedes != null ? r.supersedes : null,
     revision: typeof r.revision === "number" ? r.revision : 1,
     needs_review: !!r.needs_review,
+
+    // vector generation (Phase 0). Legacy rows default to 1 so version comparison
+    // is well-defined the moment an edge cache starts using it. Missing / non-numeric
+    // (including JSON-null from a bad patch) backfills to 1 — same migration path
+    // as revision. Never incremented here: normalize() runs on every read.
+    embedding_version: typeof r.embedding_version === "number" ? r.embedding_version : 1,
 
     // provenance (RM-16): where this came from. Defaults to the honest answer for
     // anything written before provenance existed - the user's client said it.
