@@ -99,9 +99,19 @@ new golden case: `EVAL_REFRESH=1 npm run eval`. For a measurement corpus (`dupli
 
 ## How it works (data flow)
 
-1. **Save**: `save_memory({ content })` → trim → if a current memory is byte-identical,
-   confirm it (`last_confirmed` + `access_count`) instead of appending. Otherwise embed
-   the text once (via an OpenAI-compatible `/v1/embeddings` endpoint, default LM Studio
+1. **Save**: `save_memory({ content })` → **RM-01.b Tier 0** (always on, no LLM): collapse
+   whitespace, strip leading filler openers ("I think you should know that…", "just so
+   you're aware", "FYI", stacked) and assistant-aimed imperative framing ("remember to
+   remind me", "make sure you", "don't forget to", "be sure to"), then split on `; ` /
+   ` and also ` only when both halves stand alone (over-split is worse than no-split —
+   "…and also with honey" stays one fact). Clean facts pass through byte-identical.
+   **Tier 1** (always on): refuse secret/PII shapes (API keys, passwords, 13–16-digit
+   cards, AWS keys, PEM blocks, GitHub tokens) — store nothing, return a clear refusal.
+   Refusal, not redaction: a fact mixed with a secret is store-nothing. Digit traps
+   (`4821`, `1500mg`) do not trip the card pattern. Each resulting fact is its own
+   record. Then: if a current memory is byte-identical, confirm it (`last_confirmed` +
+   `access_count`) instead of appending. Otherwise embed the (extracted) text once
+   (via an OpenAI-compatible `/v1/embeddings` endpoint, default LM Studio
    on `localhost:1234`, `text-embedding-nomic-embed-text-v1.5`, 768-dim) → cosine-banded
    dedup against already-stored vectors (RM-02.b): cosine ≥ `DEDUP_HI` (0.95) is a
    restatement (same confirm, no append); `DEDUP_LO..HI` (0.88–0.95) is a merge (keep
@@ -111,6 +121,7 @@ new golden case: `EVAL_REFRESH=1 npm run eval`. For a measurement corpus (`dupli
    tuned on `eval/duplicates`. Then RM-03 cue-gated supersession, then append. A record
    that got a real vector also binds its top-5 semantic neighbors (cosine ≥ 0.25) into
    the EdgeStore; Hebbian weight starts at 0. Recall does not read those edges yet.
+   (Tier 2, the opt-in local LLM pass, is RM-01.c — off, not built yet.)
    Stores written *before* 02.b still carry the extras: `--dedup-existing` (dry-run
    default; `--apply` to mutate) runs the same bands over the current store, file
    order, one durable rewrite. Not a fifth verb — a CLI maintenance path.

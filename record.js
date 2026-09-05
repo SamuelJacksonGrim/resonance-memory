@@ -42,9 +42,11 @@
  *                      Same sidecar pattern as ledger.js.
  *
  * Decision helpers also live here so they stay pure and testable: constraint
- * typing, historical-query detection, RM-03 cue-gated detectSupersession, and
- * RM-02.b cosine-banded detectNearDuplicate / pickMergeSurvivor. Callers own
- * persistence.
+ * typing, historical-query detection, RM-03 cue-gated detectSupersession,
+ * RM-02.b cosine-banded detectNearDuplicate / pickMergeSurvivor, and RM-01.b
+ * write-side extraction (normalizeText / splitFacts / guardSecrets /
+ * prepareWrite). Callers own persistence. `normalize()` is the record schema
+ * — do not overload it for incoming text; that job is `normalizeText`.
  *
  * Temporal fields (RM-04) are defined here too - see docs/proposed/0002.
  */
@@ -270,6 +272,162 @@ function pickMergeSurvivor(existing, incoming) {
   return b.length > a.length ? incoming : existing;
 }
 
+// ------------------------------------------------- RM-01.b write-side extraction
+/*
+ * Tier 0 (always on, no LLM) + Tier 1 (secret/PII guard). Pure string ops.
+ * `memory-core.js save()` is the only caller on the live path so eval and
+ * the MCP server cannot drift (RM-00).
+ *
+ * Implemented against `eval/corpora/messy.jsonl` gold, NOT 0001's regexes
+ * as-is. 01.a NOTES §3: 0001's `^(i think )` half-strips "I think you should
+ * know that Samuel prefers concise answers" to "You should know that…",
+ * which still contains the noise span and fails exact gold match. Same
+ * class: 0001 missed "just so you're aware", "remember to remind me",
+ * "make sure you", "don't forget to", "be sure to". Over-split is worse
+ * than no-split (the `multi-nosplit` honey trap). Guard is refusal, not
+ * redaction — a fact mixed with a secret is store-nothing.
+ *
+ * Named `normalizeText` so it never collides with `normalize()` (schema).
+ */
+
+function collapseWhitespace(text) {
+  return String(text || "").replace(/\s+/g, " ").trim();
+}
+
+function recaseSentence(s) {
+  const t = String(s || "");
+  if (!t) return t;
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
+
+/*
+ * Longest-first, leading-only, case-insensitive. Stacked openers
+ * ("FYI, just so you know, …") are stripped in a loop. Do NOT add
+ * 0001's short `^(i think )` or bare `^(also,? )` — the first leaves
+ * a half-opener, the second eats a legitimate "Also …" fact.
+ */
+const WRITE_OPENERS = [
+  /^i think you should know that\s*/i,
+  /^just so you(?:['\u2019]re| are) aware,?\s*/i,
+  /^just so you know,?\s*/i,
+  /^it(?:['\u2019]s| is) worth noting that\s*/i,
+  /^for the record,?\s*/i,
+  /^fyi,?\s*/i,
+  /^btw,?\s*/i,
+  // Assistant-aimed framing. Payload is kept when it remains; empty
+  // leftover → prepareWrite returns no facts (drop the write).
+  /^remember to remind me(?: that)?\s*/i,
+  /^(?:please\s+)?(?:remember|note) that\s*/i,
+  /^(?:please\s+)?remember to\s*/i,
+  /^make sure you\s*/i,
+  /^(?:please\s+)?(?:don['\u2019]t|do not) forget to\s*/i,
+  /^(?:please\s+)?be sure to\s*/i,
+];
+
+function stripWriteOpeners(text) {
+  let t = collapseWhitespace(text);
+  let changed = true;
+  while (changed && t) {
+    changed = false;
+    for (const re of WRITE_OPENERS) {
+      const next = t.replace(re, "").trim();
+      if (next !== t) { t = next; changed = true; }
+    }
+  }
+  return t;
+}
+
+function normalizeText(text) {
+  const collapsed = collapseWhitespace(text);
+  const stripped = stripWriteOpeners(collapsed);
+  if (!stripped) return "";
+  // Recase only when an opener actually came off. Clean facts are
+  // sacrosanct (01.b control-preservation): "first" must stay "first",
+  // not become "First". Leftovers like "the Friday standup…" need the
+  // capital to match gold.
+  return stripped !== collapsed ? recaseSentence(stripped) : stripped;
+}
+
+/*
+ * Split on `; ` and ` and also ` ONLY when every half is a standalone
+ * proposition. Conservative: if any half fails, keep the original.
+ * `with honey` (2 words, no copula) is the measured trap — splitting
+ * it drops honey from the stored text and fails q-tea-honey.
+ *
+ * Bare `and` is NOT a delimiter (0001's diabetic+dog example is a
+ * future Tier 2 job, not a heuristic we can get right without an LLM).
+ */
+const STANDALONE_VERB_RE =
+  /\b(is|are|was|were|has|have|likes?|prefers?|needs?|uses?|lives?|works?|owns?)\b/i;
+const DEPENDENT_CLAUSE_RE = /^(which|that|who|because|so|but|then)\b/i;
+
+function isStandaloneFact(s) {
+  const t = collapseWhitespace(s);
+  if (!t) return false;
+  if (t.split(/\s+/).length < 4) return false;
+  if (DEPENDENT_CLAUSE_RE.test(t)) return false;
+  return STANDALONE_VERB_RE.test(t);
+}
+
+function splitFacts(text) {
+  const src = collapseWhitespace(text);
+  if (!src) return [];
+  const parts = src.split(/;\s+|,\s+and also\s+|\s+and also\s+/i).map((s) => s.trim()).filter(Boolean);
+  if (parts.length < 2) return [src];
+  if (!parts.every(isStandaloneFact)) return [src];
+  return parts.map(recaseSentence);
+}
+
+/*
+ * Card pattern is `\b[0-9]{13,16}\b` on purpose (0001 + 01.a digit traps).
+ * `4821` and `1500mg` MUST survive; a false PII refusal drops a real
+ * memory and tanks recall@5, which this corpus treats as worse than a
+ * stored secret. Both failure directions are scored (over-refusal vs
+ * under-refusal).
+ */
+const SECRET_PATTERNS = [
+  { re: /\b(sk|pk|ghp|gho|xox[baprs])-[A-Za-z0-9_-]{16,}\b/, what: "an API key" },
+  { re: /\bAKIA[0-9A-Z]{16}\b/, what: "an AWS key" },
+  { re: /\b[0-9]{13,16}\b/, what: "what looks like a card number" },
+  { re: /-----BEGIN [A-Z ]*PRIVATE KEY-----/, what: "a private key" },
+  { re: /\b(password|passwd|secret|token)\s*[:=]\s*\S{6,}/i, what: "a credential" },
+];
+
+function guardSecrets(text) {
+  const t = String(text || "");
+  for (const { re, what } of SECRET_PATTERNS) {
+    if (re.test(t)) {
+      return {
+        ok: false,
+        what,
+        message: "Not saved — that looks like " + what + ". Secrets don't belong in memory.",
+      };
+    }
+  }
+  return { ok: true };
+}
+
+/*
+ * One entry for save(): whitespace → PII guard on the FULL payload
+ * (mixed fact+secret is store-nothing, not salvage) → strip openers →
+ * split. Empty leftover (imperative with no payload) is zero facts,
+ * not a refusal.
+ */
+function prepareWrite(content) {
+  const raw = collapseWhitespace(content);
+  if (!raw) return { ok: true, facts: [], message: null };
+  const g = guardSecrets(raw);
+  if (!g.ok) return { ok: false, facts: [], message: g.message };
+  const normalized = normalizeText(raw);
+  if (!normalized) return { ok: true, facts: [], message: null };
+  const facts = splitFacts(normalized).filter(Boolean);
+  for (const f of facts) {
+    const gf = guardSecrets(f);
+    if (!gf.ok) return { ok: false, facts: [], message: gf.message };
+  }
+  return { ok: true, facts, message: null };
+}
+
 /*
  * Mark `oldId` superseded by `newId`. Both rows survive.
  * Returns the patches to apply; the caller owns persistence so this stays pure
@@ -369,5 +527,7 @@ module.exports = {
   detectSupersession, hasSupersedeCue, SUPERSEDE_CUE_RE,
   detectNearDuplicate, pickMergeSurvivor,
   detectConstraint, CONSTRAINT_RE,
+  normalizeText, splitFacts, guardSecrets, prepareWrite, isStandaloneFact,
+  WRITE_OPENERS, SECRET_PATTERNS,
   AccessLog, HISTORICAL_RE,
 };

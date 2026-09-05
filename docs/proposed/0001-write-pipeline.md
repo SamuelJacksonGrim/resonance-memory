@@ -1,6 +1,6 @@
 # 0001 — The write pipeline: extraction, guarding, structuring
 
-**Status:** proposed · **Backlog:** `RM-01` (with `RM-02`, `RM-16`) · **Depends on:** `RM-00`
+**Status:** Tier 0/1 **shipped (RM-01.b)** · Tier 2 still proposed · **Backlog:** `RM-01` (with `RM-02`, `RM-16`) · **Depends on:** `RM-00`
 
 ## Problem
 
@@ -54,24 +54,38 @@ that is still better than today's.
 > backfills the record schema. Two different jobs, one obvious name — do not let them collide.
 
 ```js
-// write.js
-const FILLER = [
-  /^(i think |i guess |just so you know,? |for the record,? |it'?s worth noting that )/i,
-  /^(please )?(remember|note) that /i,
-  /^(fyi,? |btw,? |also,? )/i,
+// record.js (RM-01.b). Longest-first; NOT 0001's original `^(i think )`,
+// which half-strips "I think you should know that Samuel prefers concise
+// answers" to "You should know that…" (still noise; fails exact gold).
+const WRITE_OPENERS = [
+  /^i think you should know that\s*/i,
+  /^just so you(?:['\u2019]re| are) aware,?\s*/i,
+  /^just so you know,?\s*/i,
+  /^it(?:['\u2019]s| is) worth noting that\s*/i,
+  /^for the record,?\s*/i,
+  /^fyi,?\s*/i,
+  /^btw,?\s*/i,
+  /^remember to remind me(?: that)?\s*/i,
+  /^(?:please\s+)?(?:remember|note) that\s*/i,
+  /^(?:please\s+)?remember to\s*/i,
+  /^make sure you\s*/i,
+  /^(?:please\s+)?(?:don['\u2019]t|do not) forget to\s*/i,
+  /^(?:please\s+)?be sure to\s*/i,
 ];
 
 function normalizeText(text) {
   let t = String(text || "").replace(/\s+/g, " ").trim();
+  const before = t;
   let changed = true;
   while (changed) {                       // strip stacked openers: "FYI, just so you know, ..."
     changed = false;
-    for (const re of FILLER) {
-      const next = t.replace(re, "");
-      if (next !== t) { t = next.trim(); changed = true; }
+    for (const re of WRITE_OPENERS) {
+      const next = t.replace(re, "").trim();
+      if (next !== t) { t = next; changed = true; }
     }
   }
-  if (t) t = t[0].toUpperCase() + t.slice(1);
+  // Recase only when an opener came off. Clean facts are sacrosanct.
+  if (t && t !== before) t = t[0].toUpperCase() + t.slice(1);
   return t;
 }
 
@@ -176,15 +190,14 @@ safe, we can reject aggressively. Asymmetric costs → asymmetric thresholds.
 
 ```js
 async function saveMemory(content, opts = {}) {
-  const t0 = normalizeText(content);
-  if (!t0) return "Nothing to save: `content` was empty.";
-
-  const g = guard(t0);
-  if (!g.ok) return g.message;                       // hard stop, user is told
-
-  let facts = splitFacts(t0);
+  // Guard the FULL payload first (RM-01.b): a fact mixed with a secret is
+  // store-nothing, not "salvage the Texas half". Then strip + split.
+  const prepared = prepareWrite(content);
+  if (!prepared.ok) return prepared.message;         // hard stop, user is told
+  if (!prepared.facts.length) return "Nothing to save: `content` was empty.";
+  let facts = prepared.facts;
   if (extractionEnabled()) {
-    try { const f = await extract(t0, extractCfg()); if (f.length) facts = f; }
+    try { const f = await extract(facts.join(" "), extractCfg()); if (f.length) facts = f; }
     catch { /* silent degrade - Tier 0 result stands */ }
   }
 

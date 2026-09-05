@@ -135,7 +135,7 @@ Honest scoring of Resonance Memory **today** (`v0.2.0`, August 2026) against the
 |---|:--:|:--:|:--:|:--:|---|
 | Semantic recall | ✅ | ✅ | ✅ | ✅ | — |
 | Embed-once-on-save | ✅ | ✅ | ✅ | ✅ | — |
-| Automatic fact extraction on write | ✅ | ✅ | ✅ | ❌ | `RM-01` |
+| Automatic fact extraction on write | ✅ | ✅ | ✅ | 🟡 *(Tier 0/1 heuristics; Tier 2 LLM is 01.c)* | `RM-01` |
 | Deduplication | ✅ | ✅ | 🟡 | ✅ *(cosine-banded at save + `--dedup-existing` backfill)* | `RM-02` ✅ |
 | Contradiction / supersession | 🟡 | ✅ | 🟡 | 🟡 *(v1: detects explicit correction cues + applies it; fuller heuristics open)* | `RM-03` |
 | Temporal metadata (valid-from/to) | 🟡 | ✅ | ❌ | ✅ | — |
@@ -159,7 +159,8 @@ Honest scoring of Resonance Memory **today** (`v0.2.0`, August 2026) against the
 and the **evaluation** gap has closed — `RM-00` shipped, so every claim from here on is
 measurable and the regression gate is live. Temporal metadata (`RM-04`) is in, and `RM-03` v1
 now *detects* explicit corrections rather than only applying supersession blindly. What remains
-behind is the rest of the **write path**: automatic fact extraction (`RM-01`), plus first-class
+behind is the rest of the **write path**: automatic fact extraction's LLM pass (`RM-01.c`;
+Tier 0/1 heuristics shipped and met the 0.9 precision bar), plus first-class
 hybrid retrieval (`RM-05`, keyword is still fallback-only) and the store/scale work (`RM-07`).
 Cosine-banded dedup (`RM-02`) is done: save-time bands (`RM-02.b`) plus `--dedup-existing`
 backfill (`RM-02.c`) both take `duplicate_rate` 0.3182 → 0.0000 on `eval/duplicates` with

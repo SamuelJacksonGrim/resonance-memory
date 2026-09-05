@@ -479,8 +479,8 @@ function extractionPrecisionStats(results, corpus) {
  * dedicated readout (refused-and-wrote-nothing / PII cases).
  *
  * Vacuous: labeled cases + zero stored → 1.0 (no false positives).
- * That is the all-refuse cheat: precision aces, recall@5 (and a later
- * extraction_recall) is the backstop. Unlabeled input → 0.
+ * That is the all-refuse cheat: precision aces, recall@5 and
+ * extraction_recall are the backstop. Unlabeled input → 0.
  *
  * results shape: { cases: [{ id?, stored: [{text}|string], refused? }] }
  * corpus shape:  { cases: [{ id?, gold_facts: [string], noise: [string],
@@ -494,6 +494,69 @@ register({
   description: "Fraction of stored records that match a gold atomic fact and contain no labeled noise.",
   compute(results, corpus) { return extractionPrecisionStats(results, corpus).rate; },
   explain: extractionPrecisionStats,
+});
+
+function extractionRecallStats(results, corpus) {
+  const cases = joinExtractCases(results, corpus);
+  let nGold = 0;
+  let nHit = 0;
+  const byCase = [];
+  for (const c of cases) {
+    const stored = c.stored || [];
+    let hit = 0;
+    for (const g of c.gold_facts || []) {
+      nGold++;
+      if (stored.some((text) => isCorrectStored(text, [g], c.noise))) {
+        nHit++;
+        hit++;
+      }
+    }
+    byCase.push({
+      id: c.id,
+      n_gold: (c.gold_facts || []).length,
+      n_hit: hit,
+    });
+  }
+  // Unlabeled (no gold_facts anywhere) → 0, same as precision, so computeAll
+  // on a duplicates result does not look like a perfect extraction run.
+  // Labeled PII-only (gold_facts all empty) → 1: nothing to recover.
+  // The refuse-everything cheat on a gold-bearing corpus: precision 1.0
+  // (vacuous) and recall 0 (every gold fact missed). That's the anti-cheat.
+  let rate;
+  if (!cases.length) rate = 0;
+  else if (!nGold) rate = 1;
+  else rate = nHit / nGold;
+  return {
+    n_labeled: cases.length,
+    n_gold: nGold,
+    n_hit: nHit,
+    rate,
+    byCase,
+  };
+}
+
+/*
+ * extraction_recall — of the gold atomic facts, the fraction for which
+ * save() actually persisted a matching record.
+ *
+ *     recall = |gold facts with a matching stored record| / |gold facts|
+ *
+ * Matching is the same equality as extraction_precision (whitespace-
+ * collapsed, case-folded, no noise span). Micro-averaged across labeled
+ * writes so a split that stores both halves scores 2/2, and a dropped
+ * write scores 0/N for that write's gold.
+ *
+ * PII writes have gold_facts: [] and do not enter the denominator.
+ * Vacuous precision (refuse everything → 0 stored → 1.0) cannot hide
+ * here: a gold-bearing corpus would report recall 0.
+ *
+ * results / corpus shapes: same as extraction_precision.
+ */
+register({
+  name: "extraction_recall",
+  description: "Fraction of gold atomic facts for which a matching record was stored.",
+  compute(results, corpus) { return extractionRecallStats(results, corpus).rate; },
+  explain: extractionRecallStats,
 });
 
 /*

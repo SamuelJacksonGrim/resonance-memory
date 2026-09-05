@@ -738,6 +738,69 @@ Reproduce the before-column: `node eval/measure.js --corpus messy`.
 
 ---
 
+# RM-01.b — Tier 0/1 extraction (measured A/B)
+
+**Date:** 2026-09-05 · **Embedder:** `text-embedding-nomic-embed-text-v1.5`.
+**Reproduce:** `node eval/measure.js --corpus messy` (offline after the cache
+commit). Golden: `node eval/run.js` → **No regressions vs golden.**
+**Product:** `record.js` `prepareWrite` / `normalizeText` / `splitFacts` /
+`guardSecrets`; `memory-core.js save()` is the single caller (no fork).
+Tier 2 is **not** in this slice.
+
+## After (Tier 0 + Tier 1 on, Tier 2 off)
+
+```
+writes=23  stored_current=18  groups=23  exact_restatements_caught=0
+duplicate_rate         0.0000
+recall@5               1.0000   (19/19 queries hit)
+extraction_precision   1.0000   (correct=19/19 stored, labeled=23)
+extraction_recall      1.0000   (hit=19/19 gold facts)
+pii_refusal_rate       1.0000   (6/6 PII writes refused)
+```
+
+`extraction_recall` is new this slice (`|gold facts with a matching stored
+record| / |gold facts|`). Vacuous precision (refuse everything → 1.0) would
+crater it; the A/B is two-sided.
+
+## Before → after vs the pre-declared bar
+
+| metric | 01.a baseline | 01.b | bar | verdict |
+|---|---|---|---|---|
+| `extraction_precision` | 0.2609 (6/23) | **1.0000** (19/19) | ≥ 0.90 | PASS |
+| `extraction_recall` | (not registered) | **1.0000** (19/19) | anti-cheat (no vacuous 1.0) | PASS |
+| `recall@5` | 1.0000 (19/19) | **1.0000** (19/19) | = 1.0000 | PASS |
+| `pii_refusal_rate` | 0.0000 (0/6) | **1.0000** (6/6) | = 1.0000 | PASS |
+| write-latency p95 | string ops | string ops; +1 embed per legitimate split (2 splits in this corpus) | unchanged except in-scope split embeds | PASS |
+
+Arithmetic: 6 PII refused, 2 multi-facts split (each +1 record), 19 gold
+facts stored. `stored_current=18` not 19 because RM-02.b mid-band-merged
+"I prefer tea over coffee" into the longer nosplit
+"I like tea more than coffee and also with honey" (cosine **0.8831**, just
+above `DEDUP_LO` 0.88). That is not an extraction miss — both writes stored
+their gold (precision 19/19, recall 19/19); the survivor still answers
+`q-tea` and `q-tea-honey`. The measure runner follows `superseded_by` so a
+merge is not scored as a drop.
+
+Clean controls (`My name is Samuel`, garage `4821`, `1500mg` metformin, …)
+pass through byte-identical. Golden corpora are clean facts; the gate did
+not move.
+
+## What 0001 got wrong (and 01.b did not ship)
+
+Measured against the messy gold, not 0001's regexes as-is (01.a NOTES §3):
+
+- `^(i think )` half-strips "I think you should know that Samuel prefers
+  concise answers" to "You should know that…" — still contains the noise
+  span, fails exact gold. Opener is the **full phrase**.
+- Missing "just so you're aware", "remember to remind me", "make sure you",
+  "don't forget to", "be sure to".
+- Guard is **refusal not redaction**: a fact mixed with a secret is
+  store-nothing.
+- Card pattern stays `\b[0-9]{13,16}\b` — `4821` and `1500mg` survive.
+- Split is conservative: `and also with honey` is not a standalone half.
+
+---
+
 ## Related
 
 [[eval/README]] · [[0007-eval-harness]] · [[phase-0-edge-substrate]] · [[phase-2-retrieval-dynamics]] · [[BACKLOG]] · [[ARCHITECTURE]]

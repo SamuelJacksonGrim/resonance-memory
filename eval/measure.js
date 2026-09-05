@@ -117,7 +117,30 @@ function freshStore() {
 
 const MISSING_RELEVANT = "__none__";
 
-function resolveRelevant(q, records, groups, saveLog) {
+function liveRelevantId(id, records, allRecords) {
+  const currentIds = new Set((records || []).map((r) => String(r.id)));
+  const start = String(id);
+  if (currentIds.has(start)) return start;
+  // RM-01.b × RM-02.b: two gold facts can land in the mid merge band
+  // after extraction (messy tea-preference vs tea+honey is 0.8831).
+  // A merge is not a drop — the survivor still answers the query —
+  // so follow superseded_by into current(). A hard drop (no survivor)
+  // keeps the origin id and misses, matching 01.a's "dropped fact
+  // must miss, not skip".
+  const byId = new Map();
+  for (const r of allRecords || []) byId.set(String(r.id), r);
+  const seen = new Set();
+  let cur = byId.get(start);
+  while (cur && cur.superseded_by != null && !seen.has(String(cur.id))) {
+    seen.add(String(cur.id));
+    const nextId = String(cur.superseded_by);
+    if (currentIds.has(nextId)) return nextId;
+    cur = byId.get(nextId);
+  }
+  return start;
+}
+
+function resolveRelevant(q, records, groups, saveLog, allRecords) {
   if (Array.isArray(q.relevant_ids) && q.relevant_ids.length) {
     return q.relevant_ids.map(String);
   }
@@ -139,7 +162,9 @@ function resolveRelevant(q, records, groups, saveLog) {
         if (facts.has(normFact(rec.text))) matched.push(String(rec.id));
       }
       for (const r of origin) {
-        if (facts.has(normFact(asStoredText(r)))) matched.push(String(r.id));
+        if (facts.has(normFact(asStoredText(r)))) {
+          matched.push(liveRelevantId(r.id, records, allRecords));
+        }
       }
       const uniq = [...new Set(matched)];
       if (uniq.length) return uniq;
@@ -147,7 +172,11 @@ function resolveRelevant(q, records, groups, saveLog) {
     // Baseline fallback: the raw blob does not equal the gold fact, so
     // fact-match is empty. Attribute the origin write's stored records
     // so the query stays labeled (a dropped fact must miss, not skip).
-    if (origin.length) return origin.map((r) => String(r.id));
+    // Follow a later merge so RM-02 retiring the origin is not scored
+    // as a drop when the survivor is still current.
+    if (origin.length) {
+      return origin.map((r) => liveRelevantId(r.id, records, allRecords));
+    }
     return [MISSING_RELEVANT];
   }
   const wanted = new Set();
@@ -215,9 +244,11 @@ async function runScenario(scenario, opts) {
   }
 
   const records = store.current();
+  const allRecords = typeof store.all === "function" ? store.all() : records;
   const groups = groupsFromWrites(writes);
   const dupExplain = explainMetric("duplicate_rate", { records }, { groups });
   const extractExplain = explainMetric("extraction_precision", { cases: saveLog }, { cases: writes });
+  const extractRecallExplain = explainMetric("extraction_recall", { cases: saveLog }, { cases: writes });
 
   const queries = [];
   for (const q of scenario.queries || []) {
@@ -228,7 +259,7 @@ async function runScenario(scenario, opts) {
       query: q.query,
       ranked_ids: ranked.map((h) => String(h.id)),
       ranked_texts: ranked.map((h) => h.text),
-      relevant_ids: resolveRelevant(q, records, groups, saveLog),
+      relevant_ids: resolveRelevant(q, records, groups, saveLog, allRecords),
       relevant_groups: q.relevant_groups || null,
       relevant_writes: q.relevant_writes || null,
       relevant_facts: q.relevant_facts || null,
@@ -248,7 +279,10 @@ async function runScenario(scenario, opts) {
     duplicate_rate: dupExplain.rate,
     recall_at_k: recallExplain.rate,
   };
-  if (extractExplain.n_labeled) metrics.extraction_precision = extractExplain.rate;
+  if (extractExplain.n_labeled) {
+    metrics.extraction_precision = extractExplain.rate;
+    metrics.extraction_recall = extractRecallExplain.rate;
+  }
 
   return {
     id: scenario.id,
@@ -262,6 +296,7 @@ async function runScenario(scenario, opts) {
     duplicate_rate: dupExplain,
     recall_at_k: recallExplain,
     extraction_precision: extractExplain.n_labeled ? extractExplain : null,
+    extraction_recall: extractExplain.n_labeled ? extractRecallExplain : null,
     queries,
     saveLog,
     groups,
@@ -292,6 +327,11 @@ function printHuman(reports, { k }) {
       const e = r.extraction_precision;
       console.log("  extraction_precision " + e.rate.toFixed(4) +
         "   (correct=" + e.n_correct + "/" + e.n_stored + " stored, labeled=" + e.n_labeled + ")");
+      if (r.extraction_recall) {
+        const rec = r.extraction_recall;
+        console.log("  extraction_recall    " + rec.rate.toFixed(4) +
+          "   (hit=" + rec.n_hit + "/" + rec.n_gold + " gold facts)");
+      }
       console.log("  pii_refusal_rate     " + e.pii_refusal_rate.toFixed(4) +
         "   (" + e.n_pii_refused + "/" + e.n_pii + " PII writes refused)");
     }
@@ -341,6 +381,7 @@ async function main(argv) {
         duplicate_rate: r.duplicate_rate,
         recall_at_k: r.recall_at_k,
         extraction_precision: r.extraction_precision,
+        extraction_recall: r.extraction_recall,
         bands: r.bands,
         misses: r.recall_at_k.misses,
       })),

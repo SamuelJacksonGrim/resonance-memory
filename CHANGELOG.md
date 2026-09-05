@@ -17,6 +17,16 @@ Beta-readiness pass:
   "revisit only if hosted resale looms" trigger the backlog pre-registered, now pulled.
 
 ### Added
+- **RM-01.b write-side extraction (Tier 0 + Tier 1, no LLM).** Always-on at
+  `save()`: collapse whitespace, strip leading filler openers and assistant-aimed
+  imperatives (full phrases, not 0001's short `^(i think )`), split on `; ` /
+  ` and also ` only when both halves stand alone, refuse secret/PII shapes
+  (store nothing — refusal, not redaction). Clean facts pass through
+  byte-identical. `extraction_recall` added to the reporting registry (anti-cheat
+  for vacuous precision). **A/B vs the 01.a bar:** `extraction_precision`
+  0.2609 → **1.0000**, `extraction_recall` **1.0000**, `recall@5` held at
+  **1.0000**, `pii_refusal_rate` 0 → **1.0000**. Golden unmoved. See
+  [`eval/RESULTS.md`](eval/RESULTS.md) RM-01.b. Tier 2 (opt-in local LLM) is 01.c.
 - **RM-01.a measurement seed (write-side extraction).** `extraction_precision`
   in the reporting-metric registry plus `eval/corpora/messy.jsonl` (filler
   openers, assistant-aimed imperatives, multi-fact splits, PII/secret

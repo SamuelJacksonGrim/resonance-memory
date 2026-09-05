@@ -26,11 +26,11 @@ Build `eval/` with seeded, offline, reproducible scoring.
       `temporal` still lands with a later RM-04 expansion.)*
 - [ ] ≥50 contradiction/update cases — **the axis LOCOMO and LongMemEval both under-test.**
       *(4 today; expand as RM-03 detection matures.)*
-- [~] Metrics: `recall@k`, `duplicate_rate`, and `extraction_precision` shipped as
-      **reporting** metrics (registry in `eval/metrics.js`; `node eval/measure.js`; not
-      folded into `golden.json`), plus the field-experiment **ROC / TBR** split.
-      *(`staleness_rate`, `false_supersession`, `extraction_recall` still land with
-      RM-03 / RM-01.b+.)*
+- [~] Metrics: `recall@k`, `duplicate_rate`, `extraction_precision`, and
+      `extraction_recall` shipped as **reporting** metrics (registry in
+      `eval/metrics.js`; `node eval/measure.js`; not folded into `golden.json`),
+      plus the field-experiment **ROC / TBR** split.
+      *(`staleness_rate`, `false_supersession` still land with RM-03.)*
 - [x] Constraint cases run with the field **off and on**; report both and the gap.
 - [x] Repeated cases (`repeat` / `contains_by_turn`) keep one store across turns and report
       `first_hit_turn`, so a constraint that lands by turn 4 isn't scored as a miss.
@@ -74,7 +74,7 @@ Design: [`proposed/0002`](proposed/0002-temporal-supersession.md).
 
 ---
 
-### `RM-01` — Write-side extraction and summarization · **L** · `in progress` — 01.a measurement seed shipped
+### `RM-01` — Write-side extraction and summarization · **L** · `in progress` — 01.a + 01.b (Tier 0/1) shipped
 
 A **tiered** pipeline. Cheap deterministic work first; the LLM pass is optional, local,
 off by default, and never blocks the save.
@@ -82,11 +82,17 @@ off by default, and never blocks the save.
 - [x] **01.a measurement seed**: `extraction_precision` registry, `eval/corpora/messy.jsonl`,
       pre-extraction baseline + pre-declared 0.9 bar in
       [`eval/RESULTS.md`](../eval/RESULTS.md). Product behaviour unchanged.
-- [ ] **Tier 0 (always on, no LLM):** trim, normalize whitespace, strip filler openers
+- [x] **Tier 0 (always on, no LLM):** trim, normalize whitespace, strip filler openers
       ("I think you should know that…"), drop imperatives aimed at the assistant, split
       multi-fact runs on `; ` / ` and also ` when both halves stand alone.
-- [ ] **Tier 1 (always on):** secret/PII guard — refuse to store anything matching
-      API-key/password/card shapes; return a clear refusal string.
+      Implemented against corpus gold, not 0001's regexes as-is (long openers;
+      `make sure you` / `remember to remind me`; conservative no-split on the honey trap).
+- [x] **Tier 1 (always on):** secret/PII guard — refuse to store anything matching
+      API-key/password/card shapes; return a clear refusal string. Refusal not
+      redaction; `\b[0-9]{13,16}\b` does not eat `4821` / `1500mg`.
+- [x] **`extraction_recall`** registry (anti-cheat for vacuous precision). A/B in
+      [`eval/RESULTS.md`](../eval/RESULTS.md) RM-01.b: precision 0.2609 → **1.0000**,
+      recall@5 held at **1.0000**, pii_refusal_rate 0 → **1.0000**.
 - [ ] **Tier 2 (opt-in, local):** a single-pass extraction prompt against the *already
       configured local endpoint*, emitting `{facts: [...], skip: bool}`. One call, ADD-only,
       conflict resolution deferred to `RM-03` — mirroring Mem0's 2026 move that cut write-time

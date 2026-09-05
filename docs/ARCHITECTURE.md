@@ -181,17 +181,29 @@ argument is always the smallest possible thing (`content`, `query`, or `id`).
 
 ### `save_memory({ content })`
 
-1. **Exact restatement guard.** If a current memory has byte-identical `text`, bump its
-   `last_confirmed` + `access_count` and confirm — don't store a second copy. Free (no
-   embed). A confirm also revives that id's pruned incident edges (Phase 0.4 — save
-   touching an endpoint).
-2. **Embed once.** POST `content` to the OpenAI-compatible `/v1/embeddings` endpoint (LM Studio
-   default, `text-embedding-nomic-embed-text-v1.5`, 768-dim). If the embedder is down, the
-   record is stored **without** a vector and backfilled on a later recall — a save never fails
-   because the embedder is unreachable.
-3. **Normalize** into a record (`record.js` `normalize()` — the one schema definition).
-4. **Cosine-banded dedup (RM-02.b).** Against already-stored vectors, argmax. Cosine ≥
-   `DEDUP_HI` (0.95) is a restatement (same confirm path as step 1 — keep the original,
+1. **Tier 0 extraction (RM-01.b, always on, no LLM).** Collapse whitespace; strip leading
+   filler openers and assistant-aimed imperative framing (longest-first, stacked);
+   split on `; ` / ` and also ` only when every half is a standalone proposition.
+   Clean facts are byte-identical. Implemented in `record.js` (`normalizeText` /
+   `splitFacts` / `prepareWrite`) — not `normalize()`, which is the record schema.
+   Extra embeds from a legitimate split are in-scope; the rest is string ops.
+2. **Tier 1 secret/PII guard (RM-01.b, always on).** Refuse API-key / password / 13–16
+   digit card / AWS key / PEM / GitHub-token shapes. Store nothing; return
+   `Not saved — that looks like … Secrets don't belong in memory.` Refusal, not
+   redaction: a payload mixing a fact with a secret is store-nothing. Digit traps
+   (`4821`, `1500mg`) do not match `\b[0-9]{13,16}\b`. (Tier 2, the opt-in local
+   LLM pass, is RM-01.c — off, not built.)
+3. **Exact restatement guard.** If a current memory has byte-identical `text` (compared
+   against the extracted fact), bump its `last_confirmed` + `access_count` and confirm —
+   don't store a second copy. Free (no embed). A confirm also revives that id's pruned
+   incident edges (Phase 0.4 — save touching an endpoint).
+4. **Embed once per fact.** POST the extracted text to the OpenAI-compatible `/v1/embeddings`
+   endpoint (LM Studio default, `text-embedding-nomic-embed-text-v1.5`, 768-dim). If the
+   embedder is down, the record is stored **without** a vector and backfilled on a later
+   recall — a save never fails because the embedder is unreachable.
+5. **Normalize** into a record (`record.js` `normalize()` — the one schema definition).
+6. **Cosine-banded dedup (RM-02.b).** Against already-stored vectors, argmax. Cosine ≥
+   `DEDUP_HI` (0.95) is a restatement (same confirm path as step 3 — keep the original,
    don't append). Band `DEDUP_LO..HI` (0.88–0.95) is a candidate merge: keep the longer
    original text (never a blend — the `duplicate_rate` metric maps stored text back to
    its labeled group), union metadata, link the loser with `superseded_by` via
@@ -204,14 +216,14 @@ argument is always the smallest possible thing (`content`, `query`, or `id`).
    slice: `--dedup-existing` (dry-run default; `--apply` mutates) walks the
    current store in file order with the **same** decision (`planDedupExisting`
    in `memory-core.js`). One `updateMany` / `writeFileDurable`. Not a fifth verb.
-5. **Supersession check (RM-03 v1).** `detectSupersession()` fires only when the new text
+7. **Supersession check (RM-03 v1).** `detectSupersession()` fires only when the new text
    carries an explicit correction cue ("actually", "now", "no longer", "moved"…) *and* it is
    the argmax-similar current memory above a floor. On a hit, the old row is retired
    (`valid_to`, `superseded_by`) and the new one appended, as one logical change — history is
    kept, never deleted. The cue is the precision gate; cosine only picks *which* memory the cue
    targets. Worst case: it retires nothing.
-6. **Append** the record to the JSONL store.
-7. **Save-time semantic bind (Phase 0.1).** If the record got a real vector, find its top-K=5
+8. **Append** the record to the JSONL store.
+9. **Save-time semantic bind (Phase 0.1).** If the record got a real vector, find its top-K=5
    neighbors among existing stored vectors above cosine **0.25** and persist them on the
    EdgeStore: measured `semantic.value` + `src_versions` tagged to the canonical endpoints,
    `hebbian.weight = 0` (no seeded baseline), `provenance.origin = "save-time-neighbor"`.

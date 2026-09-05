@@ -60,7 +60,7 @@ const {
 } = require("./warm.js");
 const {
   normalize, isCurrent, isHistoricalQuery, detectSupersession, supersedePatches,
-  detectNearDuplicate, pickMergeSurvivor,
+  detectNearDuplicate, pickMergeSurvivor, prepareWrite,
 } = require("./record.js");
 const { makeEdge, setSemantic, semanticValid, hebbianDecayType, reactivateEdge } = require("./edges.js");
 
@@ -651,15 +651,19 @@ function createCore({
     return { hi: DEDUP_HI, lo: DEDUP_LO };
   }
 
-  async function save(content, opts) {
+  /*
+   * Persist one already-extracted fact. The previous save() body, unchanged
+   * except it no longer trims/guards — prepareWrite did that. One fact = one
+   * embed (the in-scope cost of a legitimate split).
+   */
+  async function saveOne(content, opts) {
     const requestId = opts && opts.requestId;
-    content = (content || "").trim();
-    if (!content) return "Nothing to save: `content` was empty.";
     const now = new Date().toISOString();
 
     // Exact restatement of a memory that is still true: confirm it rather than
     // storing a second copy. Free (no embed). Cosine-banded HI restatement
-    // below generalizes this to semantic near-identity (RM-02.b).
+    // below generalizes this to semantic near-identity (RM-02.b). Compared
+    // against the extracted fact, so "FYI, I prefer tea" confirms "I prefer tea".
     const mems = store.current();
     const same = mems.find((r) => r.text === content);
     if (same) return confirmRestatement(same, now);
@@ -705,6 +709,26 @@ function createCore({
     tryBindSaveTime(rec, mems, requestId);
     tryPrimeSave(rec.id);
     return "Saved. (" + store.current().length + " memories total.)";
+  }
+
+  async function save(content, opts) {
+    // RM-01.b Tier 0/1: always-on, deterministic, no LLM. String ops only;
+    // extra embeds come from a legitimate multi-fact split (in-scope), never
+    // from the guard. Tier 2 (opt-in local LLM) is 01.c — off, not built here.
+    const prepared = prepareWrite(content);
+    if (!prepared.ok) return prepared.message;
+    if (!prepared.facts.length) return "Nothing to save: `content` was empty.";
+
+    if (prepared.facts.length === 1) return saveOne(prepared.facts[0], opts);
+
+    // Split: each half is its own record / embed. requestId stamps only the
+    // first bind so a later fact in the same write is not skipped by the
+    // 0.3 LRU (null id = apply normally).
+    for (let i = 0; i < prepared.facts.length; i++) {
+      const factOpts = i === 0 ? opts : Object.assign({}, opts || {}, { requestId: undefined });
+      await saveOne(prepared.facts[i], factOpts);
+    }
+    return "Saved " + prepared.facts.length + " memories. (" + store.current().length + " total.)";
   }
 
   async function recall(query, k = 5, opts) {

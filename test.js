@@ -41,6 +41,7 @@ const {
   normalize, isCurrent, isHistoricalQuery, supersedePatches, AccessLog,
   detectSupersession, hasSupersedeCue,
   detectNearDuplicate, pickMergeSurvivor,
+  normalizeText, splitFacts, guardSecrets, prepareWrite, isStandaloneFact,
 } = require("./record.js");
 
 let passed = 0, failed = 0;
@@ -1833,12 +1834,42 @@ test("extraction_precision: a refused-PII item counts correctly", () => {
 
 test("extraction_precision is registered; unlabeled input does not crash", () => {
   assert.ok(listMetrics().some((m) => m.name === "extraction_precision"));
+  assert.ok(listMetrics().some((m) => m.name === "extraction_recall"),
+    "extraction_recall ships with 01.b as the anti-cheat for vacuous precision");
   assert.strictEqual(computeMetric("extraction_precision", { records: [{ text: "x" }] }, { groups: {} }), 0,
     "duplicates-shaped input has no gold_facts, so it is unlabeled");
+  assert.strictEqual(computeMetric("extraction_recall", { records: [{ text: "x" }] }, { groups: {} }), 0);
   assert.strictEqual(computeMetric("recall_at_k", REGISTRY_QUERIES, null, { k: 5 }), 2 / 3);
   const records = [{ text: "a1" }, { text: "a2" }, { text: "b1" }, { text: "c1" }];
   const dupCorpus = { groups: { A: ["a1", "a2"], B: ["b1"], C: ["c1"] } };
   assert.strictEqual(computeMetric("duplicate_rate", { records }, dupCorpus), 0.25);
+});
+
+test("extraction_recall is the anti-cheat for vacuous precision", () => {
+  const gold = { cases: [
+    { gold_facts: ["Samuel prefers concise answers"], noise: ["I think you should know that"] },
+    { gold_facts: ["I live in Texas"], noise: [] },
+  ] };
+  const perfect = { cases: [
+    { stored: [{ text: "Samuel prefers concise answers" }] },
+    { stored: [{ text: "I live in Texas" }] },
+  ] };
+  assert.strictEqual(computeMetric("extraction_recall", perfect, gold), 1);
+  assert.strictEqual(computeMetric("extraction_precision", perfect, gold), 1);
+
+  const missed = { cases: [
+    { stored: [{ text: "Samuel prefers concise answers" }] },
+    { stored: [] },
+  ] };
+  assert.strictEqual(computeMetric("extraction_recall", missed, gold), 0.5);
+  assert.strictEqual(computeMetric("extraction_precision", missed, gold), 1,
+    "storing only correct facts keeps precision at 1 even when a gold is dropped");
+
+  const refusedAll = { cases: [{ stored: [], refused: true }, { stored: [], refused: true }] };
+  assert.strictEqual(computeMetric("extraction_precision", refusedAll, gold), 1,
+    "refuse-everything is vacuous precision 1.0");
+  assert.strictEqual(computeMetric("extraction_recall", refusedAll, gold), 0,
+    "…and extraction_recall craters, which is the point");
 });
 
 test("messy corpus loads; every write has gold_facts + noise labels", () => {
@@ -1889,6 +1920,157 @@ test("messy corpus: current-save simulation is the pre-extraction baseline", () 
   assert.strictEqual(expl.rate, 6 / 23);
   assert.strictEqual(expl.n_pii, s.writes.filter((w) => w.expect_refusal).length);
   assert.strictEqual(expl.pii_refusal_rate, 0);
+});
+
+// ------------------------------------------------- RM-01.b write-side extraction
+// Tier 0 (normalize/strip/split) + Tier 1 (PII refusal). Pure, so these
+// assert against corpus gold without an embedder. save() wiring + embed
+// counts live in asyncTests.
+
+section("RM-01.b write-side extraction (Tier 0/1)");
+
+test("filler: 'I think you should know that' strips to the inner proposition, not a half-opener", () => {
+  const r = prepareWrite("I think you should know that Samuel prefers concise answers");
+  assert.deepStrictEqual(r.facts, ["Samuel prefers concise answers"]);
+  assert.ok(!/^you should know that/i.test(r.facts[0]),
+    "0001's /^(i think )/ would leave 'You should know that…' — that is the bug");
+});
+
+test("filler: 'just so you're aware' strips to the inner proposition", () => {
+  assert.deepStrictEqual(
+    prepareWrite("just so you're aware, I usually code late at night").facts,
+    ["I usually code late at night"]);
+});
+
+test("filler: 'just so you know' strips to the inner proposition", () => {
+  assert.deepStrictEqual(
+    prepareWrite("Just so you know, I prefer tea over coffee").facts,
+    ["I prefer tea over coffee"]);
+});
+
+test("filler: 'It's worth noting that' strips to the inner proposition", () => {
+  assert.deepStrictEqual(
+    prepareWrite("It's worth noting that I'm allergic to penicillin").facts,
+    ["I'm allergic to penicillin"]);
+});
+
+test("filler: FYI strips and recases the leftover", () => {
+  assert.deepStrictEqual(
+    prepareWrite("FYI, the Friday standup is at 10am").facts,
+    ["The Friday standup is at 10am"]);
+});
+
+test("filler: stacked FYI + just so you know both come off", () => {
+  assert.deepStrictEqual(
+    prepareWrite("FYI, just so you know, I have a cat named Koneko").facts,
+    ["I have a cat named Koneko"]);
+});
+
+test("imperative: 'remember to remind me' keeps the embedded fact", () => {
+  assert.deepStrictEqual(
+    prepareWrite("remember to remind me that my sister's birthday is March 3rd").facts,
+    ["My sister's birthday is March 3rd"]);
+});
+
+test("imperative: 'make sure you' keeps the embedded fact", () => {
+  assert.deepStrictEqual(
+    prepareWrite("make sure you never give me peanuts").facts,
+    ["Never give me peanuts"]);
+});
+
+test("imperative: 'Please remember that' keeps the embedded fact", () => {
+  assert.deepStrictEqual(
+    prepareWrite("Please remember that I have a peanut allergy").facts,
+    ["I have a peanut allergy"]);
+});
+
+test("imperative: 'don't forget to' / 'be sure to' strip framing", () => {
+  assert.deepStrictEqual(
+    prepareWrite("don't forget to note that I live in Texas").facts,
+    ["I live in Texas"]);
+  assert.deepStrictEqual(
+    prepareWrite("be sure to remember that I prefer tea over coffee").facts,
+    ["I prefer tea over coffee"]);
+});
+
+test("imperative with no payload drops the write (empty gold)", () => {
+  const r = prepareWrite("remember that");
+  assert.strictEqual(r.ok, true);
+  assert.deepStrictEqual(r.facts, []);
+});
+
+test("multi: 'and also' splits only when both halves stand alone", () => {
+  assert.deepStrictEqual(
+    prepareWrite("I have a dog named Rex and also I work as a software architect, mostly on games").facts,
+    ["I have a dog named Rex", "I work as a software architect, mostly on games"]);
+});
+
+test("multi: '; ' splits two standalone facts", () => {
+  assert.deepStrictEqual(
+    prepareWrite("My coffee order is an oat-milk cortado, no sugar; I live in Texas").facts,
+    ["My coffee order is an oat-milk cortado, no sugar", "I live in Texas"]);
+});
+
+test("multi-nosplit: 'and also with honey' is NOT split", () => {
+  const text = "I like tea more than coffee and also with honey";
+  assert.strictEqual(isStandaloneFact("with honey"), false, "the second half is not a proposition");
+  assert.deepStrictEqual(splitFacts(text), [text]);
+  assert.deepStrictEqual(prepareWrite(text).facts, [text]);
+});
+
+test("PII shapes refuse: store nothing, return a refusal string", () => {
+  const cases = [
+    ["my API key is sk-abcdefghijklmnopqrstuvwxyz123456", "API key"],
+    ["password: hunter2secret", "credential"],
+    ["my card number is 4242424242424242", "card"],
+    ["the AWS key is AKIAIOSFODNN7EXAMPLE", "AWS"],
+    ["keep this -----BEGIN RSA PRIVATE KEY-----", "private key"],
+    ["my GitHub token is ghp-abcdefghijklmnopqrstuvwx", "API key"],
+  ];
+  for (const [text, kind] of cases) {
+    const r = prepareWrite(text);
+    assert.strictEqual(r.ok, false, kind + " must refuse");
+    assert.deepStrictEqual(r.facts, [], kind + " stores nothing");
+    assert.ok(/not saved/i.test(r.message), kind + " message: " + r.message);
+    assert.ok(/secrets don't belong/i.test(r.message), kind + " names the policy");
+  }
+});
+
+test("PII mixed with a real fact is store-nothing, not redaction", () => {
+  const r = prepareWrite("I live in Texas; my API key is sk-abcdefghijklmnopqrstuvwxyz123456");
+  assert.strictEqual(r.ok, false, "contaminated write refuses the whole payload");
+  assert.deepStrictEqual(r.facts, [], "must not salvage the Texas fact");
+});
+
+test("digit-trap controls survive the card guard (4821, 1500mg)", () => {
+  assert.strictEqual(guardSecrets("The garage code is 4821").ok, true);
+  assert.strictEqual(guardSecrets("I take 1500mg of metformin daily").ok, true);
+  assert.deepStrictEqual(prepareWrite("The garage code is 4821").facts, ["The garage code is 4821"]);
+  assert.deepStrictEqual(prepareWrite("I take 1500mg of metformin daily").facts,
+    ["I take 1500mg of metformin daily"]);
+});
+
+test("clean control passes through byte-identical", () => {
+  const clean = "My name is Samuel";
+  const r = prepareWrite(clean);
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.facts.length, 1);
+  assert.strictEqual(r.facts[0], clean);
+  assert.strictEqual(normalizeText(clean), clean);
+});
+
+test("whitespace collapse is the only transform on a clean fact", () => {
+  assert.deepStrictEqual(
+    prepareWrite("  I'm diabetic - no sugary recipes  ").facts,
+    ["I'm diabetic - no sugary recipes"]);
+});
+
+test("0001's short 'I think ' opener is NOT used (would half-strip the gold case)", () => {
+  // A genuine leading "I think " without the longer phrase stays put.
+  // The corpus gold is the LONG opener; stripping "I think " alone is the bug.
+  const kept = prepareWrite("I think Samuel likes dogs named Rex");
+  assert.ok(kept.facts[0].toLowerCase().startsWith("i think "),
+    "short 'I think ' must not fire; got " + kept.facts[0]);
 });
 
 // ------------------------------------------------- warm field (Phase 1 / PR1)
@@ -2132,16 +2314,117 @@ async function asyncTests() {
     assert.ok(r.metrics.duplicate_rate >= 0 && r.metrics.duplicate_rate <= 1);
     assert.ok(r.metrics.recall_at_k >= 0 && r.metrics.recall_at_k <= 1);
     assert.strictEqual(r.queries.length, scenarios[0].queries.length);
-    // Pre-extraction: save() stores the raw blob. Controls + the nosplit
-    // trap match gold as-is; filler/imperative/multi/PII do not.
     const expl = r.extraction_precision;
     assert.strictEqual(expl.n_labeled, scenarios[0].writes.length);
-    assert.ok(expl.n_correct >= 1, "clean controls must pass through");
-    assert.ok(expl.n_correct < expl.n_stored, "messy blobs must not count as gold");
-    assert.strictEqual(expl.n_pii_refused, 0, "today save() does not refuse PII");
-    assert.strictEqual(expl.pii_refusal_rate, 0);
+    assert.strictEqual(expl.n_correct, expl.n_stored, "Tier 0/1 stores only gold facts");
+    assert.ok(expl.rate >= 0.9, "pre-declared RM-01.b bar: extraction_precision ≥ 0.9");
+    assert.strictEqual(expl.pii_refusal_rate, 1, "every PII write refused");
+    assert.strictEqual(expl.n_pii_refused, expl.n_pii);
+    assert.ok(r.extraction_recall, "extraction_recall is the anti-cheat");
+    assert.strictEqual(r.extraction_recall.rate, 1, "every gold fact has a matching stored record");
+    assert.strictEqual(r.metrics.recall_at_k, 1, "recall@5 must not drop");
     assert.ok(r.queries.every((q) => Array.isArray(q.ranked_ids) && q.ranked_ids.length >= 1),
-      "each messy query resolved to a stored origin id (blob fallback)");
+      "each messy query resolved to a stored origin id");
+  });
+
+  section("RM-01.b save() wiring (Tier 0/1 on the live path)");
+
+  function extractCore(file) {
+    let embedCalls = 0;
+    const seen = [];
+    const store = new JsonlStore(tmp(file));
+    const embed = async (texts) => {
+      embedCalls += texts.length;
+      // Distinct vectors per distinct string so a split's second half is
+      // not a cosine-1.0 restatement of the first (the dummy [1,0] trap).
+      return texts.map((t) => {
+        let i = seen.indexOf(t);
+        if (i < 0) { i = seen.length; seen.push(t); }
+        const v = new Array(8).fill(0);
+        v[i % 8] = 1;
+        v[(i * 3 + 1) % 8] = 0.2;
+        return v;
+      });
+    };
+    return {
+      store,
+      core: createCore({ store, embed }),
+      embeds: () => embedCalls,
+      resetEmbeds() { embedCalls = 0; },
+    };
+  }
+
+  await atest("save() strips filler and stores the inner proposition", async () => {
+    const { store, core } = extractCore("rm01-filler.jsonl");
+    const msg = await core.save("I think you should know that Samuel prefers concise answers");
+    assert.ok(/Saved/.test(msg));
+    assert.strictEqual(store.current().length, 1);
+    assert.strictEqual(store.current()[0].text, "Samuel prefers concise answers");
+  });
+
+  await atest("save() splits a standalone multi-fact into two records (two embeds)", async () => {
+    const { store, core, embeds, resetEmbeds } = extractCore("rm01-split.jsonl");
+    resetEmbeds();
+    const msg = await core.save("I have a dog named Rex and also I work as a software architect, mostly on games");
+    assert.ok(/Saved 2 memories/.test(msg), msg);
+    const texts = store.current().map((r) => r.text).sort();
+    assert.deepStrictEqual(texts, [
+      "I have a dog named Rex",
+      "I work as a software architect, mostly on games",
+    ].sort());
+    assert.strictEqual(embeds(), 2, "a legitimate split is two embeds — the in-scope cost");
+  });
+
+  await atest("save() does not split the honey trap", async () => {
+    const { store, core, embeds, resetEmbeds } = extractCore("rm01-nosplit.jsonl");
+    resetEmbeds();
+    await core.save("I like tea more than coffee and also with honey");
+    assert.strictEqual(store.current().length, 1);
+    assert.strictEqual(store.current()[0].text, "I like tea more than coffee and also with honey");
+    assert.strictEqual(embeds(), 1, "no-split is one embed, same as a clean fact");
+  });
+
+  await atest("save() refuses each PII shape: stores nothing, returns a refusal", async () => {
+    const payloads = [
+      "my API key is sk-abcdefghijklmnopqrstuvwxyz123456",
+      "password: hunter2secret",
+      "my card number is 4242424242424242",
+      "the AWS key is AKIAIOSFODNN7EXAMPLE",
+      "keep this -----BEGIN RSA PRIVATE KEY-----",
+      "my GitHub token is ghp-abcdefghijklmnopqrstuvwx",
+    ];
+    for (let i = 0; i < payloads.length; i++) {
+      const text = payloads[i];
+      const { store, core, embeds, resetEmbeds } = extractCore("rm01-pii-" + i + ".jsonl");
+      resetEmbeds();
+      const msg = await core.save(text);
+      assert.ok(/not saved/i.test(msg), text + " → " + msg);
+      assert.strictEqual(store.current().length, 0, text + " must not land in the store");
+      assert.strictEqual(store.all().length, 0, text + " must not land even as superseded");
+      assert.strictEqual(embeds(), 0, "refusal is string-ops only; no embed");
+    }
+  });
+
+  await atest("save() digit traps and a clean control: one embed, byte-identical text", async () => {
+    const { store, core, embeds, resetEmbeds } = extractCore("rm01-control.jsonl");
+    resetEmbeds();
+    await core.save("My name is Samuel");
+    await core.save("The garage code is 4821");
+    await core.save("I take 1500mg of metformin daily");
+    const texts = store.current().map((r) => r.text);
+    assert.deepStrictEqual(texts, [
+      "My name is Samuel",
+      "The garage code is 4821",
+      "I take 1500mg of metformin daily",
+    ]);
+    assert.strictEqual(embeds(), 3, "clean facts: one embed each, no extra");
+  });
+
+  await atest("save() mixed fact+secret stores nothing (refusal, not redaction)", async () => {
+    const { store, core } = extractCore("rm01-mixed.jsonl");
+    const msg = await core.save("I live in Texas; my API key is sk-abcdefghijklmnopqrstuvwxyz123456");
+    assert.ok(/not saved/i.test(msg));
+    assert.strictEqual(store.current().length, 0);
   });
 
   section("RM-02.b cosine-banded dedup at save");

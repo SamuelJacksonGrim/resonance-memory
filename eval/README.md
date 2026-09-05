@@ -59,9 +59,10 @@ only Globex current. The `contra-wrongslot` and `contra-additive-pets` guards ch
 **Reporting metrics (RM-02 / RM-01), distinct from the golden gate.** `eval/metrics.js` has a
 **registry**: a metric is `{ name, compute(results, corpus, opts) -> number }`, plus optional
 `explain` for a breakdown. Builtins today: `recall_at_k` (success@k, default k=5),
-`duplicate_rate` (extras beyond one-per-ground-truth-group / current stored count), and
+`duplicate_rate` (extras beyond one-per-ground-truth-group / current stored count),
 `extraction_precision` (stored records that match a gold atomic fact and contain no labeled
-noise). They are A/B numbers, not pass/fail — `node eval/run.js` still gates only the
+noise), and `extraction_recall` (gold facts with a matching stored record / gold facts —
+the anti-cheat for vacuous precision). They are A/B numbers, not pass/fail — `node eval/run.js` still gates only the
 contains/excludes scorecard, and measurement corpora (`kind: "duplicates"` / `"messy"`,
 `gate: false`) are skipped there so a new fixture cannot flip golden. Run them with
 `node eval/measure.js` (reuses `pipeline.js` → `memory-core.js`; field off so rank stays
@@ -69,7 +70,9 @@ cosine). See `RESULTS.md` ("RM-02.a") for the pre-dedup baseline and the pre-dec
 bar, ("RM-02.b") for the measured win at save-time, and ("RM-02.c") for the
 `--dedup-existing` backfill of a pre-02.b store: `duplicate_rate` 0.3182 → 0.0000,
 `recall@5` held at 1.0000. RM-02 is done. See `RESULTS.md` ("RM-01.a") for the
-pre-extraction baseline on `eval/messy` and the pre-declared 0.9 bar 01.b is judged against.
+pre-extraction baseline on `eval/messy` and ("RM-01.b") for the measured win:
+`extraction_precision` 0.2609 → 1.0000, `extraction_recall` 1.0000, `recall@5` held,
+`pii_refusal_rate` 0 → 1.0000.
 
 ## Layout
 
@@ -84,7 +87,7 @@ eval/
                          an injectable save/recall, mirroring server.js
   metrics.js             golden scoring (contains / excludes / current_only / per-turn)
                          PLUS the reporting-metric registry (recall_at_k,
-                         duplicate_rate, extraction_precision)
+                         duplicate_rate, extraction_precision, extraction_recall)
   run.js                 the golden runner + regression gate
   measure.js             reporting-metric runner (A/B; does not touch golden.json)
   golden.json            last accepted scorecard (written by --accept)
@@ -178,6 +181,9 @@ noise spans. Exact equality, not containment — a raw blob that *contains* the
 fact plus filler is noise. A correct PII refusal stores nothing, so it does not
 dilute precision; `pii_refusal_rate` in the explain breakdown is refused-and-wrote-nothing
 / PII cases. See the comment on the metric.
+
+`extraction_recall` (RM-01.b): `|gold facts with a matching stored record| / |gold facts|`.
+Refuse-everything scores precision 1.0 and recall 0 — the A/B is two-sided.
 
 ---
 
