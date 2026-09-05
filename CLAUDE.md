@@ -45,9 +45,9 @@ roadmap, and per-repo backlog live in the companion repo
 | `memory-core.js` | **The four cognitive verbs, as ONE implementation.** `createCore({ store, embed, fieldEnabled, getEdgeStore, dedupThresholds, extractEnabled, extract })` returns `{ save, recall, edit, remove }`. Also owns `dedupExisting` / `planDedupExisting` (RM-02.c) so the `--dedup-existing` backfill cannot fork the 02.b bands. Everything environment-specific is *injected*, nothing reached for — so `server.js` (network embedder) and `eval/pipeline.js` (cached embedder) build on the exact same code. This is deliberate: two copies of the recall path is the drift the RM-00 harness exists to catch. |
 | `extract.js` | RM-01.c Tier 2: the opt-in LLM extraction pass (prompt, parser, sanity gate, chat POST, MCP sampling, capability detect). `save()` in `memory-core.js` is the only caller. Off by default. |
 | `record.js` | The shared record schema (`normalize()`), durable atomic writes (`writeFileDurable()`), the access sidecar (`AccessLog`), and the lexical heuristics (constraint typing, historical-query detection, supersession cues + `detectSupersession`, cosine-banded `detectNearDuplicate` + `pickMergeSurvivor`). Owned here so the server and panel agree on a record byte-for-byte. |
-| `store.js` | Store seam. `JsonlStore` is the default backend; `openStore()` selects `SqliteStore` when `RESONANCE_STORE=sqlite` (or live-config `store`). Same method surface so `memory-core.js` does not change. See `docs/proposed/0010`. |
+| `store.js` | Store seam. `openStore()` is the default-switch path (RM-07 slice 4): SQLite is the default; existing JSONL auto-migrates on first open via the 2a protocol; a failed migrate fail-opens to JSONL. `RESONANCE_STORE=jsonl` / live-config `store: "jsonl"` pins JSONL. Same method surface so `memory-core.js` does not change. See `docs/proposed/0010`. |
 | `store-sqlite.js` | RM-07 `SqliteStore`: `node:sqlite` `DatabaseSync`, WAL + `synchronous=FULL`, BLOB embeddings, in-process Float32 cache, in-table access counts. Never constructs `AccessLog`. |
-| `migrate-sqlite.js` | RM-07 slice 2a: streaming JSONL→SQLite migrator (10-step protocol). Opt-in CLI (`--migrate`); not auto-run on startup. `.bak` is a recovery snapshot, not the sovereignty export. |
+| `migrate-sqlite.js` | RM-07 slice 2a: streaming JSONL→SQLite migrator (10-step protocol). Opt-in CLI (`--migrate`); `openStore()` calls the same function on first open of an existing JSONL (slice 4). `.bak` is a recovery snapshot, not the sovereignty export. |
 | `zip.js` | Zero-dep ZIP64 writer (RM-07 slice 2b). `createDeflateRaw` (not `createDeflate` — zlib wrapper makes Explorer reject the entry), `zlib.crc32`, stream to `.zip.tmp` + rename at EOCD. ZIP64 extra + ZIP64 EOCD + locator on every archive (classic zip caps at 65,535 entries). |
 | `export-memory.js` | RM-07 slice 2b sovereignty export. `--export` writes the zip bundle; `--export-jsonl` is the raw scripting primitive the zip wraps. READ-ONLY. Not a fifth MCP verb. The panel button (slice 2c) shells this same engine. |
 | `field.js` | Associative layer (Phase 2a): a kNN semantic graph over stored vectors, neighborhood expansion, and constraint rescue. No new embedding calls, no LLM extraction — built from vectors already stored at save. |
@@ -95,16 +95,16 @@ npm run dedup-existing -- --apply # perform the plan as one durable rewrite
 npm run migrate                   # RM-07 slice 2a: stream JSONL → sibling .db (opt-in)
 npm run export                    # RM-07 slice 2b: sovereignty zip (Desktop; --name / --out)
 node entry.js --export-jsonl      # raw memories.jsonl (scripting primitive)
-npm run eval      # run the RM-00 eval harness (offline, deterministic)
-npm run eval -- --accept        # lock the current scorecard in as golden.json
+npm run eval      # run the RM-00 eval harness (offline, deterministic; sqlite default)
+npm run eval -- --accept        # lock the current scorecard in as golden.json (needs --store jsonl)
 npm run eval -- --filter <id>   # run only cases whose id starts with <id>
-npm run eval -- --store sqlite  # RM-07: same golden over SqliteStore (must match JSONL case-for-case)
+npm run eval -- --store jsonl   # RM-07: JSONL path (still 27/31; --accept is jsonl-only)
 npm run measure   # reporting metrics (recall@k, duplicate_rate, …); not the golden gate
 ```
 
 `npm test`, `npm run eval`, and `npm run measure` are **offline and deterministic** — they
 read `eval/embeddings.cache.json` and never touch the network. Refreshing the cache for a
-new golden case: `EVAL_REFRESH=1 npm run eval`. For a measurement corpus (`duplicates`):
+new golden case: `EVAL_REFRESH=1 npm run eval -- --store jsonl`. For a measurement corpus (`duplicates`):
 `EVAL_REFRESH=1 npm run measure`. Then commit the cache diff.
 
 ## How it works (data flow)
@@ -177,23 +177,39 @@ new golden case: `EVAL_REFRESH=1 npm run eval`. For a measurement corpus (`dupli
     next to a JsonlStore. SqliteStore keeps `access_count` / `last_access` **in the
     row** and never constructs `AccessLog` (BUG-007); a leftover `.access.json` next
     to a `.db` is ignored.
-- **Selectable backend (RM-07 slice 1).** Default is still JSONL. `RESONANCE_STORE=sqlite`
-  (or live-config `store: "sqlite"`) opens `SqliteStore` at the sibling `.db`
-  (`resonance-memory.jsonl` → `resonance-memory.db`). WAL + `synchronous=FULL`;
-  embeddings as Float32 BLOBs; in-process cache hydrated once. Opaque `id` preserved.
-  RM-00 golden parity (slice 3): `node eval/run.js --store sqlite` matches the JSONL
-  scorecard 27/31 case-for-case. Default switch is slice 4 (after 2c panel button).
-- **JSONL→SQLite migrator (RM-07 slice 2a).** Opt-in CLI: `node entry.js --migrate`
+- **Default backend is SQLite (RM-07 slice 4).** `openStore()` walks the
+  configured `MEMORY_FILE_PATH` (still a `*.jsonl` path) with no explicit
+  override:
+  1. `RESONANCE_STORE=jsonl` (or live-config `store: "jsonl"`) → JsonlStore.
+     The pin stays. `RESONANCE_STORE=sqlite` forces sqlite.
+  2. `<stem>.db` exists and opens → SqliteStore. A leftover `<stem>.jsonl`
+     (2a crash-between-step-7-and-8) is renamed to `.bak` now (finish step 8).
+     Never dual-read.
+  3. No `.db`, but `<stem>.jsonl` exists → **auto-migrate** via the 2a 10-step
+     protocol (call `migrateJsonlToSqlite`, do not reimplement it), then open
+     the `.db`. **Fail-open:** if migration throws before the atomic rename,
+     keep the JSONL live, drop the temp, open JsonlStore. A failed auto-migrate
+     must never block the user from their memories. Retry next open.
+  4. Neither exists (new user) → fresh SqliteStore (`.db`).
+  An empty `.db` beside a still-live JSONL is the slice-1 footgun, not live
+  truth — drop the empty artifact and auto-migrate. WAL + `synchronous=FULL`;
+  embeddings as Float32 BLOBs; in-process cache; opaque `id` preserved.
+  RM-00: `node eval/run.js` (sqlite default) and `--store jsonl` both 27/31.
+  **Downgrade honesty:** after a store is `.db`, an old exe opening the `.bak`
+  sees a stale store. Recovery is `--export-jsonl` *before* downgrade, or keep
+  the new exe. The `.bak` is not a two-way door. No "switch back to JSONL and
+  dual-write" env.
+- **JSONL→SQLite migrator (RM-07 slice 2a).** Same 10-step protocol the
+  slice-4 auto-migrate calls. Opt-in CLI still exists: `node entry.js --migrate`
   / `npm run migrate`. Streams the JSONL line-at-a-time (never `readFileSync` —
   that is the S1 834 MB wall) into `<store>.db.migrating`, count-verifies, WAL
   checkpoints, atomically renames to `.db`, **then** renames the JSONL off
   `MEMORY_FILE_PATH` to `.jsonl.bak` (and the AccessLog sidecar to `.bak`).
   Ids, `created`, and `superseded_by` are preserved; access counts fold into
   the row **once** (BUG-007). Failure before the `.db` rename leaves the JSONL
-  live; no resume-from-partial. **Not auto-run on server startup** (first-open
-  is the default-switch slice 4). The `.bak` is a *recovery snapshot*, not the
-  sovereignty export (that's slice 2b `--export` / `--export-jsonl`). Do not dual-write
-  JSONL after migration. Default switch is still a later slice.
+  live; no resume-from-partial. The `.bak` is a *recovery snapshot*, not the
+  sovereignty export (that's slice 2b `--export` / `--export-jsonl`). Do not
+  dual-write JSONL after migration. Do not delete the `.bak`.
 - **Sovereignty export (RM-07 slice 2b).** Opt-in CLI: `node entry.js --export`
   / `npm run export`. Writes a ZIP64 `.zip` (default dest **Desktop**, name
   `resonance-memories-<local-date>`, never-overwrite `Name (2).zip`) containing
@@ -226,7 +242,7 @@ new golden case: `EVAL_REFRESH=1 npm run eval`. For a measurement corpus (`dupli
 `dedup_hi` / `dedup_lo` win), `RESONANCE_EXTRACT_LLM` (Tier 2 default when no
 config file; live-config `extract_llm` wins; **off**), `RESONANCE_EXTRACT_MODEL`
 (preferred chat id), `RESONANCE_EXTRACT_TIMEOUT_MS` (interactive bound, default
-8000), `RESONANCE_STORE` (`jsonl` default / `sqlite`; live-config `store` wins;
+8000), `RESONANCE_STORE` (`sqlite` default / `jsonl` pin; live-config `store` wins;
 SqliteStore needs Node ≥22.5 for `node:sqlite`). The embedder is **not bundled**
 — we depend on the `/v1/embeddings` *interface*, not a specific model, so any
 compatible embedding model can be swapped in.

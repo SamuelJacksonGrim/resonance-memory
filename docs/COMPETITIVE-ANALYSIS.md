@@ -15,7 +15,8 @@ because this market's published benchmarks are actively disputed (see §4).*
 > retrieval remain the real open gaps. **RM-07 SQLite is selectable** (slices 1+2a+2b+3;
 > [`proposed/0010`](proposed/0010-sqlite-backend.md)): S1 made it a measured GO (JSONL
 > cannot load 50k); `node:sqlite` + BLOB + JS cosine; lossless `--export` zip is the
-> anti-lock-in path (§6 claim 5) and has shipped. Default switch is slice 4.
+> anti-lock-in path (§6 claim 5) and has shipped. Default switch (slice 4) has shipped:
+> new stores are SQLite; existing JSONL auto-migrates on first open.
 
 The goal of this document is not to cheer. It is to answer three questions honestly:
 
@@ -149,7 +150,7 @@ Honest scoring of Resonance Memory **today** (`v0.2.0`, August 2026) against the
 | Multi-user / agent scoping | ✅ | ✅ | ✅ | ❌ | `RM-06` |
 | Session vs long-term separation | ✅ | ✅ | ✅ | ❌ | `RM-06` |
 | Idle/sleep-time consolidation | 🟡 | ✅ | ✅ | ❌ | `RM-10` |
-| Pluggable store backend | ✅ | ✅ | ✅ | 🟡 *(seam extracted; `SqliteStore` selectable, JSONL still default; [`proposed/0010`](proposed/0010-sqlite-backend.md))* | `RM-07` |
+| Pluggable store backend | ✅ | ✅ | ✅ | ✅ *(SQLite default, JSONL pin / fail-open / export; [`proposed/0010`](proposed/0010-sqlite-backend.md))* | `RM-07` |
 | Lossless export / anti-lock-in | 🟡 | 🟡 | 🟡 | ✅ *( `--export` zip + `--export-jsonl`; a competitor reads `memories.jsonl` without our exe)* | `RM-07` 2b ✅ |
 | Eval harness / regression suite | ✅ | ✅ | ✅ | ✅ *(offline, deterministic, golden-gated)* | `RM-00` ✅ |
 | Provenance on records (poisoning defense) | 🟡 | 🟡 | 🟡 | 🟡 *(`source` field seeded; recall-weighting + filter open)* | `RM-16` |

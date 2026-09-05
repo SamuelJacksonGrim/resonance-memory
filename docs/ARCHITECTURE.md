@@ -148,9 +148,9 @@ same record the panel renders, the installer targets, `--dedup-existing` scans,
 | `extract.js` | RM-01.c Tier 2: opt-in LLM extraction (prompt, parser, sanity gate, `/v1/chat/completions`, MCP sampling, capability detect). Off by default. `save()` is the only caller. | stdlib + `fetch` |
 | `dedup-existing.js` | RM-02.c CLI. Dry-run default; `--apply` is one durable rewrite. Thin wrapper over `dedupExisting()` — no second decision. | `memory-core`, `store` |
 | `record.js` | The shared record schema (`normalize()`), durable atomic writes (`writeFileDurable()`), the access sidecar (`AccessLog`), and the lexical heuristics (constraint typing, historical-query detection, supersession cues, cosine-banded `detectNearDuplicate`). Owned here so server and panel agree on a record byte-for-byte. | stdlib only |
-| `store.js` | Store seam: `JsonlStore` (default) plus `openStore()` selectability. Flag: `RESONANCE_STORE=sqlite` / live-config `store`. Same method surface; `memory-core.js` does not change. RM-00 golden parity (slice 3) is green. | `record`, `store-sqlite` |
+| `store.js` | Store seam. `openStore()` default-switch (slice 4): SQLite default; JSONL auto-migrates on first open; fail-open to JSONL. `RESONANCE_STORE=jsonl` pins JSONL. Same method surface; `memory-core.js` does not change. RM-00 golden 27/31 on sqlite default and `--store jsonl`. | `record`, `store-sqlite` |
 | `store-sqlite.js` | RM-07 `SqliteStore`. `node:sqlite` `DatabaseSync`, WAL + `synchronous=FULL`, BLOB embeddings, in-process cache, in-table access counts. Never constructs `AccessLog`. | `record`, `node:sqlite` |
-| `migrate-sqlite.js` | RM-07 slice 2a streaming JSONL→SQLite migrator (10-step protocol). Opt-in `--migrate`. `.bak` is a recovery snapshot, not the sovereignty export. | `store`, `store-sqlite`, `record` |
+| `migrate-sqlite.js` | RM-07 slice 2a streaming JSONL→SQLite migrator (10-step protocol). Opt-in `--migrate`; `openStore()` calls the same function on first open (slice 4). `.bak` is a recovery snapshot, not the sovereignty export. | `store`, `store-sqlite`, `record` |
 | `zip.js` | Zero-dep ZIP64 writer (slice 2b). `createDeflateRaw` + `zlib.crc32` + `.zip.tmp` rename. ZIP64 on every archive. | stdlib (`zlib`) |
 | `export-memory.js` | RM-07 slice 2b sovereignty export. `--export` zip bundle; `--export-jsonl` raw primitive. Read-only. The 2c panel button shells `runExport()` / `previewExport()`. Not an MCP tool. | `zip`, `store`, `record`, `edges` |
 | `field.js` | Associative layer (Phase 2a): a kNN semantic graph over stored vectors, neighborhood expansion, and constraint rescue. No new embedding calls, no LLM extraction. | stdlib only |
@@ -339,23 +339,26 @@ The Store method surface — `all` / `active` / `current` / `get` / `add` / `upd
 `updateMany` / `applyRecall` / `vacuum` / `hasDeleted` / `nextId` — is what
 `memory-core.js` depends on. Two implementations:
 
-- **`JsonlStore`** (default). Flat JSONL; mutations go through `writeFileDurable()`.
-  Access counts live in the AccessLog sidecar. `all()` re-parses the file per call —
-  this is the S1 load wall (50k with vectors is 834 MB and cannot `readFileSync`).
-- **`SqliteStore`** (selectable, `RESONANCE_STORE=sqlite`). `node:sqlite` `DatabaseSync`,
+- **`SqliteStore`** (default as of slice 4). `node:sqlite` `DatabaseSync`,
   WAL + `synchronous=FULL`, embeddings as Float32 BLOBs, in-process record cache
   hydrated once. Opaque `id` is preserved (never AUTOINCREMENT-renumbered). `created`
   is a real column. Access counts live *in the row*; this class never constructs
   `AccessLog` (BUG-007). No sqlite-vec — a RAM Float32 scan beat it at 10k–100k
   (see [`proposed/0010`](proposed/0010-sqlite-backend.md)). Product S1, field-off
   cached recall: **p95 49.6 ms at 50k, 96.4 ms at 100k** (JSONL cannot load either
-  size). `--migrate` (slice 2a) streams an existing JSONL into the sibling `.db`
-  (10-step protocol in [`proposed/0010`](proposed/0010-sqlite-backend.md)); the
-  `.bak` is a recovery snapshot, not the sovereignty export. `--export`
+  size). `openStore()` auto-migrates an existing JSONL on first open via the 2a
+  protocol (fail-open to JSONL if it throws before the atomic rename).
+  `RESONANCE_STORE=jsonl` pins JSONL. `--migrate` is the same protocol as a CLI.
+  The `.bak` is a recovery snapshot, not a two-way door (downgrade honesty:
+  `--export-jsonl` before downgrade, or keep the new exe). `--export`
   (slice 2b) writes the ZIP64 zip bundle (Desktop, `--name` / `--out`);
   `--export-jsonl` is the raw primitive. The panel **Export my memories**
   button (slice 2c) shells the same engine (confirm modal, heartbeat pause).
-  Default switch is slice 4. Edges-in-db and `searchDense` are later slices.
+  Edges-in-db and `searchDense` are later slices.
+- **`JsonlStore`** (pin / fail-open / export interchange). Flat JSONL; mutations
+  go through `writeFileDurable()`. Access counts live in the AccessLog sidecar.
+  `all()` re-parses the file per call — this is the S1 load wall (50k with
+  vectors is 834 MB and cannot `readFileSync`).
 
 ---
 
@@ -474,9 +477,9 @@ it reads `eval/embeddings.cache.json` and never touches the network or an API ke
   `adversarial`, `field-noise`, `field-stress`) with the field **off and on**, reports the
   **ROC** (did the apex constraint surface?) and **TBR** (did forbidden junk bleed in?) split,
   and gates against `golden.json`. `--filter <id>` runs a subset; `--accept` locks the current
-  scorecard as the new golden. `--store sqlite` (RM-07 slice 3) runs the same cases
-  through `SqliteStore`; the gate is two-sided parity against `golden.json` (any
-  case flip is a STOP). `--accept` is jsonl-only. Measurement corpora (`duplicates`) are skipped here.
+  scorecard as the new golden (jsonl-only; re-run with `--store jsonl`). Default
+  (RM-07 slice 4) is SqliteStore, two-sided parity against `golden.json` (any
+  case flip is a STOP). `--store jsonl` keeps the JSONL path testable. Measurement corpora (`duplicates`) are skipped here.
 - `eval/measure.js` runs reporting metrics from the registry in `eval/metrics.js`
   (`recall_at_k`, `duplicate_rate`, `extraction_precision`, `extraction_recall`, `mrr`;
   add more with `register(...)`). A/B numbers, not the

@@ -673,17 +673,19 @@ if (!sqliteAvailable()) {
   });
 } else {
 
-test("openStore defaults to JsonlStore; RESONANCE_STORE=sqlite is selectable", () => {
+test("resolveStoreBackend defaults to sqlite; jsonl pin stays", () => {
   const prev = process.env.RESONANCE_STORE;
   try {
     delete process.env.RESONANCE_STORE;
-    assert.strictEqual(resolveStoreBackend(null), "jsonl");
-    assert.strictEqual(resolveStoreBackend({}), "jsonl");
-    assert.ok(openStore(tmp("sel-default.jsonl")) instanceof JsonlStore);
-    assert.strictEqual(resolveStoreBackend({ store: "sqlite" }), "sqlite", "live-config wins");
+    assert.strictEqual(resolveStoreBackend(null), "sqlite");
+    assert.strictEqual(resolveStoreBackend({}), "sqlite");
+    assert.strictEqual(resolveStoreBackend({ store: "jsonl" }), "jsonl", "live-config pin");
+    assert.strictEqual(resolveStoreBackend({ store: "sqlite" }), "sqlite");
+    process.env.RESONANCE_STORE = "jsonl";
+    assert.strictEqual(resolveStoreBackend(null), "jsonl", "env pin");
+    assert.strictEqual(resolveStoreBackend({ store: "sqlite" }), "sqlite", "config beats env");
     process.env.RESONANCE_STORE = "sqlite";
     assert.strictEqual(resolveStoreBackend(null), "sqlite");
-    assert.strictEqual(resolveStoreBackend({ store: "jsonl" }), "jsonl", "config beats env");
     assert.strictEqual(sqlitePathFor("C:/data/resonance-memory.jsonl").replace(/\\/g, "/"),
       "C:/data/resonance-memory.db");
     assert.strictEqual(sqlitePathFor("mem.db"), "mem.db");
@@ -3326,6 +3328,224 @@ async function asyncTests() {
     });
   }
 
+  section("RM-07 slice 4 — default switch (openStore auto-migrate)");
+
+  if (!sqliteAvailable()) {
+    await atest("openStore default-switch SKIPPED (node:sqlite not in this Node)", async () => {
+      assert.ok(true);
+    });
+  } else {
+    function switchFixture(name) {
+      const dir = tmp("sw4-" + name + "-" + Math.random().toString(36).slice(2));
+      fs.mkdirSync(dir, { recursive: true });
+      return path.join(dir, "mem.jsonl");
+    }
+    function writeSwitchJsonl(file, recs, extra) {
+      extra = extra || {};
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, recs.map((r) => JSON.stringify(r)).join("\n") + "\n");
+      if (extra.access) {
+        fs.writeFileSync(file + ".access.json", JSON.stringify({ counts: extra.access }));
+      }
+      return file;
+    }
+    function closeQuiet(s) {
+      try { if (s && typeof s.close === "function") s.close(); } catch { /* */ }
+    }
+
+    await atest("openStore jsonl-override stays JsonlStore (even with a sibling .db)", async () => {
+      const jsonl = switchFixture("pin-jsonl");
+      writeSwitchJsonl(jsonl, [
+        { id: 1, text: "pinned jsonl", created: "2020-01-01T00:00:00.000Z" },
+      ]);
+      const db = new SqliteStore(sqlitePathFor(jsonl));
+      db.add(normalize({ id: 99, text: "sqlite twin", created: "2021-01-01T00:00:00.000Z" }));
+      db.close();
+      const s = await openStore(jsonl, { backend: "jsonl", log() {} });
+      assert.ok(s instanceof JsonlStore);
+      assert.strictEqual(s.get(1).text, "pinned jsonl");
+      assert.strictEqual(s.get(99), null, "must not dual-read the .db");
+      assert.ok(fs.existsSync(jsonl), "pin must not bak the JSONL");
+    });
+
+    await atest("openStore .db-exists → SqliteStore (no JSONL)", async () => {
+      const jsonl = switchFixture("db-only");
+      const dbPath = sqlitePathFor(jsonl);
+      const seed = new SqliteStore(dbPath);
+      seed.add(normalize({
+        id: 7, text: "already sqlite", created: "2019-09-09T09:09:09.000Z",
+      }));
+      seed.close();
+      const s = await openStore(jsonl, { log() {} });
+      assert.ok(s instanceof SqliteStore);
+      assert.strictEqual(s.get(7).text, "already sqlite");
+      assert.strictEqual(s.get(7).created, "2019-09-09T09:09:09.000Z");
+      closeQuiet(s);
+    });
+
+    await atest("openStore .db + leftover JSONL finishes step 8 (never dual-read)", async () => {
+      const jsonl = switchFixture("leftover");
+      const dbPath = sqlitePathFor(jsonl);
+      const seed = new SqliteStore(dbPath);
+      seed.add(normalize({
+        id: 1, text: "live db truth", created: "2020-01-01T00:00:00.000Z", embedding: [1, 0],
+      }));
+      seed.close();
+      writeSwitchJsonl(jsonl, [
+        { id: 99, text: "stale leftover — must not be read", created: "2026-01-01T00:00:00.000Z" },
+      ]);
+      const logs = [];
+      const s = await openStore(jsonl, { log: (m) => logs.push(m) });
+      assert.ok(s instanceof SqliteStore);
+      assert.strictEqual(s.all().length, 1);
+      assert.strictEqual(s.get(1).text, "live db truth");
+      assert.strictEqual(s.get(99), null, "leftover JSONL was not dual-read");
+      assert.ok(!fs.existsSync(jsonl), "JSONL renamed off MEMORY_FILE_PATH");
+      assert.ok(fs.existsSync(jsonl + ".bak"), "recovery snapshot kept");
+      assert.ok(logs.some((m) => /leftover JSONL renamed/.test(m)));
+      closeQuiet(s);
+    });
+
+    await atest("openStore jsonl-only auto-migrates lossless then opens SqliteStore", async () => {
+      const jsonl = switchFixture("auto");
+      writeSwitchJsonl(jsonl, [
+        {
+          id: 1700000000001, text: "I work at Acme",
+          created: "2020-06-15T12:34:56.000Z",
+          embedding: [1, 0, 0.25], access_count: 2,
+        },
+        {
+          id: 1700000000002, text: "I used to work at Globex",
+          created: "2019-01-01T00:00:00.000Z",
+          superseded_by: 1700000000001,
+          valid_to: "2020-06-15T12:34:56.000Z",
+          embedding: [0, 1, 0],
+        },
+        { id: 7, text: "vectorless", created: "2021-03-03T03:03:03.000Z" },
+        { id: 8, text: "deleted", created: "2018-01-01T00:00:00.000Z", deleted: true, embedding: [0, 0, 1] },
+      ], {
+        access: {
+          "1700000000001": { n: 3, last: "2026-09-01T00:00:00.000Z" },
+          "7": { n: 1, last: "2026-09-02T00:00:00.000Z" },
+        },
+      });
+      const logs = [];
+      const s = await openStore(jsonl, { log: (m) => logs.push(m) });
+      assert.ok(s instanceof SqliteStore, "auto-migrate destination is sqlite");
+      assert.ok(fs.existsSync(sqlitePathFor(jsonl)));
+      assert.ok(!fs.existsSync(jsonl), "JSONL at .bak");
+      assert.ok(fs.existsSync(jsonl + ".bak"));
+      assert.ok(!fs.existsSync(jsonl + ".access.json"), "access sidecar folded and bak'd");
+      assert.strictEqual(s.all().length, 4);
+      assert.strictEqual(Number(s.get(1700000000001).id), 1700000000001);
+      assert.strictEqual(s.get(1700000000001).created, "2020-06-15T12:34:56.000Z");
+      assert.strictEqual(s.get(1700000000001).access_count, 5, "in-row 2 + sidecar 3, folded ONCE");
+      assert.strictEqual(s.get(7).embedding, null, "vectorless stays vectorless");
+      assert.strictEqual(s.get(7).access_count, 1);
+      assert.strictEqual(s.get(8).deleted, true);
+      assert.ok(logs.some((m) => /migrated 4 memories; original kept at /.test(m)));
+      closeQuiet(s);
+    });
+
+    await atest("openStore neither-exists → fresh SqliteStore", async () => {
+      const jsonl = switchFixture("new-user");
+      assert.ok(!fs.existsSync(jsonl));
+      assert.ok(!fs.existsSync(sqlitePathFor(jsonl)));
+      const s = await openStore(jsonl, { log() {} });
+      assert.ok(s instanceof SqliteStore);
+      assert.ok(fs.existsSync(sqlitePathFor(jsonl)), "creates the .db");
+      assert.ok(!fs.existsSync(jsonl), "must not invent a JSONL");
+      assert.strictEqual(s.all().length, 0);
+      s.add(normalize({ id: 1, text: "first save", created: "2026-01-01T00:00:00.000Z" }));
+      assert.strictEqual(s.get(1).text, "first save");
+      closeQuiet(s);
+    });
+
+    await atest("FAILED auto-migrate falls back to JSONL; store intact; no half .db", async () => {
+      const jsonl = switchFixture("fail-open");
+      const recs = [
+        { id: 1, text: "do not lose me", created: "2016-06-06T06:06:06.000Z", embedding: [1, 0] },
+        { id: 2, text: "or me", created: "2017-07-07T07:07:07.000Z", embedding: [0, 1] },
+      ];
+      writeSwitchJsonl(jsonl, recs);
+      const before = fs.readFileSync(jsonl, "utf8");
+      const logs = [];
+      const s = await openStore(jsonl, {
+        log: (m) => logs.push(m),
+        migrate: {
+          async onBeforeRename() { throw new Error("simulated crash before step 7"); },
+        },
+      });
+      assert.ok(s instanceof JsonlStore, "fail-open to JSONL");
+      assert.strictEqual(fs.readFileSync(jsonl, "utf8"), before, "JSONL bytes unchanged");
+      assert.strictEqual(s.all().length, 2);
+      assert.strictEqual(s.get(1).text, "do not lose me");
+      const dbPath = sqlitePathFor(jsonl);
+      assert.ok(!fs.existsSync(dbPath), "no half .db at MEMORY_FILE_PATH");
+      assert.ok(!fs.existsSync(dbPath + ".migrating"), "temp cleaned");
+      assert.ok(logs.some((m) => /auto-migrate failed/.test(m)));
+      assert.ok(logs.some((m) => /opening JSONL/.test(m)));
+    });
+
+    await atest("second open after successful auto-migrate is a no-op", async () => {
+      const jsonl = switchFixture("second-open");
+      writeSwitchJsonl(jsonl, [
+        { id: 1, text: "once", created: "2020-01-01T00:00:00.000Z", embedding: [1, 0] },
+      ]);
+      const first = await openStore(jsonl, { log() {} });
+      assert.ok(first instanceof SqliteStore);
+      assert.strictEqual(first.get(1).text, "once");
+      closeQuiet(first);
+      assert.ok(!fs.existsSync(jsonl));
+      assert.ok(fs.existsSync(jsonl + ".bak"));
+      const logs = [];
+      const second = await openStore(jsonl, { log: (m) => logs.push(m) });
+      assert.ok(second instanceof SqliteStore);
+      assert.strictEqual(second.all().length, 1);
+      assert.strictEqual(second.get(1).text, "once");
+      assert.ok(!logs.some((m) => /migrated /.test(m)), "no second migrate");
+      closeQuiet(second);
+    });
+
+    await atest("empty .db beside live JSONL is dropped and auto-migrated (not step-8)", async () => {
+      const jsonl = switchFixture("empty-db-footgun");
+      writeSwitchJsonl(jsonl, [
+        { id: 3, text: "do not lose me", created: "2016-06-06T06:06:06.000Z" },
+      ]);
+      const dbPath = sqlitePathFor(jsonl);
+      const empty = new SqliteStore(dbPath);
+      assert.strictEqual(empty.rowCount(), 0);
+      empty.close();
+      const s = await openStore(jsonl, { log() {} });
+      assert.ok(s instanceof SqliteStore);
+      assert.strictEqual(s.get(3).text, "do not lose me");
+      assert.ok(!fs.existsSync(jsonl), "JSONL migrated off the path");
+      assert.ok(fs.existsSync(jsonl + ".bak"));
+      closeQuiet(s);
+    });
+
+    await atest("count-mismatch auto-migrate fail-opens; JSONL intact", async () => {
+      const jsonl = switchFixture("count-mismatch");
+      writeSwitchJsonl(jsonl, [
+        { id: 1, text: "a", created: "2020-01-01T00:00:00.000Z", embedding: [1, 0] },
+        { id: 2, text: "b", created: "2020-01-01T00:00:00.000Z", embedding: [0, 1] },
+      ]);
+      const before = fs.readFileSync(jsonl, "utf8");
+      const s = await openStore(jsonl, {
+        log() {},
+        migrate: {
+          onAfterIngest(store) {
+            store.db.exec("DELETE FROM memories WHERE id = 1");
+          },
+        },
+      });
+      assert.ok(s instanceof JsonlStore);
+      assert.strictEqual(fs.readFileSync(jsonl, "utf8"), before);
+      assert.strictEqual(s.all().length, 2);
+      assert.ok(!fs.existsSync(sqlitePathFor(jsonl)));
+    });
+  }
+
   section("RM-07 slice 2b — export bundle (read-only, golden-safe)");
 
   {
@@ -4008,16 +4228,18 @@ async function asyncTests() {
       parseStoreKind, run: runEval, key: evalKey,
     } = require("./eval/run.js");
 
-    test("parseStoreKind: --store sqlite / env, flag wins, unknown throws", () => {
+    test("parseStoreKind: default sqlite, --store jsonl / env, flag wins, unknown throws", () => {
       const prev = process.env.RESONANCE_STORE;
       try {
         delete process.env.RESONANCE_STORE;
-        assert.strictEqual(parseStoreKind([]), "jsonl");
+        assert.strictEqual(parseStoreKind([]), "sqlite", "product default");
         assert.strictEqual(parseStoreKind(["--store", "sqlite"]), "sqlite");
         assert.strictEqual(parseStoreKind(["--store=sqlite"]), "sqlite");
         assert.strictEqual(parseStoreKind(["--store", "jsonl"]), "jsonl");
+        process.env.RESONANCE_STORE = "jsonl";
+        assert.strictEqual(parseStoreKind([]), "jsonl", "env pin");
+        assert.strictEqual(parseStoreKind(["--store", "sqlite"]), "sqlite", "flag wins over env");
         process.env.RESONANCE_STORE = "sqlite";
-        assert.strictEqual(parseStoreKind([]), "sqlite", "env fallback");
         assert.strictEqual(parseStoreKind(["--store", "jsonl"]), "jsonl", "flag wins over env");
         assert.throws(() => parseStoreKind(["--store", "mysql"]), /unknown --store/);
       } finally {

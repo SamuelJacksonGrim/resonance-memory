@@ -1,6 +1,6 @@
 # 0010 — SQLite backend behind the Store seam (RM-07)
 
-**Status:** slice 1 shipped (drop-in `SqliteStore`) · slice 2a shipped (streaming JSONL→SQLite migrator, opt-in CLI) · **slice 2b shipped** (sovereignty zip export, `--export` / `--export-jsonl`) · **slice 2c shipped** (panel "Export my memories" button + confirm modal + heartbeat pause) · **slice 3 shipped** (RM-00 golden on SqliteStore = JSONL 27/31 case-for-case) · JSONL still default · default switch is slice 4 · **Backlog:** `RM-07` · **Depends on:** `RM-00`, [`0005`](0005-store-abstraction.md)
+**Status:** slice 1 shipped (drop-in `SqliteStore`) · slice 2a shipped (streaming JSONL→SQLite migrator) · **slice 2b shipped** (sovereignty zip export) · **slice 2c shipped** (panel export button) · **slice 3 shipped** (RM-00 golden on SqliteStore = JSONL 27/31 case-for-case) · **slice 4 shipped** (SQLite is the default; auto-migrate on first open; fail-open to JSONL) · **Backlog:** `RM-07` · **Depends on:** `RM-00`, [`0005`](0005-store-abstraction.md)
 **Spike:** [`spike/rm-07-sqlite/`](../../spike/rm-07-sqlite/) — de-risked the driver and the vector path.
 **Product:** `store-sqlite.js` `SqliteStore`, same JsonlStore method surface, `memory-core.js` verbs unchanged.
 
@@ -271,7 +271,8 @@ Landed. Selectable, not the default.
 - `normalize()` still drops `Float32Array`; the store attaches after.
   Encoded as a regression test.
 - Selectability: `RESONANCE_STORE=sqlite` or live-config `store: "sqlite"`.
-  Sibling path `*.jsonl` → `*.db`. Default remains JsonlStore.
+  Sibling path `*.jsonl` → `*.db`. Default was JsonlStore this slice;
+  slice 4 flipped it.
 - I5 operationalized per backend as above. BUG-002 SQLite test: after
   recall, only retention columns changed on the returned rows; row count
   unchanged.
@@ -285,15 +286,13 @@ Landed. Selectable, not the default.
 
 ## What this slice is *not* (later slices)
 
-- Ripping out `JsonlStore`. JSONL stays default until the slice-4 switch.
-  Slice 3 (below) proved RM-00 golden parity; eval default is still JSONL.
+- Ripping out `JsonlStore`. JSONL remains the pin (`RESONANCE_STORE=jsonl`),
+  the fail-open backend, the export interchange, and the eval `--store jsonl`
+  path. Slice 4 made sqlite the default; JsonlStore is not deleted.
 - Changing `memory-core.js` to `searchDense`. First landing is a drop-in
   Store. `searchDense` is a later shave (packed cosine was 48 ms at 100k
   in the spike); the product cache already cleared 100 ms.
 - Adding npm dependencies.
-- Auto-migrating user stores on upgrade / first open. Slice 2a is the
-  **opt-in CLI** (`--migrate`). The first-open hook is the default-switch
-  slice 4 — do not wire it yet (keeps the RM-00 golden on JSONL).
 - Panel export button (**slice 2c, shipped**). `--export` / `--export-jsonl`
   are the CLI; the button shells the same function. Heartbeat pause lives
   with the panel (a sync 30–60s zip would otherwise starve `/api/ping` and
@@ -304,11 +303,11 @@ Landed. Selectable, not the default.
 
 ## Slice 2a (shipped) — streaming JSONL→SQLite migrator
 
-Landed. Opt-in CLI, not the default, not auto-run on server startup.
+Landed. Opt-in CLI; slice 4's `openStore()` calls the same `migrateJsonlToSqlite()`
+on first open of an existing JSONL (not a second implementation).
 
 Product: `migrate-sqlite.js`, `node entry.js --migrate` / `npm run migrate`.
-`memory-core.js` unchanged. JSONL stays the default backend so `node eval/run.js`
-stays green trivially.
+`memory-core.js` unchanged.
 
 ### The 10-step commit protocol
 
@@ -344,11 +343,12 @@ Do **not**: `copyFile` to `.bak` AND rename to `.migrated` (two full copies
 of an 834 MB file); dual-write JSONL after migration; add a "switch back
 to JSONL" env (footgun). `JsonlStore` stays for tests / conformance / export.
 
-An empty `.db` sitting beside a still-live JSONL is the `openStore()`-created
-footgun, not a completed migrate (a completed migrate would have renamed
-JSONL off the path). `--migrate` refuses that state rather than ignore the
-JSONL. `openStore({backend: sqlite})` warns when a sibling JSONL exists and
-the `.db` is missing — it still does not auto-migrate this slice.
+An empty `.db` sitting beside a still-live JSONL is the slice-1
+`openStore()`-created footgun, not a completed migrate (a completed migrate
+would have renamed JSONL off the path). `--migrate` refuses that state
+rather than ignore the JSONL. Slice 4's `openStore()` drops the empty `.db`
+and auto-migrates — finishing step 8 on that state would rename the real
+store away.
 
 Kill-9 before step 7: JSONL stays at its path, no half `.db` sits at
 `MEMORY_FILE_PATH`, leftover `.db.migrating` is dropped on the next run
@@ -518,7 +518,7 @@ jsonl-only so an f32 quirk cannot rewrite the lock.
 
 Both backends: **27/31**, same cases passing and failing. No flips.
 
-| | jsonl (default) | sqlite (`--store sqlite`) |
+| | jsonl (`--store jsonl`) | sqlite (default / `--store sqlite`) |
 |---|---|---|
 | TOTAL | 27/31 | 27/31 |
 | field lifted fail→pass | 3 | 3 |
@@ -527,8 +527,10 @@ Both backends: **27/31**, same cases passing and failing. No flips.
 | TBR off / on | 0/4 / 1/4 | 0/4 / 1/4 |
 | gate | No regressions vs golden. | SqliteStore scorecard matches golden case-for-case. |
 
-Reproduce: `node eval/run.js` and `node eval/run.js --store sqlite`. Side-by-side
-in [`eval/RESULTS.md`](../../eval/RESULTS.md) "RM-07 slice 3".
+Reproduce: `node eval/run.js` (sqlite default, slice 4) and
+`node eval/run.js --store jsonl`. Side-by-side in
+[`eval/RESULTS.md`](../../eval/RESULTS.md) "RM-07 slice 3" (parity) and
+"RM-07 slice 4" (default switch).
 
 ### f32 vs f64 (the near-tie watch)
 
@@ -559,6 +561,68 @@ the UI as well as the CLI. Slice 4 is the default switch.
 
 ---
 
+## Slice 4 (shipped) — the default switch
+
+Landed. This is the slice that delivers RM-07's value to a real user: new
+stores are SQLite, and an existing JSONL user (the one who hit the 50k
+wall and will never run `--migrate`) is auto-migrated the first time they
+open. Sovereignty (2b) already shipped, so migrating no longer opens a
+lock-in window. Slice 3 proved SqliteStore ≡ JsonlStore on the golden
+(27/31), so flipping the default is behaviour-safe.
+
+Product: `openStore()` in `store.js` is the one construction path. It
+**calls** `migrateJsonlToSqlite()` (the 2a protocol) — it does not
+reimplement it. `openStore` is async because the protocol streams.
+
+### Backend-selection order
+
+Given the configured `MEMORY_FILE_PATH` (still a `*.jsonl` path) and no
+explicit backend override:
+
+1. **`RESONANCE_STORE=jsonl` (or live-config `store: "jsonl"`)** → JsonlStore.
+   The override stays — a user can pin JSONL. (`RESONANCE_STORE=sqlite`
+   forces sqlite, same walk as the default.)
+2. **`<stem>.db` exists and opens** → SqliteStore. If a leftover
+   `<stem>.jsonl` also sits at the path (the 2a crash-between-step-7-and-8
+   case), **finish step 8**: rename the JSONL → `.bak` now (the `.db` is
+   already the live truth). Log it. Never dual-read.
+3. **No `.db`, but `<stem>.jsonl` exists** → **AUTO-MIGRATE** via the 2a
+   10-step protocol, then open the `.db`. **Fail-open (I3-spirit at the
+   store level):** if migration throws before the atomic rename, keep the
+   JSONL live, drop the temp, open JsonlStore. A failed auto-migrate must
+   NEVER block the user from their memories. Log, retry next open.
+4. **Neither exists (new user)** → create a fresh SqliteStore (`.db`).
+
+An empty `.db` beside a still-live JSONL is the slice-1 footgun, not live
+truth. `openStore` drops the empty artifact and auto-migrates — finishing
+step 8 on that state would rename the real store away.
+
+Export is **read-only** and must not migrate: `openExportStore` inspects
+the filesystem (`.db` if present, else JSONL) and never creates a `.db`.
+The panel demo graph never goes through `openStore` — auto-migrating
+`demo-seed.jsonl` would mutate a tracked file.
+
+### Data-safety
+
+- Same 2a protocol. Lossless, kill-9-safe, keeps `.bak`.
+- Failed/aborted auto-migrate → the user still opens their JSONL and
+  loses NOTHING.
+- Do **not** delete the `.bak` (recovery snapshot). Live `--export-jsonl`
+  is the sovereignty copy. Two artifacts, two jobs.
+- **Downgrade honesty:** after a store is `.db`, an old exe opening the
+  `.bak` sees a stale store. Recovery is `--export-jsonl` before
+  downgrade, or keep the new exe. The `.bak` is not a two-way door. No
+  "switch back to JSONL and dual-write" env.
+
+### Eval
+
+`node eval/run.js` (no flag) is sqlite — two-sided parity against
+`golden.json`, 27/31. `--store jsonl` keeps the JSONL path testable
+(one-way regression gate, still 27/31). `--accept` is jsonl-only so an
+f32 quirk cannot rewrite the lock.
+
+---
+
 ## Open decisions (Samuel)
 
 These are product calls. The spike is evidence, not a substitute.
@@ -577,14 +641,10 @@ These are product calls. The spike is evidence, not a substitute.
    in the same implementation slice (packed 48 ms + hydrate k rows) — a
    `memory-core` change. Recommend **(a) then (b)** so the drop-in Store is
    reviewable without a recall-path diff.
-4. **Default backend.** JSONL until golden parity, then SQLite-default with
-   JSONL as the export format? Or SQLite-default as soon as conformance is
-   green, because JSONL cannot load 50k? Recommend **SQLite default for new
-   stores; existing JSONL migrates on first open with `.bak`**, once parity
-   is proven. A 50k JSONL user is already stuck. **Parity is now proven
-   (slice 3, 27/31 case-for-case).** Slice 2b export and 2c panel button
-   have shipped. Slice 4 is the default switch so migration is not a
-   lock-in.
+4. **Default backend.** **Settled, slice 4 shipped.** SQLite default for
+   new stores; existing JSONL auto-migrates on first open with `.bak`.
+   JSONL remains the pin, the fail-open backend, and the export
+   interchange. Parity is proven (slice 3, 27/31 case-for-case).
 5. **Move-between-devices story.** `.db` copy (after checkpoint) for RM↔RM;
    JSONL export for leaving RM / handing to a competitor. Recommend **both**,
    with JSONL as the documented sovereignty path (embeddings as JSON, no RM

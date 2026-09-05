@@ -9,6 +9,18 @@ stable; sophistication grows in the substrate, not in the API.
 ## [Unreleased]
 
 ### Added
+- **RM-07 slice 4 — SQLite is the default.** New stores are `.db`. An existing
+  JSONL auto-migrates on first open via the 2a 10-step protocol (stream,
+  preserve ids, fold AccessLog once, count-verify, WAL checkpoint, atomic
+  rename, **then** JSONL → `.bak`). `RESONANCE_STORE=jsonl` / live-config
+  `store: "jsonl"` pins JSONL. A leftover JSONL beside a live `.db` is renamed
+  to `.bak` (finish step 8; never dual-read). **Fail-open:** a failed
+  auto-migrate keeps the JSONL live and opens JsonlStore — the user is never
+  locked out of their memories. The `.bak` is the recovery snapshot, not the
+  sovereignty export; do not delete it. Downgrade honesty: an old exe opening
+  the `.bak` sees a stale store; recovery is `--export-jsonl` before
+  downgrade, or keep the new exe. No dual-write "switch back" env.
+  `node eval/run.js` (sqlite default) and `--store jsonl` both 27/31.
 - **RM-07 slice 2c — panel export button.** "Export my memories" on the
   local control panel (same surface as the field toggle). Click opens a
   confirm modal (what it writes, that it is read-only, count + size

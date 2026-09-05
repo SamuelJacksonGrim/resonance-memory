@@ -21,8 +21,8 @@
  *
  * SQLite is a speed engine, not a trap. This is the file the user owns and
  * can carry to another device or hand to a competing provider — the
- * anti-lock-in counter to Mem0/Zep hoarding your data. It lands BEFORE the
- * default-switch (slice 4) so migrating never opens a lock-in window.
+ * anti-lock-in counter to Mem0/Zep hoarding your data. Shipped before the
+ * default-switch (slice 4) so migrating never opened a lock-in window.
  *
  *   --export            the .zip bundle (the user-facing artifact)
  *   --export-jsonl      the raw memories.jsonl (scripting primitive; the
@@ -51,7 +51,7 @@
 const fs = require("fs");
 const path = require("path");
 const { ZipWriter } = require("./zip.js");
-const { openStore, resolveStoreBackend, sqlitePathFor } = require("./store.js");
+const { JsonlStore, resolveStoreBackend, sqlitePathFor } = require("./store.js");
 const { normalize, isVector } = require("./record.js");
 const {
   SIDECAR_KIND, SIDECAR_VERSION, migrateAssoc, readLegacyAssoc, sidecarKind,
@@ -388,26 +388,28 @@ function readLiveConfig(storePath) {
 function openExportStore(storePath, opts) {
   opts = opts || {};
   const resolved = path.resolve(storePath);
+  // READ-ONLY. Never auto-migrate, never create a .db as a side effect of
+  // export. Inspect the filesystem the same way openStore would, then open
+  // whichever store is already live.
   if (/\.db$/i.test(resolved)) {
     const { SqliteStore } = require("./store-sqlite.js");
     return { store: new SqliteStore(resolved, { readOnly: true }), storePath: resolved, backend: "sqlite" };
   }
   const config = opts.config || readLiveConfig(resolved);
   const backend = opts.backend || resolveStoreBackend(config);
-  if (backend === "sqlite") {
-    const dbPath = sqlitePathFor(resolved);
-    if (!fs.existsSync(dbPath)) {
-      const err = new Error(
-        "SQLite backend is selected but " + dbPath + " is missing. " +
-        "Run: node entry.js --migrate"
-      );
-      err.code = "EXPORT_NO_DB";
-      throw err;
-    }
+  if (backend === "jsonl") {
+    return { store: new JsonlStore(resolved), storePath: resolved, backend: "jsonl" };
+  }
+  const dbPath = sqlitePathFor(resolved);
+  if (fs.existsSync(dbPath)) {
     const { SqliteStore } = require("./store-sqlite.js");
     return { store: new SqliteStore(dbPath, { readOnly: true }), storePath: resolved, backend: "sqlite" };
   }
-  return { store: openStore(resolved, { backend: "jsonl" }), storePath: resolved, backend: "jsonl" };
+  // JSONL still at the path (not yet first-opened, or fail-open after a
+  // failed auto-migrate). Export that. Do not throw EXPORT_NO_DB — slice 4
+  // made sqlite the default, so a JSONL user who has not opened yet still
+  // has a store to export.
+  return { store: new JsonlStore(resolved), storePath: resolved, backend: "jsonl" };
 }
 
 function iterateRecords(store) {

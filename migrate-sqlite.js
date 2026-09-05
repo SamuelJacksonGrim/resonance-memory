@@ -47,13 +47,16 @@
  *      the temp, retry next run. NO resume-from-partial.
  *  10. Log: migrated N memories; original kept at <path>.bak.
  *
- * Opt-in CLI only this slice. Do NOT auto-run on server startup (the
- * first-open hook is the default-switch slice 4).
+ * CLI is still opt-in (`node entry.js --migrate`). Slice 4's openStore()
+ * calls migrateJsonlToSqlite() on first open of an existing JSONL — same
+ * protocol, not a second implementation. Fail-open lives in openStore:
+ * a throw before step 7 keeps the JSONL live and the user opens JsonlStore.
  *
  *   node entry.js --migrate [store.jsonl]
  *   npm run migrate
  *
- * Not a fifth MCP verb. JsonlStore stays for tests / conformance / export.
+ * Not a fifth MCP verb. JsonlStore stays for tests / conformance / export
+ * and as the fail-open backend.
  */
 
 "use strict";
@@ -90,8 +93,9 @@ const USAGE = [
   "  --help     this message",
   "",
   "Store path defaults to MEMORY_FILE_PATH, then ~/.lmstudio/resonance-memory.jsonl.",
-  "Does NOT run on server startup this slice — opt-in, explicit.",
-  "The .bak is a recovery snapshot, not the sovereignty export (that's --export-jsonl).",
+  "Opt-in CLI. First-open auto-migrate lives in openStore() (slice 4) and",
+  "calls this same protocol. The .bak is a recovery snapshot, not the",
+  "sovereignty export (that's --export-jsonl).",
 ].join("\n");
 
 function sqliteSidecars(file) {
@@ -120,6 +124,35 @@ function renameOff(src, dest) {
   if (dest && fs.existsSync(dest)) fs.unlinkSync(dest);
   fs.renameSync(src, dest);
   return true;
+}
+
+/*
+ * Protocol step 8, callable on its own. The 2a crash-between-7-and-8
+ * case: .db is already live, JSONL still sits at MEMORY_FILE_PATH.
+ * openStore finishes the rename so we never dual-read. Do not delete
+ * the .bak — it is the recovery snapshot.
+ */
+function finishStep8(jsonlPath, log) {
+  if (!jsonlPath || !fs.existsSync(jsonlPath)) return [];
+  const bakPath = jsonlPath + ".bak";
+  const accessPath = jsonlPath + ".access.json";
+  const accessBak = accessPath + ".bak";
+  const warnings = [];
+  try {
+    if (renameOff(jsonlPath, bakPath) && log) {
+      log("RESONANCE: leftover JSONL renamed to " + bakPath +
+        " (.db is live; never dual-read)");
+    }
+  } catch (e) {
+    warnings.push("could not bak JSONL: " + e.message);
+    if (log) log("RESONANCE: " + warnings[warnings.length - 1]);
+  }
+  try { if (fs.existsSync(accessPath)) renameOff(accessPath, accessBak); }
+  catch (e) {
+    warnings.push("could not bak access sidecar: " + e.message);
+    if (log) log("RESONANCE: " + warnings[warnings.length - 1]);
+  }
+  return warnings;
 }
 
 function foldRecord(raw, access) {
@@ -382,6 +415,9 @@ module.exports = {
   migrateJsonlToSqlite,
   defaultStorePath,
   removeSqliteTree,
+  dbExistsAndOpens,
+  finishStep8,
+  renameOff,
   foldRecord,
   USAGE,
 };

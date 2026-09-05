@@ -13,11 +13,11 @@
  *   npm run eval                 run all corpora, print scorecard, check regressions
  *   npm run eval -- --accept     write the current scorecard as golden.json (the gate)
  *   npm run eval -- --filter X   run only cases whose id starts with X
- *   npm run eval -- --store sqlite
- *                                RM-07 slice 3: same corpora, SqliteStore behind
- *                                the seam. Must match the JSONL scorecard
- *                                case-for-case (any flip is a STOP). Also
- *                                honours RESONANCE_STORE=sqlite; --store wins.
+ *   npm run eval -- --store jsonl
+ *                                RM-07 slice 4: JSONL path (still testable).
+ *                                Default (no flag) is sqlite. Both must match
+ *                                golden 27/31 case-for-case. --store wins over
+ *                                RESONANCE_STORE. --accept is jsonl-only.
  *
  * Reporting metrics (recall@k, duplicate_rate, …) are eval/measure.js, not
  * this file. Measurement corpora (kind: "duplicates" / "messy" / gate: false / no
@@ -46,11 +46,13 @@ function readJsonl(file) {
 }
 
 /*
- * Backend for this eval process. `--store sqlite` (or `--store=sqlite`) wins
- * over RESONANCE_STORE; anything else is jsonl. The golden lock is the JSONL
- * scorecard; sqlite is a parity run of the same cases through the same
- * memory-core, different Store. Unknown values fail loud — a typo must not
- * silently fall back to jsonl and green-wash the drop-in contract.
+ * Backend for this eval process. `--store jsonl|sqlite` (or `--store=`) wins
+ * over RESONANCE_STORE. Slice 4: the product default is sqlite, so a bare
+ * `node eval/run.js` is the sqlite parity run. `--store jsonl` keeps the
+ * JSONL path testable. The golden lock remains the JSONL scorecard;
+ * sqlite is two-sided parity (any flip is a STOP). Unknown values fail
+ * loud — a typo must not silently pick a backend and green-wash the
+ * drop-in contract.
  */
 function parseStoreKind(argv, env) {
   const args = argv || [];
@@ -68,17 +70,19 @@ function parseStoreKind(argv, env) {
     }
     return v;
   }
-  const envRaw = String((env || process.env).RESONANCE_STORE || "jsonl").toLowerCase();
-  return envRaw === "sqlite" ? "sqlite" : "jsonl";
+  const envRaw = String((env || process.env).RESONANCE_STORE || "").toLowerCase();
+  if (envRaw === "jsonl") return "jsonl";
+  return "sqlite";
 }
 
-function freshStore(storeKind) {
-  const kind = storeKind === "sqlite" ? "sqlite" : "jsonl";
+async function freshStore(storeKind) {
+  const kind = storeKind === "jsonl" ? "jsonl" : "sqlite";
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rm-eval-"));
   // openStore is the product construction path (same seam server.js uses).
-  // Fresh temp: no sibling JSONL, so the sqlite missing-.db warning stays quiet.
+  // Explicit backend: a fresh temp has neither file, so sqlite creates a
+  // .db and jsonl stays JsonlStore. No auto-migrate in the eval loop.
   const jsonlFile = path.join(dir, "store.jsonl");
-  const store = openStore(jsonlFile, { backend: kind });
+  const store = await openStore(jsonlFile, { backend: kind });
   return { store, file: store.file, dir, storeKind: kind };
 }
 
@@ -89,7 +93,7 @@ function closeStore(store) {
 }
 
 async function runCase(c, fieldOn, storeKind) {
-  const { store, file, dir } = freshStore(storeKind);
+  const { store, file, dir } = await freshStore(storeKind);
   const mem = createMemory({ store, embed, fieldEnabled: fieldOn, edgesPath: file + ".edges.json" });
   try {
     for (const w of c.writes || []) await mem.save(w);
@@ -121,8 +125,8 @@ function isGoldenCase(c) {
   return !!(c.expect && (c.query || c.repeat));
 }
 
-async function run({ filter = null, storeKind = "jsonl" } = {}) {
-  const kind = storeKind === "sqlite" ? "sqlite" : "jsonl";
+async function run({ filter = null, storeKind = "sqlite" } = {}) {
+  const kind = storeKind === "jsonl" ? "jsonl" : "sqlite";
   const results = [];
   for (const fileName of fs.readdirSync(CORPORA).filter((f) => f.endsWith(".jsonl"))) {
     for (const c of readJsonl(path.join(CORPORA, fileName))) {
@@ -137,7 +141,7 @@ async function run({ filter = null, storeKind = "jsonl" } = {}) {
 
 const key = (r) => r.id + (r.kind === "constraint" ? (r.field ? " [field:on]" : " [field:off]") : "");
 
-function scorecard(results, { storeKind = "jsonl" } = {}) {
+function scorecard(results, { storeKind = "sqlite" } = {}) {
   const line = "-".repeat(72);
   console.log("\nRM-00 eval scorecard  " + new Date().toISOString() + "  store=" + storeKind);
   console.log(line);
@@ -266,7 +270,8 @@ function gate(current, { parity = false } = {}) {
       console.error("");
       return 1;
     }
-    console.log("SqliteStore scorecard matches golden case-for-case.\n");
+    console.log("SqliteStore scorecard matches golden case-for-case.");
+    console.log("No regressions vs golden.\n");
     return 0;
   }
 
@@ -296,7 +301,7 @@ async function main(argv) {
     // f32 near-tie rewrite the gate without anyone noticing the flip.
     if (storeKind !== "jsonl") {
       console.error("--accept writes golden.json; that lock is the JSONL scorecard.");
-      console.error("Re-run without --store " + storeKind + ".\n");
+      console.error("Re-run with --store jsonl.\n");
       return 2;
     }
     fs.writeFileSync(GOLDEN, JSON.stringify(current, null, 2));

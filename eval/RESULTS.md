@@ -1188,11 +1188,11 @@ The drop-in contract: same `memory-core.js`, SqliteStore instead of JsonlStore,
 **identical RM-00 scorecard**. This is the eval bar that unblocks the default
 switch (slice 4); 2b export has shipped, 2c is the panel button.
 
-Reproduce:
+Reproduce (slice 3; slice 4 flipped the default, same scorecard):
 
 ```
-node eval/run.js                 # JSONL default
-node eval/run.js --store sqlite  # same cases, SqliteStore
+node eval/run.js                 # sqlite default (slice 4)
+node eval/run.js --store jsonl   # JSONL path, still testable
 ```
 
 Both offline (read `embeddings.cache.json`). Sqlite gate is two-sided parity
@@ -1261,9 +1261,8 @@ Measured on this corpus:
 No tolerance in the parity gate. A silent epsilon would hide a real
 inequivalence; this run did not need one. Clean equivalence, not a fudge.
 
-JSONL stays the default. Slice 2b (export/zip) has landed; the panel button
-(2c) is all that remains before the slice-4 default switch so `--migrate`
-is not a lock-in.
+JSONL stayed the default through this slice. Slice 2b (export/zip) and 2c
+(panel button) landed next; slice 4 flipped the default (see below).
 
 ---
 
@@ -1292,6 +1291,25 @@ must not travel.
 | synthetic ZIP64 | **70,000** entries, Windows opens 70,000, 0.9 s |
 
 Golden unmoved (export is a separate CLI path). Panel button is 2c.
+
+---
+
+### RM-07 slice 4 — default switch (2026-09-05)
+
+SQLite is the default. `openStore()` auto-migrates an existing JSONL on
+first open via the 2a protocol; a failed migrate fail-opens to JSONL.
+`RESONANCE_STORE=jsonl` pins JSONL. Eval default follows the product
+default (two-sided parity). `--store jsonl` stays testable.
+
+Reproduce:
+
+```
+node eval/run.js                 # sqlite default; 27/31; No regressions vs golden.
+node eval/run.js --store jsonl   # JSONL path; 27/31; No regressions vs golden.
+```
+
+Golden unmoved (slice 3 already proved case-for-case identity). A golden
+move on the default flip would have been a STOP.
 
 ---
 

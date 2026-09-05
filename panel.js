@@ -43,7 +43,7 @@ const field = require("./field.js");
 const engine = require("./engine.js");
 const { EdgeStore } = require("./edges.js");
 const { normalize, isCurrent, isVector } = require("./record.js");
-const { resolveStoreBackend, sqlitePathFor } = require("./store.js");
+const { openStore } = require("./store.js");
 const extract = require("./extract.js");
 const exp = require("./export-memory.js");
 
@@ -79,37 +79,36 @@ function parseJsonl(text) {
     .map((l) => { try { return normalize(JSON.parse(l)); } catch { return null; } })
     .filter((r) => r && !r.deleted);
 }
-function loadRecords(file) {
-  // Selectable backend (RM-07 slice 1): default JSONL. When the user has
-  // flipped RESONANCE_STORE / config.store to sqlite, the panel must read
-  // the .db — parsing the sibling JSONL would show a stale (or empty) graph.
-  const backend = resolveStoreBackend(readConfig());
-  if (backend === "sqlite") {
-    const { SqliteStore } = require("./store.js");
-    const dbPath = sqlitePathFor(file);
-    let s;
-    try {
-      s = new SqliteStore(dbPath);
-      return s.active();
-    } catch { return []; }
-    finally { try { if (s) s.close(); } catch { /* */ } }
-  }
+function parseJsonlFile(file) {
   try { return parseJsonl(fs.readFileSync(file, "utf8")); } catch { return []; }
+}
+async function loadUserRecords(file) {
+  // Slice 4: same openStore walk as the MCP server (sqlite default,
+  // auto-migrate on first open, fail-open to JSONL). Demo seed is never
+  // this path — auto-migrating demo-seed.jsonl would mutate a tracked file.
+  let s;
+  try {
+    s = await openStore(file, { config: readConfig() });
+    return s.active();
+  } catch { return []; }
+  finally { try { if (s && typeof s.close === "function") s.close(); } catch { /* */ } }
 }
 // Demo: prefer a loose demo-seed.jsonl (dev) but fall back to the embedded copy so a
 // bare, single-file exe still draws the demo graph with nothing beside it.
 function loadDemo() {
-  const disk = loadRecords(DEMO_PATH);
+  const disk = parseJsonlFile(DEMO_PATH);
   return disk.length ? disk : parseJsonl(EMBEDDED.demoSeed);
 }
 // Currently-true memories. Superseded ones are still on disk (history is kept),
 // but "how many memories do I have" means the ones that are actually true now.
-function memCount() { return loadRecords(STORE_PATH).filter(isCurrent).length; }
+async function memCount() {
+  return (await loadUserRecords(STORE_PATH)).filter(isCurrent).length;
+}
 
 // Build the association graph for the view: nodes = memories, edges = kNN semantic links,
 // annotated with any learned Hebbian weight so the UI can highlight what use has reinforced.
-function graphData(demo) {
-  const recs = (demo ? loadDemo() : loadRecords(STORE_PATH)).filter((r) => isVector(r.embedding));
+async function graphData(demo) {
+  const recs = (demo ? loadDemo() : await loadUserRecords(STORE_PATH)).filter((r) => isVector(r.embedding));
   const byId = new Map(recs.map((r) => [String(r.id), r]));
   let edges = null;
   if (!demo && fieldOn()) { try { edges = new EdgeStore(STORE_PATH + ".edges.json"); } catch { } }
@@ -850,21 +849,23 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { "Content-Type": "application/json" }); res.end("{}"); return;
   }
   if (req.method === "GET" && url === "/api/state") {
-    extract.probeChatCapability({ modelsUrl: extract.modelsUrl(EMBED_URL) }).then((probe) => {
+    extract.probeChatCapability({ modelsUrl: extract.modelsUrl(EMBED_URL) }).then(async (probe) => {
+      const memories = await memCount();
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({
         field: fieldOn(),
         extract_llm: extractOn(),
         extract_capable: probe.capable,
         extract_model: probe.model,
-        memories: memCount(),
+        memories,
         store: STORE_PATH,
       }));
-    }).catch(() => {
+    }).catch(async () => {
+      const memories = await memCount();
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({
         field: fieldOn(), extract_llm: extractOn(), extract_capable: false,
-        extract_model: null, memories: memCount(), store: STORE_PATH,
+        extract_model: null, memories, store: STORE_PATH,
       }));
     });
     return;
@@ -876,8 +877,13 @@ const server = http.createServer((req, res) => {
   }
   if (req.method === "GET" && url.startsWith("/api/graph")) {
     const demo = /[?&]demo=1/.test(url);
-    let data; try { data = graphData(demo); } catch { data = { nodes: [], edges: [], source: demo ? "demo" : "your memories" }; }
-    res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(data)); return;
+    Promise.resolve().then(() => graphData(demo)).then((data) => {
+      res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(data));
+    }).catch(() => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ nodes: [], edges: [], source: demo ? "demo" : "your memories" }));
+    });
+    return;
   }
   if (req.method === "POST" && url === "/api/toggle") {
     body(req, (b) => {

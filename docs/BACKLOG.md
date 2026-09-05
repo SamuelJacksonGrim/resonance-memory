@@ -326,8 +326,8 @@ deletions, ever.
 - [x] Add `SqliteStore` — drop-in behind the JsonlStore surface (`store-sqlite.js`).
       WAL + `synchronous=FULL`, BLOB embeddings, in-process Float32 cache, JS cosine.
       **No sqlite-vec** (spike: slower at 10k–100k + SEA packaging). Selectable via
-      `RESONANCE_STORE=sqlite` / live-config `store`; **JSONL stays default** this
-      slice. Product S1 (2026-09-05): **loads 50k (196 MB) and 100k (392 MB)**;
+      `RESONANCE_STORE` / live-config `store`; **SQLite is the default** as of
+      slice 4 (`RESONANCE_STORE=jsonl` pins JSONL). Product S1 (2026-09-05): **loads 50k (196 MB) and 100k (392 MB)**;
       field-off cached recall p95 **49.6 ms @50k, 96.4 ms @100k** (JSONL cannot
       load either). Opaque ids preserved; `created` is a real column; access
       counts in-table (never `AccessLog` — BUG-007). FTS5 / `searchSparse` wait
@@ -343,7 +343,7 @@ deletions, ever.
       `.bak` is a recovery snapshot, not the sovereignty export. Kill-9
       before the rename leaves the JSONL live; re-run completes. 50k/768-d
       proof: lossless in 2.5 s against a 785 MB JSONL that `readFileSync`
-      cannot load. **Not auto-run on startup** (first-open is slice 4).
+      cannot load. Slice 4's `openStore()` calls the same function on first open.
 - [x] JSONL export / zip bundle (slice 2b) — the live sovereignty artifact.
       `--export` writes a ZIP64 zip (Desktop, `--name` / `--out`, never-overwrite)
       with `memories.jsonl` (embeddings as arrays; a competitor reads it without
@@ -355,13 +355,17 @@ deletions, ever.
 - [x] Panel export button (slice 2c) — confirm modal, heartbeat pause + yield,
       POST `/api/export` shells 2b, toast + copy-path + Windows reveal.
       Not an MCP tool. Empty store still exports. User store, never demo-seed.
-- [ ] Transparent one-way migration on first open (slice 4 default switch).
+- [x] Transparent one-way migration on first open (slice 4 default switch).
+      SQLite is the default. `openStore()`: jsonl pin → JsonlStore; `.db`
+      exists → SqliteStore (leftover JSONL → `.bak`); JSONL only → auto-migrate
+      via the 2a protocol (fail-open to JSONL if it throws before the atomic
+      rename); neither → fresh `.db`. Downgrade honesty: `.bak` is a recovery
+      snapshot, not a two-way door. `node eval/run.js` (sqlite default) and
+      `--store jsonl` both 27/31.
 - [x] JSONL stays the default until SQLite passes conformance + eval parity.
-      Conformance green. Golden parity (slice 3): `node eval/run.js --store sqlite`
-      matches JSONL **27/31 case-for-case** (no flips; cache vectors already
-      exact f32 so packing is lossless on this embedder). Default switch is
-      slice 4, after the 2c panel button (shipped) so migration does not open a lock-in
-      window from the UI either.
+      Conformance green. Golden parity (slice 3): SqliteStore matches JSONL
+      **27/31 case-for-case**. Slice 4 flipped the default after 2c (panel
+      export) so migration did not open a lock-in window.
 
 **Acceptance:** 100k memories, recall p95 <100ms, no full-file rewrite; both backends
 byte-identical on the eval scorecard.

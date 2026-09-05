@@ -45,7 +45,7 @@
 const fs = require("fs");
 const path = require("path");
 const { EdgeStore, hebbianDecayType } = require("./edges.js");
-const { openStore, resolveStoreBackend } = require("./store.js");
+const { openStore } = require("./store.js");
 const { createCore, defaultGetEdges, readDedupThresholds } = require("./memory-core.js");
 const extract = require("./extract.js");
 const { WarmField } = require("./warm.js");
@@ -202,24 +202,44 @@ async function embed(texts) {
 
 let _bootConfig = {};
 try { _bootConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8")); } catch { /* no config yet */ }
-const STORE_BACKEND = resolveStoreBackend(_bootConfig);
-// RM-07 slice 2a: JSONL→SQLite is `node entry.js --migrate`. Do NOT
-// auto-run on startup this slice (first-open hook is the default-switch
-// slice 4). JSONL stays the default backend; golden stays on JSONL.
-const store = openStore(STORE_PATH, { backend: STORE_BACKEND });
+// RM-07 slice 4: openStore is the default-switch path (sqlite default,
+// auto-migrate existing JSONL via the 2a protocol, fail-open to JSONL).
+// Async because migrate streams. requestChain starts as this boot so an
+// MCP initialize that arrives mid-migrate waits rather than racing.
+let store;
+let core;
 
-// The four verbs live in the shared engine (memory-core.js); server.js only wires
-// the environment into it - network embed, the live field toggle, the lazy EdgeStore.
-// eval/pipeline.js wires the SAME core to a cached embedder, so there is exactly one
-// implementation of save/recall and the RM-00 golden guards that they never diverge.
-const core = createCore({
-  store, embed, fieldEnabled, getEdgeStore, dedupThresholds,
-  warmEnabled, getWarm, getEdges: defaultGetEdges,
-  saveSeed: () => true,          // production: a just-saved fact is warm without a recall
-  warmTrace, warmEdgeCap,
-  extractEnabled, extractCapable, extract: extractFn,
-  extractTimeoutMs: () => extract.envNumber("RESONANCE_EXTRACT_TIMEOUT_MS", extract.EXTRACT_TIMEOUT_MS),
-});
+async function bootStore() {
+  store = await openStore(STORE_PATH, { config: _bootConfig });
+  // The four verbs live in the shared engine (memory-core.js); server.js only wires
+  // the environment into it - network embed, the live field toggle, the lazy EdgeStore.
+  // eval/pipeline.js wires the SAME core to a cached embedder, so there is exactly one
+  // implementation of save/recall and the RM-00 golden guards that they never diverge.
+  core = createCore({
+    store, embed, fieldEnabled, getEdgeStore, dedupThresholds,
+    warmEnabled, getWarm, getEdges: defaultGetEdges,
+    saveSeed: () => true,          // production: a just-saved fact is warm without a recall
+    warmTrace, warmEdgeCap,
+    extractEnabled, extractCapable, extract: extractFn,
+    extractTimeoutMs: () => extract.envNumber("RESONANCE_EXTRACT_TIMEOUT_MS", extract.EXTRACT_TIMEOUT_MS),
+  });
+  // Compact soft-deleted rows once at startup (keeps the file bounded; embeddings kept).
+  try { if (store.hasDeleted()) store.vacuum(); } catch { /* non-fatal */ }
+  // Soft-prune faded+weak edges (Phase 0.4 / I8). Explicit maintenance, same
+  // class as vacuum() — startup or on demand, NEVER recall/save. That is the
+  // golden guardrail: eval never starts the MCP server, so this sweep cannot
+  // move RM-00. Hard drop of pruned edges is EdgeStore.vacuum(), on demand.
+  try {
+    const E = getEdgeStore();
+    const byId = new Map(store.all().map((r) => [String(r.id), r]));
+    E.pruneSweep({
+      typeFn: (a, b) => hebbianDecayType(byId.get(String(a)), byId.get(String(b))),
+    });
+  } catch { /* non-fatal: maintenance must never break startup */ }
+  const kind = store.access ? "jsonl" : "sqlite";
+  process.stderr.write("resonance-memory MCP server (v2) running on stdio (store: " +
+    (store.file || STORE_PATH) + ", backend: " + kind + ")\n");
+}
 
 // -------------------------------------------------------------------- tools
 const TOOLS = [
@@ -306,22 +326,12 @@ async function handle(req) {
   return null;
 }
 
-// Compact soft-deleted rows once at startup (keeps the file bounded; embeddings kept).
-try { if (store.hasDeleted()) store.vacuum(); } catch { /* non-fatal */ }
-// Soft-prune faded+weak edges (Phase 0.4 / I8). Explicit maintenance, same
-// class as vacuum() — startup or on demand, NEVER recall/save. That is the
-// golden guardrail: eval never starts the MCP server, so this sweep cannot
-// move RM-00. Hard drop of pruned edges is EdgeStore.vacuum(), on demand.
-try {
-  const E = getEdgeStore();
-  const byId = new Map(store.all().map((r) => [String(r.id), r]));
-  E.pruneSweep({
-    typeFn: (a, b) => hebbianDecayType(byId.get(String(a)), byId.get(String(b))),
-  });
-} catch { /* non-fatal: maintenance must never break startup */ }
-
 let buf = "";
-let requestChain = Promise.resolve();
+let requestChain = bootStore().catch((e) => {
+  process.stderr.write("resonance-memory failed to open store: " +
+    String(e && e.message || e) + "\n");
+  process.exit(1);
+});
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
   buf += chunk;
@@ -353,5 +363,4 @@ process.stdin.on("data", (chunk) => {
   }
 });
 
-process.stderr.write("resonance-memory MCP server (v2) running on stdio (store: " +
-  (store.file || STORE_PATH) + ", backend: " + STORE_BACKEND + ")\n");
+

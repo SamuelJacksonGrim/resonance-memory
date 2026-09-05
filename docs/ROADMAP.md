@@ -113,7 +113,7 @@ Status only. Where each lives and how it works: `ARCHITECTURE.md`. What each sat
 | Embed-at-save, cosine recall, keyword fallback | — | Foundation |
 | Durable atomic writes; recall does no *unbounded* store write | — | `BUG-001`/`BUG-002` |
 | Soft delete + `vacuum()` compaction | — | Records: `deleted` then `vacuum()`. Edges (0.4): `pruned_at` then `EdgeStore.vacuum()`. |
-| Store abstraction behind the verbs | `RM-07` | `SqliteStore` selectable (`RESONANCE_STORE=sqlite`); JSONL still default. Golden parity (slice 3): `--store sqlite` = JSONL 27/31 case-for-case. S1 product: loads 50k/100k; field-off p95 49.6 / 96.4 ms. |
+| Store abstraction behind the verbs | `RM-07` | `SqliteStore` is the default (slice 4). Existing JSONL auto-migrates on first open (2a protocol; fail-open to JSONL). `RESONANCE_STORE=jsonl` pins JSONL. Golden 27/31 on sqlite default and `--store jsonl`. S1 product: loads 50k/100k; field-off p95 49.6 / 96.4 ms. |
 | kNN semantic graph, neighborhood expansion, constraint rescue | — | 🟡 ephemeral, rebuilt per recall |
 | Hebbian weights, bounded `maxBonus·tanh(w)`, provenance-discounted | — | 🟡 per-edge bounding solved; wall-clock decay ✅ (0.2) |
 | Decay + prune | — | ✅ lazy wall-clock half-life (0.2); soft prune + reactivation (0.4, I8 held for edges) |

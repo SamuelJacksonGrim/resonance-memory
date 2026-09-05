@@ -87,9 +87,9 @@ no other column touched.
 `all()` still parses the full store on every call, and mutations (`save`/`edit`/`delete`)
 still rewrite the whole file. That is inherent to a flat JSONL backend. **`RM-07` slice 1**
 ships `SqliteStore` (`store-sqlite.js`, `node:sqlite`, BLOB + JS cosine, no sqlite-vec —
-see [`proposed/0010`](proposed/0010-sqlite-backend.md)) as a selectable backend; JSONL
-stays default until the slice-4 switch (conformance + golden parity are green;
-`eval/run.js --store sqlite` matches JSONL 27/31 case-for-case). JSONL's load wall
+see [`proposed/0010`](proposed/0010-sqlite-backend.md)) as the default backend (slice 4);
+`RESONANCE_STORE=jsonl` pins JSONL. Conformance + golden parity are green
+(`eval/run.js` sqlite default and `--store jsonl` both 27/31 case-for-case). JSONL's load wall
 (50k cannot `readFileSync`) is the reason it exists.
 
 ---

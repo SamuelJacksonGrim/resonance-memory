@@ -11,7 +11,7 @@ an opaque `id`.
 |---|---|
 | `server.js` | The MCP server. Four verbs: `save_memory`, `recall_memory`, `edit_memory`, `delete_memory`. |
 | `record.js` | The shared record schema (incl. temporal fields and `embedding_version`), durable atomic writes, and the access sidecar. |
-| `store.js` | Store seam (`JsonlStore` default; `openStore()` selects `SqliteStore` in `store-sqlite.js`). |
+| `store.js` | Store seam. `openStore()` default-switch (slice 4): SQLite default; JSONL auto-migrates on first open; fail-open to JSONL. `RESONANCE_STORE=jsonl` pins JSONL. |
 | `test.js` | Dependency-free test suite: `npm test`. |
 | `package.json` | No dependencies — scripts only (`test`, `build`, `panel`, `mcp`, `seed`, `inspect`, `dedup-existing`, `migrate`, `export`). Sole source of the version string; `server.js` reads it so `serverInfo` can't drift. |
 | `field.js` | Associative layer (Phase 2a): kNN semantic graph over stored vectors; neighborhood expansion. |
@@ -22,7 +22,7 @@ an opaque `id`.
 | `install.js` | Detect + wire into LM Studio / Claude Desktop MCP config (preserves other servers, leaves `.bak`). |
 | `entry.js` | Bundle dispatch: `--mcp` → server, `--install`/`--uninstall` → installer, `--dedup-existing` → RM-02.c backfill (dry-run default), `--migrate` → RM-07 slice 2a JSONL→SQLite, `--export` / `--export-jsonl` → RM-07 slice 2b sovereignty export, else → panel. |
 | `dedup-existing.js` | RM-02.c CLI. Reports (or `--apply`s) cosine-banded restatements/merges on a store written before 02.b. Calls `dedupExisting()` in `memory-core.js` — same bands as `save()`, no second decision. |
-| `migrate-sqlite.js` | RM-07 slice 2a. Streaming JSONL→SQLite (10-step protocol). Opt-in; not auto-run on startup. `.bak` is a recovery snapshot, not the sovereignty export. |
+| `migrate-sqlite.js` | RM-07 slice 2a. Streaming JSONL→SQLite (10-step protocol). Opt-in CLI; `openStore()` calls the same function on first open (slice 4). `.bak` is a recovery snapshot, not the sovereignty export. |
 | `zip.js` | Zero-dep ZIP64 writer (slice 2b). `createDeflateRaw` + `zlib.crc32` + stream to `.zip.tmp` + rename. ZIP64 on every archive. |
 | `export-memory.js` | Slice 2b CLI + the engine the 2c panel button shells. `--export` writes the zip bundle; `--export-jsonl` is the raw primitive. Read-only. Not an MCP tool. |
 | `build-exe.js` | Embed runtime assets → esbuild → Node SEA blob → postject → flip PE subsystem to GUI → stage `dist/`. |
@@ -32,19 +32,24 @@ an opaque `id`.
 
 ## Store & embeddings
 
-- Flat JSONL at `MEMORY_FILE_PATH` (default `~/.lmstudio/resonance-memory.jsonl`), plus two
-  sidecars beside it: `<store>.edges.json` (unified edge table — Hebbian source of truth)
-  and `<store>.access.json` (access counts — kept out of the store so recall never
-  rewrites it, see `BUG-002`). A leftover `<store>.assoc.json` is legacy /
-  read-only-for-migration. Both live sidecars are regenerable: deleting them loses
-  learned associations and access counts, never a memory. SQLite is selectable
-  (`RESONANCE_STORE=sqlite`); JSONL stays default. `npm run eval -- --store sqlite`
-  is the RM-00 parity gate (slice 3: 27/31 case-for-case with JSONL). `--migrate` (`npm run migrate`)
-  streams an existing JSONL into the sibling `.db` (10-step protocol in
-  [`proposed/0010`](docs/proposed/0010-sqlite-backend.md)): temp `.db.migrating`,
-  line-at-a-time INSERT, count-verify, WAL checkpoint, atomic rename, **then**
-  JSONL → `.jsonl.bak`. The `.bak` is a recovery snapshot, not the sovereignty
-  export. Not auto-run on startup this slice.
+- SQLite is the default backend (RM-07 slice 4). `MEMORY_FILE_PATH` is still a
+  `*.jsonl` path (`~/.lmstudio/resonance-memory.jsonl`); `openStore()` walks it:
+  jsonl pin → JsonlStore; `.db` exists → SqliteStore (leftover JSONL → `.bak`,
+  never dual-read); JSONL only → auto-migrate via the 2a protocol then sqlite;
+  neither → fresh `.db`. A failed auto-migrate fail-opens to JSONL (store
+  intact, retry next open). `RESONANCE_STORE=jsonl` / live-config `store: "jsonl"`
+  pins JSONL. Two sidecars beside the stem: `<store>.edges.json` (Hebbian source
+  of truth) and, for a live JsonlStore only, `<store>.access.json` (`BUG-002`).
+  A leftover `<store>.assoc.json` is legacy / read-only-for-migration. Sidecars
+  are regenerable: deleting them loses learned associations and access counts,
+  never a memory. `npm run eval` is the sqlite parity gate (27/31);
+  `--store jsonl` keeps the JSONL path testable. `--migrate` (`npm run migrate`)
+  is the same 10-step protocol `openStore` calls (see
+  [`proposed/0010`](docs/proposed/0010-sqlite-backend.md)). The `.bak` is a
+  recovery snapshot, not the sovereignty export — do not delete it. After a
+  store is `.db`, an old exe opening the `.bak` sees a stale store; recovery
+  is `--export-jsonl` before downgrade, or keep the new exe. No dual-write
+  "switch back to JSONL" env.
 - Embeddings via an OpenAI-compatible `/v1/embeddings` endpoint (default LM Studio on
   `localhost:1234`, `text-embedding-nomic-embed-text-v1.5`, 768-dim). Keyword-overlap fallback
   if the endpoint is down. The embedder is **not bundled** — the user downloads it via LM Studio;
@@ -62,11 +67,13 @@ an opaque `id`.
   `detectNearDuplicate` decision as `save()`. Vectorless rows skip if the
   embedder is down. Second `--apply` is a no-op.
 - **`--migrate`** (RM-07 slice 2a) streams a JSONL store into the sibling
-  `.db`. Opt-in (`npm run migrate`); not auto-run on startup. 10-step
-  protocol: temp `.db.migrating`, line-at-a-time INSERT, preserve ids,
-  fold AccessLog once, count-verify, WAL checkpoint, atomic rename, **then**
-  JSONL → `.jsonl.bak`. The `.bak` is a recovery snapshot, not the
-  sovereignty export. Failure before the `.db` rename leaves the JSONL live.
+  `.db`. Opt-in CLI (`npm run migrate`); slice 4's `openStore()` calls the
+  same function on first open of an existing JSONL. 10-step protocol: temp
+  `.db.migrating`, line-at-a-time INSERT, preserve ids, fold AccessLog once,
+  count-verify, WAL checkpoint, atomic rename, **then** JSONL → `.jsonl.bak`.
+  The `.bak` is a recovery snapshot, not the sovereignty export. Failure
+  before the `.db` rename leaves the JSONL live; `openStore` then fail-opens
+  to JsonlStore.
 - **`--export`** (RM-07 slice 2b) writes the sovereignty zip bundle
   (default dest Desktop, `--name` / `--out`, never-overwrite). Contains
   `memories.jsonl` (a competitor reads it without our exe), per-memory
