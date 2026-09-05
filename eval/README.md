@@ -16,9 +16,10 @@ can't match that; their eval needs their cloud.
 npm run eval                 # run all corpora, print the scorecard, check regressions
 npm run eval -- --accept     # lock the current scorecard in as golden.json (the gate)
 npm run eval -- --filter constraint   # only cases whose id starts with "constraint"
-npm run measure              # reporting metrics (A/B): recall@k, duplicate_rate, extraction_precision, …
+npm run measure              # reporting metrics (A/B): recall@k, duplicate_rate, extraction_precision, mrr, …
 npm run measure -- --bands   # also print pairwise cosine within each dup group
 npm run measure -- --json    # machine-readable (the 02.b A/B compares this)
+npm run scale                # S1 needle-in-haystack at 1k/10k/50k/100k (live embed first run)
 ```
 
 Normal runs are **offline and deterministic** — they read `embeddings.cache.json` and
@@ -61,8 +62,9 @@ only Globex current. The `contra-wrongslot` and `contra-additive-pets` guards ch
 `explain` for a breakdown. Builtins today: `recall_at_k` (success@k, default k=5),
 `duplicate_rate` (extras beyond one-per-ground-truth-group / current stored count),
 `extraction_precision` (stored records that match a gold atomic fact and contain no labeled
-noise), and `extraction_recall` (gold facts with a matching stored record / gold facts —
-the anti-cheat for vacuous precision). They are A/B numbers, not pass/fail — `node eval/run.js` still gates only the
+noise), `extraction_recall` (gold facts with a matching stored record / gold facts —
+the anti-cheat for vacuous precision), and `mrr` (mean reciprocal rank of the first relevant
+id; misses contribute 0). They are A/B numbers, not pass/fail — `node eval/run.js` still gates only the
 contains/excludes scorecard, and measurement corpora (`kind: "duplicates"` / `"messy"`,
 `gate: false`) are skipped there so a new fixture cannot flip golden. Run them with
 `node eval/measure.js` (reuses `pipeline.js` → `memory-core.js`; field off so rank stays
@@ -89,13 +91,16 @@ eval/
                          an injectable save/recall, mirroring server.js
   metrics.js             golden scoring (contains / excludes / current_only / per-turn)
                          PLUS the reporting-metric registry (recall_at_k,
-                         duplicate_rate, extraction_precision, extraction_recall)
+                         duplicate_rate, extraction_precision, extraction_recall, mrr)
   run.js                 the golden runner + regression gate
   measure.js             reporting-metric runner (A/B; does not touch golden.json)
   golden.json            last accepted scorecard (written by --accept)
   save-time-cost.js      Phase 0.1 cost sweep (neighbor-scan + EdgeStore.save p50/p95/p99
                          at N=100/1k/10k/50k/100k). Pre-declares the p95 budget that
                          triggers RM-07 *before* measuring. Not part of npm run eval.
+  substrate/             S1 needle-in-haystack scale (generator + live-embed cache +
+                         quality/latency runner). Seed + generator committed; vectors
+                         cached in substrate/.cache/ (gitignored). See RESULTS.md "S1".
 ```
 
 ## Case format

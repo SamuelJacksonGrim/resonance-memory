@@ -449,7 +449,8 @@ it reads `eval/embeddings.cache.json` and never touches the network or an API ke
   and gates against `golden.json`. `--filter <id>` runs a subset; `--accept` locks the current
   scorecard as the new golden. Measurement corpora (`duplicates`) are skipped here.
 - `eval/measure.js` runs reporting metrics from the registry in `eval/metrics.js`
-  (`recall_at_k`, `duplicate_rate`; add more with `register(...)`). A/B numbers, not the
+  (`recall_at_k`, `duplicate_rate`, `extraction_precision`, `extraction_recall`, `mrr`;
+  add more with `register(...)`). A/B numbers, not the
   golden gate. See `eval/RESULTS.md` (RM-02.a baseline, RM-02.b A/B and RM-02.c
   backfill: dup_rate 0.3182 → 0.0000, recall@5 held at 1.0000).
 - Current scorecard: **27/31 checks**, field lifts 3 cases fail→pass and the golden gate holds.

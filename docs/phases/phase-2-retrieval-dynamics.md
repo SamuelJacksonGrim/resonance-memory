@@ -59,8 +59,8 @@ A failed gate keeps the flag off and writes the negative result down. A measured
 
 ### 2.5 Retrieval evaluation ✅ 🔀 — **this is `RM-00`; extend, don't rebuild**
 Already live: JSONL corpora, contains/excludes scorecard, superseded-surfacing, field ROC/TBR,
-golden-set gate, offline/deterministic. Reporting-metric registry (RM-02.a): `recall_at_k`,
-`duplicate_rate`. **Still open:** MRR, staleness rate, false-association rate, hub-formation.
+golden-set gate, offline/deterministic. Reporting-metric registry (RM-02.a + S1): `recall_at_k`,
+`duplicate_rate`, `mrr`. **Still open:** staleness rate, false-association rate, hub-formation.
 Anything depending on those (the fusion gate first) needs them built.
 - [x] recall@k · duplicate rate (reporting metrics, `eval/metrics.js` registry + `eval/measure.js`;
       not the golden gate).

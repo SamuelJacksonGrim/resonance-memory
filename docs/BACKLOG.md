@@ -26,8 +26,8 @@ Build `eval/` with seeded, offline, reproducible scoring.
       `temporal` still lands with a later RM-04 expansion.)*
 - [ ] ≥50 contradiction/update cases — **the axis LOCOMO and LongMemEval both under-test.**
       *(4 today; expand as RM-03 detection matures.)*
-- [~] Metrics: `recall@k`, `duplicate_rate`, `extraction_precision`, and
-      `extraction_recall` shipped as **reporting** metrics (registry in
+- [~] Metrics: `recall@k`, `duplicate_rate`, `extraction_precision`,
+      `extraction_recall`, and `mrr` shipped as **reporting** metrics (registry in
       `eval/metrics.js`; `node eval/measure.js`; not folded into `golden.json`),
       plus the field-experiment **ROC / TBR** split.
       *(`staleness_rate`, `false_supersession` still land with RM-03.)*
@@ -307,10 +307,15 @@ deletions, ever.
 > **Update:** the *data-loss* half of this is **fixed** — writes are atomic and recall no
 > longer rewrites the store (`BUG-001`/`BUG-002` in [`BUGS.md`](BUGS.md)). What remains is the
 > *performance* half: `all()` still parses the whole store per call, and mutations still
-> rewrite the file. Comfortable ceiling is **estimated** at ~10k memories — that number comes
-> from reading the code, not from a measurement, and replacing it with a real one is a cheap
-> first task. Phase 0.1's save-time neighbor scan is **not** the thing that forces this:
-> scan p95 at N=100k is 77.1 ms vs. a pre-declared 250 ms budget (`eval/save-time-cost.js`).
+> rewrite the file. Comfortable ceiling was **estimated** at ~10k memories. **S1
+> measured it (2026-09-05):** field-off `recall()` p95 **489 ms at N=10k** (bar was
+> 100 ms → RM-07 GO). A 50k store with embeddings in the JSONL is 834 MB and
+> **cannot load** (`readFileSync` exceeds Node's ~512 MB string cap). Field-on at
+> 10k is 91 s (`field.buildEdges` O(n²), W-03). Quality is a separate finding
+> (13/24 needles stay rank-1 at 100k; underspecified / same-frame queries fail
+> at 1k already). Curve: [`eval/RESULTS.md`](../eval/RESULTS.md) "S1". Phase 0.1's
+> save-time neighbor scan is **not** this: scan p95 at N=100k is 77.1 ms vs. a
+> pre-declared 250 ms budget (`eval/save-time-cost.js`).
 
 - [x] Extract the storage layer into its own module (`store.js`) so it can be constructed and
       tested without starting the MCP stdio loop.

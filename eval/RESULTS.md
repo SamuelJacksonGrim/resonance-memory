@@ -902,6 +902,220 @@ on messy-hard is a recorded miss, not a silent one.
 
 ---
 
+# S1 — recall accuracy + latency at scale (needle-in-haystack)
+
+**Date:** 2026-09-05 · **Product behaviour:** unchanged (`memory-core.js` /
+`save` / `recall` untouched). **Track:** substrate stress-tests. **Reproduce:**
+`node eval/substrate/scale.js` (live embed once against LM Studio
+`text-embedding-nomic-embed-text-v1.5` on `:1234`; later runs read
+`eval/substrate/.cache/`, gitignored). Generator seed `0x525301` in
+`eval/substrate/generate.js` — the seed + generator are committed, not 50k
+vectors. Golden: `node eval/run.js` → **No regressions vs golden.**
+
+This is the reproducibility case for the product: prove RM's own recall
+works — accurately, at scale, under any driver — without borrowing a big
+model's intelligence. It is also the test of RM as an *agent's* cross-session
+memory (surface the right knowledge from a large accumulated store amid
+distractors), not just a user-fact lookup.
+
+Characterization, not a pass/fail A/B. `mrr` lands in the reporting-metric
+registry (`eval/metrics.js`); `eval/measure.js` emits it. The scale runner
+is `eval/substrate/scale.js`.
+
+## Corpus
+
+24 planted needles (preferences, facts, conditions, relationships, events,
+possessions) each with a query whose relevant record is known **by
+construction**, plus 3 hard near-topic distractors per needle (same-frame
+different value / other-person / homonym / related-entity / historical).
+The `height-bookshelf` needle carries `I'm terrified of heights` as a
+distractor — the `adv-height-homonym` problem at scale.
+
+Haystack fill is first-person about the same entity, across many topics,
+and is **forbidden** from restating a needle's current first-person slot
+(`I work at …`, `I live in …`, `I'm allergic to …`). A store of 50k
+contradictory jobs is not a haystack.
+
+Needles occupy stable ids 1…P as N grows; extra volume is haystack only.
+Same 24 queries at every N.
+
+## Pre-declared concern thresholds
+
+Written in `eval/substrate/scale.js` **before any measurement ran**.
+Changing these after seeing the table is cheating (same discipline as
+Phase 0.1's 250 ms save-time budget).
+
+### Quality (field off, primary cosine)
+
+| signal | concern iff | why |
+|---|---|---|
+| `recall@5` | **< 0.90 at N=50k** | discrimination failing: a near-distractor or haystack noise beat the needle out of top-5 |
+| `MRR` | **< 0.80 at N=50k** | needles slipping even if they still make the top-5 window |
+| mean rank of the needle | **> 3 at N=50k** | the "right memory" is no longer the answer an agent would use |
+| hard-distractor beat rate | **> 0.20 at any N** | the homonym/same-frame trap outranks the needle (`adv-height-homonym` at scale). Per query: did *any* planted hard distractor outrank that query's needle? |
+
+`recall@1` is reported but not gated: top-1 is strict and a single near-distractor stealing #1 while the needle stays #2 is a slope (MRR), not a miss (`recall@5`).
+
+### Latency (one `recall(query, k=5)` through the real path)
+
+JsonlStore `all()` parse + cosine scan + format. Field-on also pays
+`field.buildEdges` O(n²) per call (W-03).
+
+| signal | concern iff | owner |
+|---|---|---|
+| field-off p95 | **> 100 ms at N=10k** | **RM-07**. BACKLOG estimated a ~10k JSONL ceiling; RM-07's own acceptance is "100k memories, recall p95 <100ms" (the SQLite *target*). Crossing 100 ms at 10k on JSONL confirms the estimate. |
+| field-off p95 | **> 250 ms at N=50k** | **RM-07**. Phase 0.1 "tool is hanging" bar. |
+| field-on p95 | **> 1000 ms at N=10k** | **W-03**. `field.buildEdges` is O(n²); ANN rides with RM-07. |
+
+Field-on at N≥50k is capped if the first trial exceeds 120 s (Phase 0.1
+scan numbers imply ~30 min/recall at 50k, hours at 100k). That cap is
+itself a W-03 finding, not a skip of the measurement.
+
+### How to read the story
+
+- Quality holds, latency blows up → **RM-07 / W-03** (index + incremental store).
+- Quality degrades → **substrate discrimination**, its own slice (bands, not ANN).
+- Both → both owners.
+
+## Measured
+
+**Date of run:** 2026-09-05. Embedder `text-embedding-nomic-embed-text-v1.5`
+(768-d) via LM Studio `:1234`. 100,029 texts live-embedded (24 needles + 72
+hard distractors + haystack + 24 queries), cached in `eval/substrate/.cache/`
+(gitignored). Ranking through `pipeline.js` → `memory-core.recall`. I9
+primary-identical field on/off at N=1k: **HOLD**.
+
+### Quality (field off)
+
+| N | Q | recall@1 | recall@5 | recall@10 | MRR | mean rank | median | beat rate | missed |
+|---|---|----------|----------|-----------|-----|-----------|--------|-----------|--------|
+| 1 000 | 24 | 0.5417 | 0.7917 | 0.9583 | 0.6772 | 3.46 | **1** | 0.3333 | 0 |
+| 10 000 | 24 | 0.5417 | 0.7500 | 0.7500 | 0.6508 | 26.50 | **1** | 0.3333 | 0 |
+| 50 000 | 24 | 0.5417 | **0.7500** | 0.7500 | **0.6472** | **115.08** | **1** | **0.3333** | 0 |
+| 100 000 | 24 | 0.5417 | 0.7500 | 0.7500 | 0.6471 | 159.75 | **1** | 0.3333 | 0 |
+
+Bold cells trip a pre-declared threshold (recall@5 / MRR / mean rank gated at
+N=50k; beat rate at any N).
+
+**The curve in one sentence:** specific questions stay at rank 1 through 100k;
+underspecified questions and same-frame distractors fail at 1k and stay failed.
+Haystack volume is not what breaks recall@1 — geometry is.
+
+Three populations, visible in the per-query ranks:
+
+**1. Stable rank-1 (13/24), including the height-homonym needle.** Rank 1 at
+every N through 100k: bookshelf height, Austin, diabetic, Rex, Friday standup,
+Maya's birthday, night-owl, lisinopril, spouse Jordan, Civic, Project Harbor,
+Colemak, O-neg. **`I'm terrified of heights` did not beat "how tall should I
+make the bookshelf"** — that trap is a field-on TBR (`adv-height-homonym`),
+not a cosine miss. Cosine keeps the bookshelf at #1 in a 100k store.
+
+**2. Stable near-miss (5/24), rank 2 at every N.** Scale-invariant. Four are
+planted hard distractors at #1:
+
+| query | needle rank | who beat it (kind) |
+|---|---|---|
+| what am I allergic to | 2 | "I'm allergic to cats" (same-frame different value) |
+| how much is my rent | 2 | "Maya's rent is $1850" (same number, other person) |
+| what phone do I have | 2 | "I used to have an iPhone" (historical same slot) |
+| when is my dentist appointment | 2 | "I need to schedule a dentist appointment" (related, not the booked one) |
+| where do I want to travel | 2 | *haystack* (not a planted distractor) — a first-person visit memory stole #1 |
+
+**3. Falling tail (6/24).** Underspecified queries. Rank grows roughly with N
+because many haystack memories share the frame:
+
+| query | 1k | 10k | 50k | 100k |
+|---|---|---|---|---|
+| where do I work | 10 | 104 | 656 | 1118 |
+| what should I eat for dinner | 7 | 138 | 560 | 671 |
+| how do I take my coffee | 20 | 157 | 670 | 959 |
+| can I eat the Thai noodles | 10 | 143 | 578 | 732 |
+| what music do I like | 9 | 57 | 230 | 284 |
+| can I eat the pizza | 4 | 14 | 45 | 47 |
+
+These six are why mean rank explodes (3.5 → 160) while **median stays 1**.
+MRR barely moves (0.677 → 0.647) because the 13 rank-1 hits dominate the
+mean of reciprocals; a rank-1000 miss contributes ~0 either way.
+
+**Distractor-beat 8/24 = 0.3333 at every N.** Same eight queries, same
+planted beaters. Haystack growth did not recruit new planted distractors
+into beating the needle. The 0.20 ceiling trips at 1k already — this is
+embedder geometry, not scale. Extra beaters vs the table above:
+"I like podcasts more than music on long drives" ranks #1 for "what music
+do I like" at every N (the word *music* is in the distractor); "The pizza
+place on 6th has a gluten-free crust" ranks #1 for "can I eat the pizza".
+
+#### Quality vs the pre-declared bar
+
+| signal | bar | measured at 50k | verdict |
+|---|---|---|---|
+| recall@5 | ≥ 0.90 | **0.7500** (18/24) | **TRIPPED** |
+| MRR | ≥ 0.80 | **0.6472** | **TRIPPED** |
+| mean rank | ≤ 3 | **115** | **TRIPPED** (median 1; tail-driven) |
+| distractor-beat | ≤ 0.20 | **0.3333** (already at 1k) | **TRIPPED** |
+
+Owner: **substrate discrimination**, not RM-07. Cosine does not separate
+same-frame different-value ("allergic to cats" vs penicillin) or a generic
+question from a large same-frame haystack ("where do I work" / "what should
+I eat"). It *does* separate a specific question from 100k distractors,
+including the height/tall homonym.
+
+### Latency
+
+| N | field | trials | p50 (ms) | p95 (ms) | p99 (ms) | jsonl | vs bar |
+|---|---|---|---|---|---|---|---|
+| 1 000 | off | 40 | 51.1 | 61.1 | 66.3 | 16.7 MB | — |
+| 1 000 | on | 8 | 687.6 | 724.2 | 724.2 | 16.7 MB | under 1000 ms |
+| 10 000 | off | 20 | 464.0 | **488.7** | 513.5 | 167 MB | **> 100 ms — RM-07** |
+| 10 000 | on | 3 | 90512 | **90795** | 90795 | 167 MB | **> 1000 ms — W-03** (91 s) |
+| 50 000 | off | — | — | — | — | 834 MB | **cannot load**: Node `readFileSync` max string 0x1fffffe8 (~512 MB) |
+| 100 000 | off | — | — | — | — | 1.67 GB | same wall |
+
+Field-on at N≥50k was not run (pre-declared cap; 10k already 91 s, O(n²)
+projects to ~30 min at 50k).
+
+**The JSONL wall is harder than the 10k estimate.** `JsonlStore.all()`
+reads the whole file as one UTF-8 string. A 50k-record store *with
+embeddings in the JSONL* is 834 MB, above Node's ~512 MB string cap, so
+`recall()` throws before cosine runs. Comfortable loaded ceiling with
+768-d vectors in JSONL is between 10k (167 MB, works, p95 489 ms) and
+~30k (would approach 512 MB). That is a **GO on RM-07**, not a schedule
+item: the current backend cannot serve a 50k store.
+
+In-memory ranking cost, isolated from the parse (quality pass, RamStore,
+k≤50): ~0.7 ms/query at 1k · ~9.5 ms at 10k · ~52 ms at 50k · ~113 ms at
+100k. The *scan* would meet a 100 ms bar at 50k if the store could load.
+Parse, not cosine, is the field-off latency. Field-on is `buildEdges`.
+
+#### Latency vs the pre-declared bar
+
+| signal | bar | measured | verdict |
+|---|---|---|---|
+| field-off p95 at 10k | ≤ 100 ms | **489 ms** | **TRIPPED — RM-07** |
+| field-off p95 at 50k | ≤ 250 ms | cannot load (834 MB > 512 MB string) | **TRIPPED harder than the bar** |
+| field-on p95 at 10k | ≤ 1000 ms | **90.8 s** | **TRIPPED — W-03** |
+
+### Story
+
+**BOTH.** They have different owners:
+
+- **Quality / discrimination.** 13/24 needles are rank-1 at 100k. The
+  failures are (a) same-frame distractors that already win at 1k and
+  (b) underspecified queries that drown as the frame fills. Not an ANN
+  problem. A later slice: query specificity, or a slot/type signal that
+  is *not* rank (I2) — maybe a filter, maybe the `Related:` path.
+- **Latency / RM-07 + W-03.** Field-off p95 489 ms at 10k and a hard
+  inability to load 50k JSONL-with-vectors. Field-on 91 s at 10k
+  (`buildEdges` O(n²)). SQLite + `sqlite-vec` (RM-07) and an ANN for
+  the field (W-03) are now measured-mandatory, not estimated.
+
+Reproduce: `node eval/substrate/scale.js` (offline after the cache fill).
+`--quick` is N=1k; `--no-field` skips the 91 s 10k field-on cell.
+
+---
+
+---
+
 ## What 0001 got wrong (and 01.b did not ship)
 
 Measured against the messy gold, not 0001's regexes as-is (01.a NOTES §3):

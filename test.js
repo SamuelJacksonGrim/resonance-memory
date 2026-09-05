@@ -1705,6 +1705,38 @@ test("recall_at_k skips unlabeled queries and defaults k=5", () => {
   assert.strictEqual(explainMetric("recall_at_k", mixed, null).n, 1);
 });
 
+test("mrr on a tiny known-ranked set", () => {
+  // q1 hit @2 → 1/2; q2 miss → 0; q3 hit @1 → 1. MRR = 1.5/3 = 0.5
+  assert.strictEqual(computeMetric("mrr", REGISTRY_QUERIES, null), 0.5);
+  const expl = explainMetric("mrr", REGISTRY_QUERIES, null);
+  assert.strictEqual(expl.n, 3);
+  assert.strictEqual(expl.n_found, 2);
+  assert.strictEqual(expl.n_missed, 1);
+  assert.deepStrictEqual(expl.misses, ["q2"]);
+  assert.strictEqual(expl.mean_rank, 1.5);          // (2+1)/2 over found
+  assert.strictEqual(expl.median_rank, 1.5);
+  assert.strictEqual(expl.byQuery[0].rank, 2);
+  assert.strictEqual(expl.byQuery[0].reciprocal, 0.5);
+  assert.strictEqual(expl.byQuery[1].rank, null);
+  assert.strictEqual(expl.byQuery[2].rank, 1);
+});
+
+test("mrr skips unlabeled queries; miss contributes 0 not NaN", () => {
+  const mixed = { queries: [
+    { id: "hit", ranked_ids: ["a", "b"], relevant_ids: ["b"] },
+    { id: "unlabeled", ranked_ids: ["x"], relevant_ids: [] },
+    { id: "miss", ranked_ids: ["y"], relevant_ids: ["z"] },
+  ] };
+  assert.strictEqual(computeMetric("mrr", mixed, null), 0.25); // (0.5 + 0) / 2
+  const expl = explainMetric("mrr", mixed, null);
+  assert.strictEqual(expl.n, 2);
+  assert.deepStrictEqual(expl.misses, ["miss"]);
+});
+
+test("mrr is registered alongside recall_at_k", () => {
+  assert.ok(listMetrics().some((m) => m.name === "mrr"));
+});
+
 test("duplicate_rate on a known-labeled set", () => {
   const records = [{ text: "a1" }, { text: "a2" }, { text: "b1" }, { text: "c1" }];
   const corpus = { groups: { A: ["a1", "a2"], B: ["b1"], C: ["c1"] } };
@@ -1957,6 +1989,95 @@ test("messy corpus: current-save simulation is the pre-extraction baseline", () 
   assert.strictEqual(expl.rate, 6 / 23);
   assert.strictEqual(expl.n_pii, s.writes.filter((w) => w.expect_refusal).length);
   assert.strictEqual(expl.pii_refusal_rate, 0);
+});
+
+// ------------------------------------------------- S1 substrate generator (eval/substrate)
+section("S1 substrate scale generator");
+
+const {
+  generateScaleCorpus, attachSyntheticEmbeddings, NEEDLES, DEFAULT_SEED, plantedCountFor,
+} = require("./eval/substrate/generate.js");
+
+test("generator produces well-formed labeled memories + needles with known relevance", () => {
+  const corpus = generateScaleCorpus({ n: 250, seed: DEFAULT_SEED });
+  assert.strictEqual(corpus.records.length, 250);
+  assert.strictEqual(corpus.queries.length, NEEDLES.length);
+  assert.ok(corpus.planted >= NEEDLES.length * 2, "each needle has at least one distractor");
+  const texts = new Set();
+  const needles = [];
+  const distractors = [];
+  for (const r of corpus.records) {
+    assert.ok(r.id >= 1 && r.text && r.role, "record needs id/text/role");
+    assert.ok(["needle", "distractor", "haystack"].includes(r.role), r.role);
+    assert.ok(!texts.has(r.text.toLowerCase()), "duplicate text: " + r.text);
+    texts.add(r.text.toLowerCase());
+    if (r.role === "needle") {
+      assert.ok(r.needleId);
+      needles.push(r);
+    }
+    if (r.role === "distractor") {
+      assert.ok(r.needleId && r.kind, "distractor needs needleId + kind");
+      distractors.push(r);
+    }
+  }
+  assert.strictEqual(needles.length, NEEDLES.length);
+  assert.ok(distractors.length >= NEEDLES.length, "hard near-topic distractors planted");
+  const byId = new Map(corpus.records.map((r) => [String(r.id), r]));
+  for (const q of corpus.queries) {
+    assert.ok(q.query && q.needleId && q.relevant_ids.length === 1, q.id);
+    const rec = byId.get(String(q.relevant_ids[0]));
+    assert.ok(rec && rec.role === "needle" && rec.needleId === q.needleId, q.id + " relevant is the needle");
+    assert.strictEqual(rec.text, q.relevant_text);
+  }
+  const height = corpus.records.find((r) => /terrified of heights/i.test(r.text));
+  assert.ok(height && height.role === "distractor" && height.needleId === "height-bookshelf",
+    "adv-height-homonym is a planted distractor for the bookshelf needle");
+});
+
+test("generator is deterministic for a seed; larger N is a planted+haystack prefix", () => {
+  const a = generateScaleCorpus({ n: 200, seed: 7 });
+  const b = generateScaleCorpus({ n: 200, seed: 7 });
+  assert.deepStrictEqual(a.records.map((r) => r.text), b.records.map((r) => r.text));
+  const c = generateScaleCorpus({ n: 200, seed: 8 });
+  assert.notDeepStrictEqual(a.records.map((r) => r.text), c.records.map((r) => r.text));
+  const small = generateScaleCorpus({ n: 200, seed: 1 });
+  const large = generateScaleCorpus({ n: 500, seed: 1 });
+  assert.deepStrictEqual(
+    small.records.map((r) => r.text),
+    large.records.slice(0, 200).map((r) => r.text)
+  );
+  const plantedSmall = small.records.filter((r) => r.role !== "haystack");
+  const plantedLarge = large.records.filter((r) => r.role !== "haystack");
+  assert.deepStrictEqual(plantedSmall.map((r) => r.id + ":" + r.text), plantedLarge.map((r) => r.id + ":" + r.text));
+});
+
+test("generator rejects n below planted count and unknown needle ids", () => {
+  const nNeed = plantedCountFor(NEEDLES);
+  assert.throws(() => generateScaleCorpus({ n: nNeed - 1 }), /planted/);
+  assert.throws(() => generateScaleCorpus({ n: 100, needleIds: ["no-such-needle"] }), /unknown needle/);
+});
+
+test("haystack does not restatement-collide with a needle's current first-person slot", () => {
+  const corpus = generateScaleCorpus({ n: 2000, seed: DEFAULT_SEED });
+  const hay = corpus.records.filter((r) => r.role === "haystack");
+  assert.ok(hay.length > 100);
+  for (const r of hay) {
+    assert.ok(!/\bi work at\b/i.test(r.text), "haystack stole the job slot: " + r.text);
+    assert.ok(!/\bi live in\b/i.test(r.text), "haystack stole the city slot: " + r.text);
+    assert.ok(!/\bi(?:'m| am) allergic to\b/i.test(r.text), "haystack stole the allergy slot: " + r.text);
+    assert.ok(!/terrified of heights/i.test(r.text));
+    assert.ok(!/penicillin/i.test(r.text));
+    assert.ok(!/globex/i.test(r.text));
+  }
+});
+
+test("subset of 3 needles in n=100 is well-formed (S1 e2e fixture)", () => {
+  const ids = ["allergy-penicillin", "height-bookshelf", "job-globex"];
+  const corpus = generateScaleCorpus({ n: 100, seed: 1, needleIds: ids });
+  assert.strictEqual(corpus.records.length, 100);
+  assert.strictEqual(corpus.queries.length, 3);
+  assert.strictEqual(corpus.records.filter((r) => r.role === "needle").length, 3);
+  assert.ok(corpus.records.filter((r) => r.role === "distractor").length >= 9);
 });
 
 // ------------------------------------------------- RM-01.b write-side extraction
@@ -2439,6 +2560,8 @@ async function asyncTests() {
     const r = await runScenario(scenarios[0], { k: 5 });
     assert.ok(r.metrics.duplicate_rate >= 0 && r.metrics.duplicate_rate <= 1);
     assert.ok(r.metrics.recall_at_k >= 0 && r.metrics.recall_at_k <= 1);
+    assert.ok(typeof r.metrics.mrr === "number" && r.metrics.mrr >= 0 && r.metrics.mrr <= 1,
+      "mrr ships as a reporting metric (S1 registry extension)");
     assert.strictEqual(r.queries.length, scenarios[0].queries.length);
     assert.ok(r.queries.every((q) => Array.isArray(q.ranked_ids)), "each query has ranked_ids from recall output");
     assert.ok(r.exact_restatements_caught >= 1,
@@ -2481,6 +2604,54 @@ async function asyncTests() {
     assert.strictEqual(r.metrics.recall_at_k, 1, "recall@5 must not drop");
     assert.ok(r.queries.every((q) => Array.isArray(q.ranked_ids) && q.ranked_ids.length >= 1),
       "each messy query resolved to a stored origin id");
+  });
+
+  section("S1 substrate scale (generator → real recall path)");
+
+  await atest("plant 3 needles in 100 distractors: real recall finds them (synthetic geometry)", async () => {
+    // Plumbing, not the live embedder: needle ≡ query axis, hard
+    // distractors mix 0.65/0.35, haystack is random. The live 1k→50k
+    // curve is eval/substrate/scale.js.
+    const { createMemory } = require("./eval/pipeline.js");
+    const ids = ["allergy-penicillin", "height-bookshelf", "job-globex"];
+    const corpus = generateScaleCorpus({ n: 100, seed: 1, needleIds: ids });
+    attachSyntheticEmbeddings(corpus, 16, 1);
+    const file = tmp("s1-e2e.jsonl");
+    const store = new JsonlStore(file);
+    for (const rec of corpus.records) {
+      store.add(normalize({
+        id: rec.id, text: rec.text, embedding: rec.embedding,
+        created: "2026-01-01T00:00:00Z",
+      }));
+    }
+    const qv = new Map(corpus.queries.map((q) => [q.query, q.embedding]));
+    const mem = createMemory({
+      store,
+      embed: async (texts) => texts.map((t) => {
+        const v = qv.get(t);
+        if (!v) throw new Error("unexpected embed: " + t);
+        return v;
+      }),
+      fieldEnabled: false,
+    });
+    const ranked = [];
+    for (const q of corpus.queries) {
+      const out = await mem.recall(q.query, 10);
+      const hits = parsePrimaryHits(out);
+      assert.ok(hits.length >= 1, q.id + " empty recall");
+      const top5 = hits.slice(0, 5).map((h) => String(h.id));
+      assert.ok(top5.includes(String(q.relevant_ids[0])),
+        q.id + " needle not in top-5: " + hits.map((h) => h.id + " " + h.text).join(" | "));
+      assert.strictEqual(String(hits[0].id), String(q.relevant_ids[0]),
+        q.id + " synthetic geometry should put the needle at rank 1, got " + hits[0].text);
+      ranked.push({
+        id: q.id,
+        ranked_ids: hits.map((h) => String(h.id)),
+        relevant_ids: q.relevant_ids,
+      });
+    }
+    assert.strictEqual(computeMetric("recall_at_k", { queries: ranked }, null, { k: 1 }), 1);
+    assert.strictEqual(computeMetric("mrr", { queries: ranked }, null), 1);
   });
 
   section("RM-01.b save() wiring (Tier 0/1 on the live path)");

@@ -12,6 +12,7 @@
  * eval/measure.js — reporting metrics (A/B), distinct from the golden gate.
  *
  *   node eval/measure.js                     all measurement corpora, all registered metrics
+ *                                           (recall_at_k, duplicate_rate, mrr, extraction_*)
  *   node eval/measure.js --corpus duplicates  one file / scenario-id prefix
  *   node eval/measure.js --k 5               recall_at_k's k (default 5)
  *   node eval/measure.js --json              machine-readable (02.b A/B)
@@ -294,6 +295,7 @@ async function runScenario(scenario, opts) {
     });
   }
   const recallExplain = explainMetric("recall_at_k", { queries }, scenario, { k });
+  const mrrExplain = explainMetric("mrr", { queries }, scenario);
 
   const exactCaught = saveLog.filter((s) => /already remembered/i.test(s.msg || "")).length;
 
@@ -305,6 +307,7 @@ async function runScenario(scenario, opts) {
   const metrics = {
     duplicate_rate: dupExplain.rate,
     recall_at_k: recallExplain.rate,
+    mrr: mrrExplain.mrr,
   };
   if (extractExplain.n_labeled) {
     metrics.extraction_precision = extractExplain.rate;
@@ -322,6 +325,7 @@ async function runScenario(scenario, opts) {
     metrics,
     duplicate_rate: dupExplain,
     recall_at_k: recallExplain,
+    mrr: mrrExplain,
     extraction_precision: extractExplain.n_labeled ? extractExplain : null,
     extraction_recall: extractExplain.n_labeled ? extractRecallExplain : null,
     queries,
@@ -350,6 +354,11 @@ function printHuman(reports, { k }) {
     if (r.recall_at_k.misses && r.recall_at_k.misses.length) {
       console.log("    misses: " + r.recall_at_k.misses.join(", "));
     }
+    const meanR = r.mrr && r.mrr.mean_rank != null ? r.mrr.mean_rank.toFixed(2) : "n/a";
+    const medR = r.mrr && r.mrr.median_rank != null ? String(r.mrr.median_rank) : "n/a";
+    console.log("  mrr              " + r.metrics.mrr.toFixed(4) +
+      "   (mean rank " + meanR + ", median " + medR +
+      ", missed=" + (r.mrr ? r.mrr.n_missed : "?") + ")");
     if (r.extraction_precision) {
       const e = r.extraction_precision;
       console.log("  extraction_precision " + e.rate.toFixed(4) +
@@ -440,6 +449,7 @@ async function main(argv) {
         metrics: r.metrics,
         duplicate_rate: r.duplicate_rate,
         recall_at_k: r.recall_at_k,
+        mrr: r.mrr,
         extraction_precision: r.extraction_precision,
         extraction_recall: r.extraction_recall,
         bands: r.bands,

@@ -263,7 +263,7 @@ capability matrix distorts the roadmap it was written to justify.
 |---|---|---|
 | ~~`W-01`~~ | ~~`nextId()` collisions within a millisecond~~ | ✅ **dismissed** — `nextId()` returns `max + 1` when the clock hasn't advanced, so it is correct by construction and monotonic even if the clock jumps backwards. Verified by two tests (200 rapid saves, all distinct) |
 | `W-02` | Panel binds `127.0.0.1` with no CSRF token — any local process, or a malicious web page via DNS rebinding, could drive the API | Assess before `RM-12` exposes it as a documented API. Cheap mitigations: `Origin` check + a per-process token in the page |
-| `W-03` | `field.buildEdges()` is O(n²) per recall when the field is on | Profile at 10k memories; likely needs an ANN index alongside `RM-07` |
+| `W-03` | `field.buildEdges()` is O(n²) per recall when the field is on | ✅ **confirmed (S1)** — field-on `recall()` p95 **90.8 s at N=10k**, 724 ms at N=1k. ANN rides with `RM-07`. Curve in [`eval/RESULTS.md`](../eval/RESULTS.md) "S1". |
 | `W-04` | A concurrent panel + MCP server write could interleave (last-writer-wins) | Real risk once the panel gains write features; needs a lock or single-writer discipline. Phase 0.3's MCP request-ID dedup is **orthogonal**: it makes one JSON-RPC retry one mutation *inside a single process*, it does not serialize two writers. Last-writer-wins on the sidecar remains. |
 
 ---

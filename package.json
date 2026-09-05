@@ -18,7 +18,8 @@
     "inspect": "node inspect_sidecar.js",
     "dedup-existing": "node entry.js --dedup-existing",
     "eval": "node eval/run.js",
-    "measure": "node eval/measure.js"
+    "measure": "node eval/measure.js",
+    "scale": "node eval/substrate/scale.js"
   },
   "repository": {
     "type": "git",

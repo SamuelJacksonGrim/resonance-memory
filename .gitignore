@@ -23,6 +23,10 @@ config.json
 # ...and the RM-00 eval fixtures are tracked (committed for offline reproducibility).
 !eval/corpora/*.jsonl
 
+# S1 scale vectors: seed + generator are committed; 50k×768 floats are not.
+eval/substrate/.cache/
+eval/substrate/last-run.json
+
 # Local backups
 *.bak
 *.bak-*
