@@ -107,17 +107,20 @@ re-embed — which is why `BUG-008` was fixed in PRE-0 before this schema harden
 ## Build steps (each sub-phase is independently buildable + testable)
 
 ### 0.0 — Edge store unification 🔀 *(start here)*
-- [x] One edge table, two signals, typed provenance. (`edges.js`, standalone; not on the recall
-      path yet — Slice C wires it.)
+- [x] One edge table, two signals, typed provenance. (`edges.js`, on the live recall path as of
+      Slice C — `Ledger` is retired from recall/reinforce; Hebbian bonus/tick/save read
+      `hebbian.weight` on the EdgeStore. Persists to `<store>.edges.json`, not `.assoc.json`.)
 - [x] `embedding_version` in `record.js normalize()` (legacy rows default `1`).
 - [x] Migrate every `.assoc.json` edge in: weight → `hebbian.weight`; stamp `hebbian.last_updated`
       + `created_at` at migration time (both **lower bounds** — note it); origin `co-activation`,
       `migrated_from: "assoc.json"`; semantic empty, computed on first use.
 - [x] **Migration is one-way:** an old build reading a new sidecar fails cleanly, never silently
       drops edges. Signalled by top-level `kind: "resonance-edges"`; `readLegacyAssoc()` throws
-      `IncompatibleEdgeFormatError` rather than returning a subset.
-- [ ] Preserve `field.js` constraint-rescue + mutual-kNN through the move (measured — [[RESULTS]]
-      field experiment #2).
+      `IncompatibleEdgeFormatError` rather than returning a subset. Live path: if
+      `<store>.edges.json` is missing, a leftover `<store>.assoc.json` is ingested and the
+      old file is left untouched (downgrade-safe).
+- [x] Preserve `field.js` constraint-rescue + mutual-kNN through the move (measured — [[RESULTS]]
+      field experiment #2). Semantic kNN is still built at recall (save-time binding is 0.1).
 
 ### 0.1 — Edge timestamps & save-time edges
 - [ ] On `save()`, bind top-K semantic neighbors (start **K ≈ 5**) above a min cosine (**test
@@ -239,8 +242,11 @@ batched through the `AccessLog` pattern. Telemetry does not get to violate an in
 - [ ] Reinforcement after long inactivity materializes decay first.
 - [ ] Soft-pruned edges survive persistence; duplicate reinforcement / request-ID dedup.
 - [ ] Interrupted/failed persistence, atomic recovery.
-- [ ] **Field fails open (I3):** corrupt sidecar → recall still returns cosine.
+- [x] **Field fails open (I3):** corrupt sidecar → recall still returns cosine.
 - [ ] Negatives: recall writes nothing to the edge store; edit writes nothing to the edge store.
+      *(edit: tested, no edge write. recall-the-verb still co-issues `reinforceRecall` + `tick`
+      + sidecar save, as Ledger did — that write is the SIDECAR, not the JSONL store (I5).
+      A reinforce-free read path is 0.2 / I6.)*
 
 ---
 

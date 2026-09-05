@@ -55,7 +55,7 @@ eval/
   corpora/*.jsonl        committed fixtures (tracked despite the repo's *.jsonl ignore)
   embeddings.cache.json  committed real embeddings -> offline + deterministic
   embed-cache.js         the cached embedder (refresh ritual above)
-  pipeline.js            the real substrate (store/field/ledger/record) composed into
+  pipeline.js            the real substrate (store/field/edges/record) composed into
                          an injectable save/recall, mirroring server.js
   metrics.js             scoring (contains / excludes / current_only / per-turn)
   run.js                 the runner + regression gate

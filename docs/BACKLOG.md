@@ -147,13 +147,12 @@ Design: [`proposed/0002`](proposed/0002-temporal-supersession.md).
 
 - [ ] **PRE-0:** `BUG-008` fixed (✅, see [`BUGS.md`](BUGS.md)); **edge state-transition table
       ratified** — including the `superseded → inherited?` cell (deferred-decision, Phase 7).
-- [ ] **0.0** One edge store, two signals (semantic derived, learned source-of-truth), typed
+- [x] **0.0** One edge store, two signals (semantic derived, learned source-of-truth), typed
       provenance. `embedding_version` added to `record.js normalize()` (defaults legacy rows to
       `1`). **Migrate every `.assoc.json` edge in, one-way**: an old build reading a new sidecar
       fails cleanly, never silently drops edges. `field.js` constraint-rescue + mutual-kNN
-      preserved through the move.
-      *(store module `edges.js` is in; `embedding_version` + lossless one-way migration tested
-      standalone. Constraint-rescue through the move is the remaining 0.0 item — recall wiring.)*
+      preserved through the move. Live path is `EdgeStore` (`<store>.edges.json`); `Ledger` is
+      retired from recall/reinforce.
 - [ ] **0.1** Save-time semantic edges (K≈5, cosine ~0.25, `hebbian.weight=0`) + edge timestamps.
       **Cost sweep:** record `save_latency` p50/p95/p99 at N=100/1k/10k/50k/100k; **pre-declare**
       the p95 budget that triggers `RM-07` *before* running it.

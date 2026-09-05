@@ -29,10 +29,13 @@
  *   store         a JsonlStore (or any object with the same method surface)
  *   embed         async (texts[]) -> vectors[]   (network in prod, cached in eval)
  *   fieldEnabled  () -> boolean   (live config read in prod, a fixed flag in eval)
- *   getLedger     () -> Ledger    (lazy: the Hebbian sidecar is only built on first
- *                                  field use, so the field toggle needs no restart)
+ *   getEdgeStore  () -> EdgeStore (lazy: the unified sidecar is only built on first
+ *                                  field use, so the field toggle needs no restart.
+ *                                  Duck-typed: bonus/reinforceRecall/tick/save.)
+ *   getLedger     () -> same surface as getEdgeStore; kept as a fallback alias so
+ *                       a leftover injector still works. Live path uses getEdgeStore.
  *   warmEnabled   () -> boolean   (RESONANCE_WARM_FIELD; default off)
- *   getWarm       () -> WarmField (lazy, like getLedger; in-proc Map, never persisted)
+ *   getWarm       () -> WarmField (lazy, like getEdgeStore; in-proc Map, never persisted)
  *   getEdges      (mems, L) -> Map  ALWAYS a Map, never null. Cap is at spread().
  *   saveSeed      () -> boolean   (production may pass true; eval MUST pass false)
  *   warmTrace     () -> boolean   (RESONANCE_WARM_TRACE; default off, zero-cost)
@@ -118,6 +121,7 @@ function keywordScore(query, text) {
 function createCore({
   store, embed,
   fieldEnabled = () => false,
+  getEdgeStore,
   getLedger,
   warmEnabled = () => false,
   saveSeed = () => false,
@@ -136,8 +140,19 @@ function createCore({
     return _warm;
   }
 
+  // Hebbian sidecar. EdgeStore is the live implementation (Slice C); getLedger
+  // remains a duck-typed fallback. Returning null skips the additive field
+  // (same as the old getLedger() throw → catch), so a test that never injects
+  // a sidecar still gets plain cosine. A present-but-empty/corrupt store still
+  // runs semantic kNN with bonus 0 (I3 fail-open).
+  function hebbianStore() {
+    if (typeof getEdgeStore === "function") return getEdgeStore();
+    if (typeof getLedger === "function") return getLedger();
+    return null;
+  }
+
   function edgesFor(mems) {
-    const L = getLedger ? getLedger() : null;
+    const L = hebbianStore();
     return asEdgeMap((getEdges || defaultGetEdges)(mems, L));
   }
 
@@ -249,31 +264,34 @@ function createCore({
     ).join("\n");
     if (fieldEnabled() && mems.length > ranked.length) {
       try {
-        const L = getLedger();
-        const bonus = (a, b) => L.bonus(a, b);
-        const edges = field.buildEdges(mems, { k: 2, minSim: 0.55, bonus, mutual: FIELD_MUTUAL });
-        // General neighborhood: forward one hop from the RETURNED seeds (unchanged).
-        const rel = field.neighborhood(edges, ranked.map((m) => m.id), { hops: 1, max: 4 });
-        // Constraint rescue: apex rules reachable from the WIDER seed pool. Restricted
-        // to typed constraints so the expanded radius can't re-drag non-constraint hubs.
-        const cres = field.reachableConstraints(mems, seedPool, { gate: CONSTRAINT_GATE, k: 2, max: 4, exclude: ranked.map((m) => m.id) });
-        // Merge (constraints first), drop anything already returned or duplicated.
-        const seen = new Set(ranked.map((m) => String(m.id)));
-        const merged = [];
-        for (const e of [...cres, ...rel]) {
-          const key = String(e.id);
-          if (seen.has(key)) continue;
-          seen.add(key);
-          merged.push(e);
+        const L = hebbianStore();
+        if (L) {
+          const bonus = (a, b) => L.bonus(a, b);
+          const edges = field.buildEdges(mems, { k: 2, minSim: 0.55, bonus, mutual: FIELD_MUTUAL });
+          // General neighborhood: forward one hop from the RETURNED seeds (unchanged).
+          const rel = field.neighborhood(edges, ranked.map((m) => m.id), { hops: 1, max: 4 });
+          // Constraint rescue: apex rules reachable from the WIDER seed pool. Restricted
+          // to typed constraints so the expanded radius can't re-drag non-constraint hubs.
+          const cres = field.reachableConstraints(mems, seedPool, { gate: CONSTRAINT_GATE, k: 2, max: 4, exclude: ranked.map((m) => m.id) });
+          // Merge (constraints first), drop anything already returned or duplicated.
+          const seen = new Set(ranked.map((m) => String(m.id)));
+          const merged = [];
+          for (const e of [...cres, ...rel]) {
+            const key = String(e.id);
+            if (seen.has(key)) continue;
+            seen.add(key);
+            merged.push(e);
+          }
+          if (merged.length) {
+            const byId = new Map(mems.map((m) => [String(m.id), m]));
+            out += "\n\nRelated:\n" + merged.map((e) => "- [id " + e.id + "] " + byId.get(String(e.id)).text).join("\n");
+          }
+          // Hebbian reinforcement on the returned payload, provenance-discounted.
+          // Writes the SIDECAR (.edges.json), never the JSONL store (I5 / BUG-002).
+          L.reinforceRecall(ranked.map((m) => m.id), merged.map((e) => e.id));
+          L.tick();
+          L.save();
         }
-        if (merged.length) {
-          const byId = new Map(mems.map((m) => [String(m.id), m]));
-          out += "\n\nRelated:\n" + merged.map((e) => "- [id " + e.id + "] " + byId.get(String(e.id)).text).join("\n");
-        }
-        // Hebbian reinforcement on the returned payload, provenance-discounted.
-        L.reinforceRecall(ranked.map((m) => m.id), merged.map((e) => e.id));
-        L.tick();
-        L.save();
       } catch { /* the field is additive; never let it break recall */ }
     }
 

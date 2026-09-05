@@ -44,7 +44,7 @@ function freshStore() {
 
 async function runCase(c, fieldOn) {
   const { store, file, dir } = freshStore();
-  const mem = createMemory({ store, embed, fieldEnabled: fieldOn, ledgerPath: file + ".assoc.json" });
+  const mem = createMemory({ store, embed, fieldEnabled: fieldOn, edgesPath: file + ".edges.json" });
   for (const w of c.writes || []) await mem.save(w);
   const turns = c.repeat || [{ query: c.query }];
   const outputs = [];

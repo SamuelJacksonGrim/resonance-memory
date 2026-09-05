@@ -14,20 +14,26 @@
  * duplication was the exact drift the RM-00 harness exists to catch, so the shared
  * behavior now lives in ../memory-core.js and BOTH server.js and this build on it.
  * What remains here is only the impedance match the harness needs: a boolean field
- * flag (not a live config read) and an injected ledger path (not a fixed data dir).
+ * flag (not a live config read) and an injected edge-sidecar path (not a fixed data dir).
  *
  * Because save/recall are now literally the same code the server runs, the RM-00
  * golden is a regression guard on the server itself, not on a copy of it.
  */
 
-const { Ledger } = require("../ledger.js");
+const { EdgeStore } = require("../edges.js");
 const { createCore, cosine } = require("../memory-core.js");
 
-function createMemory({ store, embed, fieldEnabled = false, ledgerPath }) {
-  // Lazy ledger, exactly as server.js does it, so a field-off run never touches disk.
-  let _ledger = null;
-  const getLedger = () => { if (!_ledger) _ledger = new Ledger(ledgerPath); return _ledger; };
-  const core = createCore({ store, embed, fieldEnabled: () => fieldEnabled, getLedger });
+function createMemory({ store, embed, fieldEnabled = false, edgesPath, ledgerPath }) {
+  // Lazy EdgeStore, exactly as server.js does it, so a field-off run never touches disk.
+  // ledgerPath is a leftover alias: `.assoc.json` is rewritten to `.edges.json` so
+  // diagnose/probe callers that haven't moved still land on the new filename, and
+  // EdgeStore migrates a sibling `.assoc.json` one-way if one is sitting there.
+  const file = edgesPath || (ledgerPath
+    ? String(ledgerPath).replace(/\.assoc\.json$/, ".edges.json")
+    : undefined);
+  let _edges = null;
+  const getEdgeStore = () => { if (!_edges) _edges = new EdgeStore(file); return _edges; };
+  const core = createCore({ store, embed, fieldEnabled: () => fieldEnabled, getEdgeStore });
   return { save: core.save, recall: core.recall };
 }
 

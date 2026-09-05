@@ -29,10 +29,11 @@
  *      graph slowly validating its own noise (bad)?
  *   4. (perf) Ledger size, so you can see whether the on-recall save could stutter.
  *
- * Reads the REAL sidecar shape: { recalls, edges: { "a:b": weight } }, and joins
- * ids back to the JSONL store. Standard library + local field.js only, no deps.
+ * Reads the live sidecar (`kind: "resonance-edges"`, hebbian.weight on each
+ * record) and the leftover `{ recalls, edges: { "a:b": weight } }` shape, and
+ * joins ids back to the JSONL store. Standard library + local field.js only, no deps.
  *
- *   node inspect_sidecar.js [path_to_.assoc.json]
+ *   node inspect_sidecar.js [path_to_.edges.json | path_to_.assoc.json]
  */
 
 const fs = require("fs");
@@ -49,7 +50,11 @@ function cosine(a, b) {
 
 const STORE_PATH = process.env.MEMORY_FILE_PATH ||
   path.join(process.env.USERPROFILE || process.env.HOME || ".", ".lmstudio", "resonance-memory.jsonl");
-const SIDECAR_PATH = process.argv[2] || STORE_PATH + ".assoc.json";
+const EDGES_PATH = STORE_PATH + ".edges.json";
+const ASSOC_PATH = STORE_PATH + ".assoc.json";
+// Prefer the live sidecar; fall back to a leftover .assoc.json so an upgraded
+// install that hasn't recalled-with-field-on yet is still inspectable.
+const SIDECAR_PATH = process.argv[2] || (fs.existsSync(EDGES_PATH) ? EDGES_PATH : ASSOC_PATH);
 
 function loadStore() {
   const byId = new Map();
@@ -83,7 +88,7 @@ function main() {
   console.log(`sidecar: ${SIDECAR_PATH}\n`);
 
   if (!fs.existsSync(SIDECAR_PATH)) {
-    console.log("No sidecar yet. The ledger is created on the first recall with the");
+    console.log("No sidecar yet. The edge store is created on the first recall with the");
     console.log("field ON (RESONANCE_MEMORY_FIELD=1 or config.json field:true). Nothing to");
     console.log("inspect until the field has actually been used. This is expected early on.");
     return;
@@ -98,7 +103,11 @@ function main() {
   const store = loadStore();
 
   const edges = Object.entries(edgesObj).map(([key, w]) => {
-    const weight = typeof w === "number" ? w : (w && w.weight) || 0;
+    // Legacy sidecar: number. Native EdgeStore record: hebbian.weight.
+    const weight = typeof w === "number" ? w
+      : (w && w.hebbian && typeof w.hebbian.weight === "number") ? w.hebbian.weight
+      : (w && typeof w.weight === "number") ? w.weight
+      : 0;
     const [a, b] = key.split(":");
     return { key, a, b, weight, baseCos: baseCosine(store, a, b) };
   }).sort((x, y) => y.weight - x.weight);

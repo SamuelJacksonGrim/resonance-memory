@@ -40,12 +40,12 @@ roadmap, and per-repo backlog live in the companion repo
 |---|---|
 | `entry.js` | Bundle entry point / mode dispatch: `--mcp` → server, `--install`/`--uninstall` → installer, else → panel. |
 | `server.js` | The MCP server. Declares the four verbs (tool schemas + descriptions), wires the environment (network embed, live field toggle, lazy ledger) into the shared core, and runs the JSON-RPC stdio loop. Reads the version from `package.json` so `serverInfo` can't drift. |
-| `memory-core.js` | **The four cognitive verbs, as ONE implementation.** `createCore({ store, embed, fieldEnabled, getLedger })` returns `{ save, recall, edit, remove }`. Everything environment-specific is *injected*, nothing reached for — so `server.js` (network embedder) and `eval/pipeline.js` (cached embedder) build on the exact same code. This is deliberate: two copies of the recall path is the drift the RM-00 harness exists to catch. |
+| `memory-core.js` | **The four cognitive verbs, as ONE implementation.** `createCore({ store, embed, fieldEnabled, getEdgeStore })` returns `{ save, recall, edit, remove }`. Everything environment-specific is *injected*, nothing reached for — so `server.js` (network embedder) and `eval/pipeline.js` (cached embedder) build on the exact same code. This is deliberate: two copies of the recall path is the drift the RM-00 harness exists to catch. |
 | `record.js` | The shared record schema (`normalize()`), durable atomic writes (`writeFileDurable()`), the access sidecar (`AccessLog`), and the lexical heuristics (constraint typing, historical-query detection, supersession cues + `detectSupersession`). Owned here so the server and panel agree on a record byte-for-byte. |
 | `store.js` | `JsonlStore` — the flat-JSONL storage backend behind the Store seam. Constructed and testable without the stdio loop; a SQLite/Lantern backend can replace it with the same method surface (see `docs/proposed/0005`). |
 | `field.js` | Associative layer (Phase 2a): a kNN semantic graph over stored vectors, neighborhood expansion, and constraint rescue. No new embedding calls, no LLM extraction — built from vectors already stored at save. |
-| `ledger.js` | Hebbian sidecar (Phase 2b): learned co-activation weights ("fire together, wire together"), bounded `maxBonus·tanh(w)` bonus, provenance-discounted reinforcement, decay + prune. |
-| `edges.js` | Unified persistent edge store (Phase 0): one undirected record, two independent signals (`semantic` derived cache + `hebbian` source of truth), typed provenance, one-way `.assoc.json` migration. **Not wired into recall yet** — `field.js` / `ledger.js` remain the live path until Slice C. |
+| `ledger.js` | Retired Hebbian sidecar (Phase 2b). Off the live recall/reinforce path as of Phase 0 Slice C; kept as the reference implementation of the epoch-decay math so tests can prove EdgeStore produces the same numbers. |
+| `edges.js` | Unified persistent edge store (Phase 0): one undirected record, two independent signals (`semantic` derived cache + `hebbian` source of truth), typed provenance, one-way `.assoc.json` → `.edges.json` migration. **On the live recall path** — Hebbian bonus/reinforce/tick/save read and write `hebbian.weight`; `field.js` still computes semantic kNN at recall (save-time binding is 0.1). |
 | `panel.js` | The local `127.0.0.1` control panel (largest file): field toggle, Connect/Disconnect, the 3D association-graph view, demo graph, heartbeat auto-shutdown. |
 | `install.js` | Detect + wire into LM Studio / Claude Desktop MCP config. Preserves other configured servers, leaves a `.bak`. |
 | `inspect_sidecar.js` | Dependency-free telemetry for the Hebbian ledger. |
@@ -112,7 +112,12 @@ commit the cache diff.
 - Flat JSONL at `MEMORY_FILE_PATH` (default `~/.lmstudio/resonance-memory.jsonl`), plus two
   **sidecars** beside it, both regenerable (deleting them loses learned associations /
   access counts, never a memory):
-  - `<store>.assoc.json` — Hebbian edge weights (`ledger.js`).
+  - `<store>.edges.json` — unified edge table (`edges.js` EdgeStore). Hebbian weights are
+    the source of truth; semantic scores are a derived cache (still computed at recall
+    until 0.1). A leftover `<store>.assoc.json` from an older build is **legacy /
+    read-only-for-migration**: on first load, if `.edges.json` is missing, those weights
+    are copied in one-way and the old file is left untouched so a downgraded exe still
+    reads its own stale sidecar.
   - `<store>.access.json` — access counts (`AccessLog` in `record.js`), kept out of the
     store so a recall never rewrites the store file (see `BUG-002`).
 - Live runtime state (the field toggle) lives in `resonance-memory.config.json` **beside

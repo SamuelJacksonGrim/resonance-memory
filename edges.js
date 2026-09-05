@@ -18,11 +18,13 @@
 /*
  * edges.js - the unified persistent edge substrate (Phase 0 / RM-21).
  *
- * field.js holds semantic kNN edges (ephemeral, rebuilt every recall).
- * ledger.js holds Hebbian weights (persistent, epoch-decayed, JSON sidecar).
- * This module is the one table that will absorb both: one undirected edge
- * record, two independently stored signals. It is NOT wired into recall yet
- * (that's Slice C) — build it standalone so the golden gate cannot move.
+ * field.js holds semantic kNN edges (ephemeral, rebuilt every recall — save-time
+ * binding is 0.1). ledger.js is the retired Hebbian sidecar (epoch-decayed
+ * `.assoc.json`); this module absorbed it. One undirected edge record, two
+ * independently stored signals. Slice C put this on the live recall path:
+ * EdgeStore is the Hebbian source of truth (bonus / reinforce / tick / save);
+ * field.js still computes the semantic kNN at recall. The golden gate is the
+ * proof the move did not change numbers.
  *
  * The asymmetry is load-bearing (docs/phases/phase-0-edge-substrate.md):
  *
@@ -255,10 +257,22 @@ function migrateAssoc(j, now) {
   return out;
 }
 
-function envelope(edges) {
+function envelope(edges, recalls) {
   const obj = {};
   for (const [k, rec] of edges) obj[k] = rec;
-  return { kind: SIDECAR_KIND, version: SIDECAR_VERSION, edges: obj };
+  // `recalls` is the epoch-decay clock (ledger.js tick()). Wall-clock decay
+  // is 0.2; mixing the two is a dual-clock bug, so this field stays until then.
+  return { kind: SIDECAR_KIND, version: SIDECAR_VERSION, recalls: recalls || 0, edges: obj };
+}
+
+// Live path persists to <store>.edges.json. <store>.assoc.json is legacy /
+// read-only-for-migration from Slice C onward: an old shipped Ledger can
+// never open the new format and misparse it (downgrade-safe). A downgraded
+// exe keeps reading its own stale .assoc.json; that is acceptable.
+function siblingAssocPath(edgesFile) {
+  if (!edgesFile || typeof edgesFile !== "string") return null;
+  if (!edgesFile.endsWith(".edges.json")) return null;
+  return edgesFile.slice(0, -".edges.json".length) + ".assoc.json";
 }
 
 // -------------------------------------------------------------- store
@@ -276,45 +290,80 @@ class EdgeStore {
   constructor(file, opts = {}) {
     this.file = file;
     this.now = opts.now || isoNow;
+    // Hebbian knobs MUST stay byte-identical to ledger.js. Moving storage
+    // must not move the numbers (Slice C / I2 / I9).
+    this.alphaPP = opts.alphaPP != null ? opts.alphaPP : 0.1;   // primary <-> primary
+    this.alphaPN = opts.alphaPN != null ? opts.alphaPN : 0.02;  // primary <-> neighborhood
+    this.beta = opts.beta != null ? opts.beta : 0.95;           // decay retention
+    this.floor = opts.floor != null ? opts.floor : 0.05;        // prune threshold
+    this.epoch = opts.epoch != null ? opts.epoch : 10;          // decay every N recalls
+    this.maxBonus = opts.maxBonus != null ? opts.maxBonus : 0.3;
+    this.legacyFile = opts.legacyFile || null;
     this.edges = new Map();
+    this.recalls = 0;
     this.migrated = false;   // true iff this load converted a legacy .assoc.json
     this.load();
+    // Lazy one-way persist: if we ingested a sibling .assoc.json because
+    // <store>.edges.json did not exist, write the new file now. load() itself
+    // never writes (I5). Never rewrite the legacy sidecar — a downgraded exe
+    // still reads its own stale weights from it.
+    if (this.migrated && this.file && !fs.existsSync(this.file)) this.save();
+  }
+
+  _reset() {
+    this.edges = new Map();
+    this.migrated = false;
+    this.recalls = 0;
+  }
+
+  _ingest(j) {
+    const kind = sidecarKind(j);
+    if (kind === SIDECAR_KIND) {
+      const bag = j.edges;
+      // kind is right but the payload isn't a map — fail open, don't
+      // Object.keys an array of numbers into garbage records.
+      if (!bag || typeof bag !== "object" || Array.isArray(bag)) return;
+      const when = this.now();
+      for (const k of Object.keys(bag)) {
+        const rec = normalizeEdge(bag[k], when);
+        this.edges.set(edgeKey(rec.a, rec.b), rec);
+      }
+      this.recalls = typeof j.recalls === "number" ? j.recalls : 0;
+      return;
+    }
+    if (kind === "legacy-assoc") {
+      const parsed = readLegacyAssoc(j);
+      this.edges = migrateAssoc(j, this.now());
+      this.recalls = parsed.recalls;
+      this.migrated = true;
+      return;
+    }
+    // unknown shape: fail open (empty). Do not guess.
   }
 
   load() {
-    this.edges = new Map();
-    this.migrated = false;
+    this._reset();
     try {
-      if (!this.file || !fs.existsSync(this.file)) return;
-      const j = JSON.parse(fs.readFileSync(this.file, "utf8"));
-      const kind = sidecarKind(j);
-      if (kind === SIDECAR_KIND) {
-        const bag = j.edges;
-        // kind is right but the payload isn't a map — fail open, don't
-        // Object.keys an array of numbers into garbage records.
-        if (!bag || typeof bag !== "object" || Array.isArray(bag)) return;
-        const when = this.now();
-        for (const k of Object.keys(bag)) {
-          const rec = normalizeEdge(bag[k], when);
-          this.edges.set(edgeKey(rec.a, rec.b), rec);
-        }
+      if (this.file && fs.existsSync(this.file)) {
+        this._ingest(JSON.parse(fs.readFileSync(this.file, "utf8")));
         return;
       }
-      if (kind === "legacy-assoc") {
-        this.edges = migrateAssoc(j, this.now());
-        this.migrated = true;
-        return;
+      // Target missing: one-way lazy migrate from legacy .assoc.json if
+      // present. .assoc.json is read-only-for-migration — we never write it.
+      // A corrupt/missing .edges.json does NOT fall through to the sibling
+      // (the new file is the authority; fail-open means empty, not "try old").
+      const legacy = this.legacyFile || siblingAssocPath(this.file);
+      if (legacy && fs.existsSync(legacy)) {
+        this._ingest(JSON.parse(fs.readFileSync(legacy, "utf8")));
       }
-      // unknown shape: fail open (empty). Do not guess.
     } catch {
-      this.edges = new Map();
-      this.migrated = false;
+      this._reset();
     }
   }
 
   save() {
     try {
-      writeFileDurable(this.file, JSON.stringify(envelope(this.edges)));
+      writeFileDurable(this.file, JSON.stringify(envelope(this.edges, this.recalls)));
     } catch { /* non-fatal: the field must never break recall (I3) */ }
   }
 
@@ -343,6 +392,65 @@ class EdgeStore {
     }
     return out;
   }
+
+  // ------------------------------------------------ Hebbian (ex-ledger.js)
+  // These four methods ARE the live-path contract memory-core.js calls
+  // (bonus / reinforceRecall / tick / save). Math is copied from Ledger,
+  // not re-derived — a drifted constant here would move the golden.
+
+  weight(a, b) {
+    const e = this.get(a, b);
+    if (!e || e.pruned_at) return 0;
+    const w = e.hebbian && e.hebbian.weight;
+    return typeof w === "number" ? w : 0;
+  }
+
+  // bounded Hebbian bonus: 0 at weight 0, asymptotic to maxBonus, never exceeds it
+  bonus(a, b) { const w = this.weight(a, b); return w > 0 ? this.maxBonus * Math.tanh(w) : 0; }
+
+  _bump(a, b, alpha) {
+    if (alpha <= 0 || String(a) === String(b)) return;
+    const existing = this.get(a, b);
+    const now = this.now();
+    if (existing) {
+      // setHebbian leaves semantic bytes alone (two-signal rule). Stamp
+      // last_updated on reinforce only — decay must not (0.2's clock).
+      setHebbian(existing, (existing.hebbian.weight || 0) + alpha, now);
+      return;
+    }
+    this.put(makeEdge(a, b, {
+      origin: "co-activation",
+      hebbianWeight: alpha,
+      now,
+    }));
+  }
+
+  // Reinforce one recall event given the provenance of the returned ids.
+  reinforceRecall(primaryIds, neighborhoodIds) {
+    for (let i = 0; i < primaryIds.length; i++)
+      for (let j = i + 1; j < primaryIds.length; j++)
+        this._bump(primaryIds[i], primaryIds[j], this.alphaPP);
+    for (const p of primaryIds)
+      for (const n of neighborhoodIds)
+        this._bump(p, n, this.alphaPN);
+    // neighborhood <-> neighborhood: alpha 0, intentionally skipped
+  }
+
+  // Advance the epoch clock; decay + prune on the boundary.
+  // Recall-count, not wall-clock — 0.2 replaces this. Do not mix them.
+  tick() {
+    this.recalls += 1;
+    if (this.epoch > 0 && this.recalls % this.epoch === 0) this.decay();
+  }
+
+  decay() {
+    for (const [k, e] of [...this.edges]) {
+      const w = e.hebbian && typeof e.hebbian.weight === "number" ? e.hebbian.weight : 0;
+      const nw = w * this.beta;
+      if (nw < this.floor) this.edges.delete(k);
+      else e.hebbian.weight = nw;   // in-place: do NOT stamp last_updated
+    }
+  }
 }
 
 module.exports = {
@@ -355,6 +463,7 @@ module.exports = {
   sidecarKind,
   readLegacyAssoc,
   migrateAssoc,
+  siblingAssocPath,
   IncompatibleEdgeFormatError,
   SIDECAR_KIND,
   SIDECAR_VERSION,

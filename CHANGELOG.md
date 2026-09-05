@@ -22,8 +22,11 @@ Beta-readiness pass:
   endpoint's `embedding_version`) and `hebbian` (source of truth; `last_updated` nests
   here because that's the only thing it clocks). Typed provenance (`origin` is how the
   edge came to exist; `migrated_from` is a separate fact). Existing `.assoc.json`
-  sidecars migrate losslessly and one-way (`kind: "resonance-edges"`; an old-format
-  reader refuses rather than dropping edges). Not wired into recall yet. See
+  sidecars migrate losslessly and one-way into `<store>.edges.json` (`kind: "resonance-edges"`;
+  an old-format reader refuses rather than dropping edges). **On the live recall path:**
+  Hebbian bonus/reinforce/tick/save go through EdgeStore; `ledger.js` is retired from
+  recall. Semantic kNN + constraint-rescue still run in `field.js` at recall (save-time
+  binding is 0.1). See
   [`docs/phases/phase-0-edge-substrate.md`](docs/phases/phase-0-edge-substrate.md).
 - **`embedding_version` on every memory** (Phase 0.0 schema). `record.js` `normalize()`
   backfills it to `1` for legacy rows. A successful `edit()` re-embed increments it; an

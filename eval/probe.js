@@ -37,7 +37,7 @@ async function main() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rm-probe-"));
   const file = path.join(dir, "store.jsonl");
   const store = new JsonlStore(file);
-  const mem = createMemory({ store, embed, fieldEnabled: true, ledgerPath: file + ".assoc.json" });
+  const mem = createMemory({ store, embed, fieldEnabled: true, edgesPath: file + ".edges.json" });
   for (const w of c.writes) await mem.save(w);
 
   const q = c.query || (c.repeat && c.repeat[c.repeat.length - 1].query);

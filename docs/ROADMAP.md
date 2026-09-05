@@ -158,7 +158,7 @@ The one phase in flight. Full spec + metrics + tests: [`phase-0`](phases/phase-0
 
 | Sub-phase | Purpose | Status |
 |---|---|---|
-| **0.0** | One edge store, two signals; `embedding_version` schema; migrate `.assoc.json` (one-way) | ⬜ 🔀 |
+| **0.0** | One edge store, two signals; `embedding_version` schema; migrate `.assoc.json` (one-way) | ✅ |
 | **0.1** | Save-time semantic edges + edge timestamps; save-latency cost sweep | ⬜ |
 | **0.2** | Lazy wall-clock decay of the learned signal (**I6 becomes true**) | ⬜ 🔀 |
 | **0.3** | Materialize-on-mutation; MCP request-ID idempotency (atomic dedup) | ⬜ |

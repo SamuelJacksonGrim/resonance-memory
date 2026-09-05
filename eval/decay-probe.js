@@ -25,7 +25,7 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { Ledger } = require("../ledger.js");
+const { EdgeStore } = require("../edges.js");
 const { embed } = require("./embed-cache.js");
 
 const GATE = 0.55;   // field.js minSim
@@ -48,8 +48,8 @@ async function probe(label, ta, tb) {
   const [va, vb] = await embed([ta, tb]);
   const cos = cosine(va, vb);
 
-  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "rm-decay-")), "l.assoc.json");
-  const L = new Ledger(file);
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "rm-decay-")), "l.edges.json");
+  const L = new EdgeStore(file);
   const score = () => cos + L.bonus("A", "B");
 
   // LEARNING: co-recall A and B as primaries (alphaPP), until score crosses the gate.

@@ -35,7 +35,7 @@ const { exec } = require("child_process");
 const install = require("./install.js");
 const field = require("./field.js");
 const engine = require("./engine.js");
-const { Ledger } = require("./ledger.js");
+const { EdgeStore } = require("./edges.js");
 const { normalize, isCurrent } = require("./record.js");
 
 function baseDir() {
@@ -86,9 +86,9 @@ function memCount() { return loadRecords(STORE_PATH).filter(isCurrent).length; }
 function graphData(demo) {
   const recs = (demo ? loadDemo() : loadRecords(STORE_PATH)).filter((r) => Array.isArray(r.embedding));
   const byId = new Map(recs.map((r) => [String(r.id), r]));
-  let ledger = null;
-  if (!demo && fieldOn()) { try { ledger = new Ledger(STORE_PATH + ".assoc.json"); } catch { } }
-  const bonus = ledger ? (a, b) => ledger.bonus(a, b) : () => 0;
+  let edges = null;
+  if (!demo && fieldOn()) { try { edges = new EdgeStore(STORE_PATH + ".edges.json"); } catch { } }
+  const bonus = edges ? (a, b) => edges.bonus(a, b) : () => 0;
   const m = field.buildEdges(recs, { k: 3, minSim: 0.55, bonus });
   const seen = new Map();
   for (const [a, list] of m) {
@@ -97,7 +97,7 @@ function graphData(demo) {
       if (seen.has(key)) continue;
       const ra = byId.get(String(a)), rb = byId.get(String(e.id));
       const base = field.cosine(ra.embedding, rb.embedding);
-      const heb = ledger ? ledger.weight(a, e.id) : 0;
+      const heb = edges ? edges.weight(a, e.id) : 0;
       seen.set(key, { a: String(a), b: String(e.id), w: Number(base.toFixed(4)), hebbian: Number(heb.toFixed(4)) });
     }
   }
@@ -110,7 +110,7 @@ function graphData(demo) {
     })),
     edges: [...seen.values()],
     source: demo ? "demo" : "your memories",
-    field: !!ledger,
+    field: !!edges,
     current_count: recs.filter(isCurrent).length,
   };
 }
@@ -237,7 +237,7 @@ const PAGE = `<!doctype html>
 
     <div class="foot">
       <div><b>For weaker models</b> that forget to save or recall: <a href="#" id="spBtn">copy a ready-made system prompt</a> and paste it into your app's system-prompt box. <span id="spMsg"></span></div>
-      <div style="margin-top:11px"><b>Removing it?</b> Click <b>Disconnect</b> next to each app above, then delete <code>resonance-memory.exe</code> &mdash; that's the whole app. Your memories live at <code id="storePath">&hellip;</code> and stay put unless you delete that file too &mdash; along with the two small <code>.assoc.json</code> / <code>.access.json</code> companions beside it.</div>
+      <div style="margin-top:11px"><b>Removing it?</b> Click <b>Disconnect</b> next to each app above, then delete <code>resonance-memory.exe</code> &mdash; that's the whole app. Your memories live at <code id="storePath">&hellip;</code> and stay put unless you delete that file too &mdash; along with the small <code>.edges.json</code> / <code>.access.json</code> companions beside it (and a leftover <code>.assoc.json</code> if an older build wrote one).</div>
       <div style="margin-top:11px">The field switch applies instantly &mdash; no restart. This panel closes itself a few seconds after you close the tab.</div>
     </div>
   </div>

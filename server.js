@@ -43,7 +43,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { Ledger } = require("./ledger.js");
+const { EdgeStore } = require("./edges.js");
 const { JsonlStore } = require("./store.js");
 const { createCore, defaultGetEdges } = require("./memory-core.js");
 const { WarmField } = require("./warm.js");
@@ -89,10 +89,16 @@ const EMBED_MODEL = process.env.EMBED_MODEL || "text-embedding-nomic-embed-text-
 
 fs.mkdirSync(path.dirname(STORE_PATH), { recursive: true });
 
-// Hebbian sidecar (Phase 2b), constructed lazily on first field use so the live
-// toggle can turn it on without a restart.
-let _ledger = null;
-function getLedger() { if (!_ledger) _ledger = new Ledger(STORE_PATH + ".assoc.json"); return _ledger; }
+// Unified edge sidecar (Phase 0 / Slice C), constructed lazily on first field
+// use so the live toggle can turn it on without a restart. Persists to
+// <store>.edges.json — NEVER .assoc.json, so an old shipped Ledger cannot
+// open the new format and misparse it. A leftover .assoc.json is migrated
+// one-way on first load and left untouched (legacy / read-only-for-migration).
+let _edges = null;
+function getEdgeStore() {
+  if (!_edges) _edges = new EdgeStore(STORE_PATH + ".edges.json");
+  return _edges;
+}
 
 // Warm field (Phase 1). In-proc Map, never persisted (I7). Flags default off so
 // the 27/31 golden is untouched. RESONANCE_WARM_RANK is read here so the MCP
@@ -120,11 +126,11 @@ async function embed(texts) {
 const store = new JsonlStore(STORE_PATH);
 
 // The four verbs live in the shared engine (memory-core.js); server.js only wires
-// the environment into it - network embed, the live field toggle, the lazy ledger.
+// the environment into it - network embed, the live field toggle, the lazy EdgeStore.
 // eval/pipeline.js wires the SAME core to a cached embedder, so there is exactly one
 // implementation of save/recall and the RM-00 golden guards that they never diverge.
 const core = createCore({
-  store, embed, fieldEnabled, getLedger,
+  store, embed, fieldEnabled, getEdgeStore,
   warmEnabled, getWarm, getEdges: defaultGetEdges,
   saveSeed: () => true,          // production: a just-saved fact is warm without a recall
   warmTrace, warmEdgeCap,

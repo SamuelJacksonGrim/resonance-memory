@@ -137,14 +137,14 @@ same record the panel renders and the installer's target reads.
 | File | Role | Depends on |
 |---|---|---|
 | `entry.js` | Mode dispatch on `argv`. | server / panel / install |
-| `server.js` | MCP server. Declares the four tool schemas + descriptions, wires the *environment* (network embedder, live field toggle, lazy ledger) into the shared core, runs the stdio JSON-RPC loop, vacuums soft-deletes at startup. Reads the version from `package.json` so `serverInfo` can't drift. | `memory-core`, `store`, `ledger`, `package.json` |
-| `memory-core.js` | **The four cognitive verbs, as one implementation.** `createCore({ store, embed, fieldEnabled, getLedger })` → `{ save, recall, edit, remove }`. Everything environment-specific is *injected*. This is the code both `server.js` and `eval/pipeline.js` run — the RM-00 golden is the proof they never diverge. | `field`, `record` |
+| `server.js` | MCP server. Declares the four tool schemas + descriptions, wires the *environment* (network embedder, live field toggle, lazy EdgeStore) into the shared core, runs the stdio JSON-RPC loop, vacuums soft-deletes at startup. Reads the version from `package.json` so `serverInfo` can't drift. | `memory-core`, `store`, `edges`, `package.json` |
+| `memory-core.js` | **The four cognitive verbs, as one implementation.** `createCore({ store, embed, fieldEnabled, getEdgeStore })` → `{ save, recall, edit, remove }`. Everything environment-specific is *injected*. This is the code both `server.js` and `eval/pipeline.js` run — the RM-00 golden is the proof they never diverge. | `field`, `record` |
 | `record.js` | The shared record schema (`normalize()`), durable atomic writes (`writeFileDurable()`), the access sidecar (`AccessLog`), and the lexical heuristics (constraint typing, historical-query detection, supersession cues). Owned here so server and panel agree on a record byte-for-byte. | stdlib only |
 | `store.js` | `JsonlStore` — the flat-JSONL backend behind the Store seam. Constructible and testable without the stdio loop; a SQLite backend can replace it with the same method surface. | `record` |
 | `field.js` | Associative layer (Phase 2a): a kNN semantic graph over stored vectors, neighborhood expansion, and constraint rescue. No new embedding calls, no LLM extraction. | stdlib only |
-| `ledger.js` | Hebbian sidecar (Phase 2b): learned co-activation weights, a bounded `maxBonus·tanh(w)` bonus, provenance-discounted reinforcement, decay + prune. | `record` |
-| `edges.js` | Unified persistent edge store (Phase 0 / `RM-21`): one undirected record, two independent signals (`semantic` derived cache validated by version comparison, `hebbian` source of truth), typed provenance, one-way `.assoc.json` migration (`kind: "resonance-edges"`). **Not wired into recall yet** — `field.js` / `ledger.js` remain the live path. | `record` |
-| `panel.js` | The `127.0.0.1` control panel (largest file): field toggle, Connect/Disconnect, the 3D association-graph view, demo graph, heartbeat auto-shutdown. | `install`, `field`, `engine`, `ledger`, `record`, `embedded-assets` |
+| `ledger.js` | Retired Hebbian sidecar (Phase 2b). Off the live path as of Slice C; kept so tests can compare EdgeStore bonuses against the shipped epoch-decay math. | `record` |
+| `edges.js` | Unified persistent edge store (Phase 0 / `RM-21`): one undirected record, two independent signals (`semantic` derived cache validated by version comparison, `hebbian` source of truth), typed provenance, one-way `.assoc.json` → `.edges.json` migration (`kind: "resonance-edges"`). **On the live recall path** — Hebbian bonus/reinforce/tick/save; `field.js` still builds the semantic kNN at recall. | `record` |
+| `panel.js` | The `127.0.0.1` control panel (largest file): field toggle, Connect/Disconnect, the 3D association-graph view, demo graph, heartbeat auto-shutdown. | `install`, `field`, `engine`, `edges`, `record`, `embedded-assets` |
 | `install.js` | Detect + wire into LM Studio / Claude Desktop MCP config. Preserves other configured servers, leaves a `.bak`. | stdlib only |
 | `engine.js` | One-click embedder setup for the panel: drives LM Studio's bundled `lms` CLI to start the server, download the Nomic embedder, load it, and verify the endpoint answers. Pure convenience — the MCP server never needs it. | stdlib + `fetch` |
 | `inspect_sidecar.js` | Dependency-free telemetry for the Hebbian ledger. | stdlib |
@@ -209,8 +209,10 @@ argument is always the smallest possible thing (`content`, `query`, or `id`).
 4. **Associative field (if enabled).** Additive only: build the kNN edge set, expand a
    `neighborhood()` one hop from the returned seeds, and run `reachableConstraints()` to rescue
    apex rules (a "diabetic" memory reachable through a "lemon bars" bridge) that sit far down
-   cosine. Merge into a `Related:` block, reinforce the Hebbian ledger provenance-discounted,
-   tick decay. The entire block is inside a `try/catch` — it can never break the primary result.
+   cosine. Merge into a `Related:` block, reinforce Hebbian weights on the EdgeStore
+   provenance-discounted, tick the recall-epoch decay clock. Writes go to `<store>.edges.json`
+   (never the JSONL store). The entire block is inside a `try/catch` — it can never break the
+   primary result.
 
 ### `edit_memory({ id, content })`
 
@@ -233,10 +235,13 @@ Everything lives beside `MEMORY_FILE_PATH` (default `~/.lmstudio/resonance-memor
 ```
 resonance-memory.jsonl              the store — one JSON record per line
 resonance-memory.jsonl.access.json  access-count sidecar   (AccessLog, record.js)
-resonance-memory.jsonl.assoc.json   Hebbian edge weights   (Ledger, ledger.js)
-                                    Phase 0 successor format lives in edges.js
-                                    (`kind: "resonance-edges"`); not written by
-                                    the live path until Slice C.
+resonance-memory.jsonl.edges.json   unified edge table     (EdgeStore, edges.js)
+                                    Hebbian source of truth + semantic derived cache.
+                                    `kind: "resonance-edges"`.
+resonance-memory.jsonl.assoc.json   LEGACY Hebbian sidecar (Ledger, ledger.js).
+                                    Read-only-for-migration: if `.edges.json` is
+                                    missing, weights are copied in one-way and this
+                                    file is left untouched (downgrade-safe).
 resonance-memory.config.json        live runtime state (the field toggle)
 ```
 
@@ -290,10 +295,12 @@ similarity floor (~0.45) that made a global threshold connect everything. Three 
   never sees it directly. Restricted to *typed constraints* so the wider radius can't re-drag
   ordinary hubs back in — TBR (tangent bleed) is protected by construction, not by luck.
 
-### `ledger.js` — the dynamic Hebbian layer (Phase 2b)
+### `edges.js` — the unified edge table (Phase 0; was `ledger.js`)
 
-"Fire together, wire together." A sidecar of learned memory↔memory weights, kept entirely
-separate from the vector store. Safety properties baked in:
+"Fire together, wire together." One persistent sidecar (`<store>.edges.json`) holding both
+signals. Semantic kNN is still built at recall by `field.js` (save-time binding is 0.1);
+the learned Hebbian weight lives on the edge record and is the source of truth. Safety
+properties, preserved byte-for-byte from the retired `Ledger`:
 
 - **Canonical undirected edge key** (ids sorted) so `a:b` and `b:a` are one edge.
 - **Bounded bonus** via `maxBonus·tanh(w)` — frequency can lift a weak edge over the `minSim`
@@ -301,9 +308,11 @@ separate from the vector store. Safety properties baked in:
 - **Provenance-discounted reinforcement** — primary↔primary at full `alpha`, primary↔neighborhood
   discounted, neighborhood↔neighborhood zero. The graph learns from the user's queries, not from
   its own guesses. This provenance instinct is what `RM-16` generalizes to the whole write path.
-- **Decay + prune** every N recalls, so unused associations fade.
+- **Decay + prune** every N recalls (epoch clock, not wall-clock — 0.2 replaces this). Unused
+  associations fade.
 
-Neither layer ever reorders the primary cosine result — invariant #3.
+Neither layer ever reorders the primary cosine result — invariant #3 / I9. A corrupt sidecar
+fails open to empty (bonus 0); recall still returns cosine (I3).
 
 ---
 
@@ -410,12 +419,13 @@ The architecture is built to absorb the roadmap without touching the MCP API or 
 recall path:
 
 - **Substrate unification** → the two association layers (`field.js` static kNN rebuilt per
-  recall, `ledger.js` Hebbian sidecar) merge into one **persistent edge store with two
+  recall, `ledger.js` Hebbian sidecar) merged into one **persistent edge store with two
   independent signals** — semantic (derived / recomputable from vectors) and learned
-  (source-of-truth / irreplaceable). The record + sidecar live in `edges.js` (standalone
-  in 0.0; recall wiring is the next slice). This is where I6 becomes true and where
-  activation (I7) plugs in. It is a **migration, not greenfield** — existing `.assoc.json`
-  sidecars are carried in (`RM-21`, design in [`phases/phase-0`](phases/phase-0-edge-substrate.md)).
+  (source-of-truth / irreplaceable). The record + sidecar live in `edges.js` and are on
+  the live recall path (Slice C). Semantic kNN is still computed at recall (save-time
+  binding is 0.1); I6 becomes true in 0.2. It is a **migration, not greenfield** — existing
+  `.assoc.json` sidecars are carried into `.edges.json` one-way (`RM-21`, design in
+  [`phases/phase-0`](phases/phase-0-edge-substrate.md)).
 - **New store backend** → implement the `JsonlStore` method surface (`RM-07`, SQLite).
 - **Write-path cleanup** (extraction, dedup) → in `save()` inside `memory-core.js`, before the
   store append (`RM-01`, `RM-02`). A save must never fail because a cleanup tier did.

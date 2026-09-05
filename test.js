@@ -530,15 +530,18 @@ test("reachableConstraints: the gate governs whether a bridge counts", () => {
 });
 
 // ------------------------------------------------- unified edge store (Phase 0 / RM-21)
-// Module is tested STANDALONE. field.js / ledger.js / recall are not wired
-// yet (Slice C). Every case here is written to fail without edges.js.
+// Slice C wired EdgeStore into recall. Module-level cases still fail without
+// edges.js; the live-path cases (I3/I5/I9, migration-numbers, constraint-rescue)
+// fail without the memory-core wiring.
 section("unified edge store (Phase 0)");
 
 const {
   edgeKey, makeEdge, normalizeEdge, semanticValid, setSemantic, setHebbian,
-  sidecarKind, readLegacyAssoc, migrateAssoc, IncompatibleEdgeFormatError,
+  sidecarKind, readLegacyAssoc, migrateAssoc, siblingAssocPath,
+  IncompatibleEdgeFormatError,
   SIDECAR_KIND, SIDECAR_VERSION, EdgeStore,
 } = require("./edges.js");
+const { Ledger } = require("./ledger.js");
 
 const T0 = "2026-09-05T00:00:00.000Z";
 
@@ -690,6 +693,7 @@ test("EdgeStore save of a migrated sidecar is the new format, still N edges", ()
   const j = JSON.parse(fs.readFileSync(file, "utf8"));
   assert.strictEqual(j.kind, SIDECAR_KIND);
   assert.strictEqual(j.version, SIDECAR_VERSION);
+  assert.strictEqual(j.recalls, 40, "epoch clock survives migration");
   assert.strictEqual(Object.keys(j.edges).length, LEGACY_N);
   const reloaded = new EdgeStore(file, { now: () => T0 });
   assert.strictEqual(reloaded.migrated, false, "second load is native, not a re-migration");
@@ -793,6 +797,114 @@ test("incident() lists unpruned edges for an endpoint (Slice C absorption helper
   const inc = store.incident(1);
   assert.strictEqual(inc.length, 2);
   assert.deepStrictEqual(inc.map((e) => edgeKey(e.a, e.b)).sort(), ["1:2", "1:3"]);
+});
+
+test("siblingAssocPath maps <store>.edges.json → <store>.assoc.json", () => {
+  assert.strictEqual(siblingAssocPath("store.jsonl.edges.json"), "store.jsonl.assoc.json");
+  assert.strictEqual(siblingAssocPath("x.assoc.json"), null);
+});
+
+test("missing .edges.json migrates a sibling .assoc.json, leaves it untouched", () => {
+  const base = tmp("sibstore.jsonl");
+  const assoc = base + ".assoc.json";
+  const edges = base + ".edges.json";
+  writeLegacyAssoc(assoc, LEGACY_EDGES);
+  const bytes = fs.readFileSync(assoc, "utf8");
+  const mtime = fs.statSync(assoc).mtimeMs;
+  const store = new EdgeStore(edges, { now: () => T0 });
+  assert.strictEqual(store.migrated, true);
+  assert.strictEqual(store.size, LEGACY_N);
+  assert.strictEqual(store.get(2, 5).hebbian.weight, 1.2);
+  assert.strictEqual(store.recalls, 40, "epoch clock imported");
+  assert.strictEqual(fs.readFileSync(assoc, "utf8"), bytes, ".assoc.json is read-only-for-migration");
+  assert.strictEqual(fs.statSync(assoc).mtimeMs, mtime);
+  assert.ok(fs.existsSync(edges), "migrated table persisted to .edges.json");
+  const j = JSON.parse(fs.readFileSync(edges, "utf8"));
+  assert.strictEqual(j.kind, SIDECAR_KIND);
+  assert.strictEqual(j.recalls, 40);
+});
+
+test("existing .edges.json is the authority: a sibling .assoc.json is not merged", () => {
+  const base = tmp("authstore.jsonl");
+  const assoc = base + ".assoc.json";
+  const edges = base + ".edges.json";
+  // Write the NEW file first so load() never looks at the sibling.
+  const only = makeEdge(8, 9, { origin: "co-activation", now: T0, hebbianWeight: 0.01 });
+  fs.writeFileSync(edges, JSON.stringify({
+    kind: SIDECAR_KIND, version: SIDECAR_VERSION, recalls: 0,
+    edges: { [edgeKey(8, 9)]: only },
+  }));
+  writeLegacyAssoc(assoc, LEGACY_EDGES);
+  const reloaded = new EdgeStore(edges, { now: () => T0 });
+  assert.strictEqual(reloaded.size, 1, "must not pull in the leftover .assoc.json");
+  assert.ok(reloaded.get(8, 9));
+  assert.strictEqual(reloaded.get(2, 5), undefined);
+});
+
+test("corrupt .edges.json fails open and does NOT fall back to .assoc.json", () => {
+  const base = tmp("corrupt-fallback.jsonl");
+  const assoc = base + ".assoc.json";
+  const edges = base + ".edges.json";
+  writeLegacyAssoc(assoc, LEGACY_EDGES);
+  fs.writeFileSync(edges, "{ not json");
+  const store = new EdgeStore(edges, { now: () => T0 });
+  assert.strictEqual(store.size, 0, "fail-open is empty, not a silent merge of stale weights");
+  assert.strictEqual(store.migrated, false);
+});
+
+// --- Hebbian math: moving storage must not move the numbers -----------------
+test("EdgeStore.bonus matches shipped Ledger.bonus on the same weights (tanh bound)", () => {
+  const L = new Ledger(tmp("math-l.assoc.json"));
+  const E = new EdgeStore(tmp("math-e.edges.json"), { now: () => T0 });
+  L.edges.set("1:2", 0.4);
+  L.edges.set("1:3", 1.2);
+  E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 0.4 }));
+  E.put(makeEdge(1, 3, { origin: "co-activation", now: T0, hebbianWeight: 1.2 }));
+  assert.strictEqual(E.bonus(1, 2), L.bonus(1, 2));
+  assert.strictEqual(E.bonus(1, 3), L.bonus(1, 3));
+  assert.strictEqual(E.bonus(2, 3), 0, "missing edge is bonus 0");
+  assert.strictEqual(E.bonus(1, 2), 0.3 * Math.tanh(0.4));
+  assert.strictEqual(E.bonus(9, 9), 0);
+});
+
+test("EdgeStore.reinforceRecall + tick match Ledger on the same event (alphaPP/PN/NN + epoch decay)", () => {
+  const L = new Ledger(tmp("reinf-l.assoc.json"));
+  const E = new EdgeStore(tmp("reinf-e.edges.json"), { now: () => T0 });
+  L.reinforceRecall(["1", "2"], ["3", "4"]);
+  E.reinforceRecall(["1", "2"], ["3", "4"]);
+  assert.strictEqual(E.weight(1, 2), L.weight(1, 2), "primary<->primary alphaPP");
+  assert.strictEqual(E.weight(1, 3), L.weight(1, 3), "primary<->neighborhood alphaPN");
+  assert.strictEqual(E.weight(2, 4), L.weight(2, 4));
+  assert.strictEqual(E.weight(3, 4), 0, "neighborhood<->neighborhood is zero");
+  assert.strictEqual(L.weight(3, 4), 0);
+  for (let i = 0; i < 10; i++) { L.tick(); E.tick(); }
+  assert.strictEqual(E.recalls, L.recalls);
+  assert.strictEqual(E.weight(1, 2), L.weight(1, 2), "epoch decay applied on the 10th tick");
+  assert.strictEqual(E.weight(1, 3), L.weight(1, 3));
+});
+
+test("migrated .assoc.json produces the same Hebbian bonuses as shipped Ledger", () => {
+  const base = tmp("same-numbers.jsonl");
+  const assoc = base + ".assoc.json";
+  const edges = base + ".edges.json";
+  const fixture = { "1:2": 0.4, "1:3": 1.2, "10:2": 0.05, "7:8": 0 };
+  writeLegacyAssoc(assoc, fixture);
+  const L = new Ledger(assoc);
+  const E = new EdgeStore(edges, { now: () => T0 });
+  for (const k of Object.keys(fixture)) {
+    const [a, b] = k.split(":");
+    assert.strictEqual(E.bonus(a, b), L.bonus(a, b), "bonus " + k + " drifted");
+    assert.strictEqual(E.weight(a, b), L.weight(a, b), "weight " + k + " drifted");
+  }
+  assert.strictEqual(E.recalls, L.recalls, "epoch clock imported");
+});
+
+test("epoch decay does not stamp hebbian.last_updated (that clock is 0.2)", () => {
+  const E = new EdgeStore(tmp("decay-stamp.edges.json"), { now: () => T0 });
+  E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 1.0 }));
+  for (let i = 0; i < 10; i++) E.tick();
+  assert.ok(E.weight(1, 2) < 1.0, "decayed");
+  assert.strictEqual(E.get(1, 2).hebbian.last_updated, T0, "epoch decay must not mix in wall-clock");
 });
 
 // ------------------------------------------------- ROC/TBR field signals (RM-00)
@@ -1349,6 +1461,179 @@ async function asyncTests() {
     // With cap 0, getEdges is not consulted for spread; only thisTurn seeds exist at 1.0
     const extras = [...W.entries()].filter(([, n]) => n.value > 0 && n.value < 1.0);
     assert.strictEqual(extras.length, 0, "no spread energy when shouldSpread is false");
+  });
+
+  // ------------------------------------------------ Slice C: EdgeStore on the live path
+  section("Slice C: EdgeStore wired into recall");
+
+  function primaryBlock(out) {
+    const i = String(out).indexOf("\n\nRelated:");
+    return i < 0 ? String(out) : String(out).slice(0, i);
+  }
+
+  const DIABETIC = "I'm diabetic, so no sugary desserts for me";
+  const LEMON = "I always bring lemon bars to the potluck";
+  const MEETING = "The quarterly planning meeting is on Tuesday";
+  const DESSERT_Q = "dessert for the potluck";
+  const rescueVec = {
+    [DIABETIC]: [1, 0],
+    [LEMON]: [0.6, 0.8],          // cos(diabetic, lemon) = 0.60 >= CONSTRAINT_GATE 0.45
+    [MEETING]: [0, 1],
+    [DESSERT_Q]: [0.6, 0.8],      // ranks lemon first, meeting second, diabetic third
+  };
+
+  function liveField(file, fieldOn, opts = {}) {
+    const store = new JsonlStore(tmp(file));
+    const edgesPath = opts.edgesPath || tmp(file + ".edges.json");
+    const embed = async (texts) => texts.map((t) => rescueVec[t] || [0, 0, 1]);
+    let _e = null;
+    const getEdgeStore = opts.getEdgeStore || (() => {
+      if (!_e) _e = new EdgeStore(edgesPath, { now: () => T0 });
+      return _e;
+    });
+    const core = createCore({
+      store, embed,
+      fieldEnabled: () => fieldOn,
+      getEdgeStore,
+    });
+    return { store, core, edgesPath };
+  }
+
+  await atest("constraint-rescue still fires through recall (field experiment #2)", async () => {
+    const { core } = liveField("c-rescue.jsonl", true);
+    await core.save(DIABETIC);
+    await core.save(LEMON);
+    await core.save(MEETING);
+    const out = await core.recall(DESSERT_Q, 1);
+    assert.ok(/lemon bars/.test(out), "bridge is the cosine primary");
+    assert.ok(!primaryBlock(out).includes("diabetic"), "constraint is NOT in the returned top-k");
+    assert.ok(/\n\nRelated:/.test(out), "Related: block present");
+    assert.ok(/diabetic/.test(out), "constraint rescued into Related via the lemon-bars bridge");
+  });
+
+  await atest("I9: field-on vs field-off primary results are byte-identical", async () => {
+    // Same store, two cores: ids must not drift or the primary strings won't match.
+    const seeded = liveField("c-i9.jsonl", false);
+    await seeded.core.save(DIABETIC);
+    await seeded.core.save(LEMON);
+    await seeded.core.save(MEETING);
+    const embed = async (texts) => texts.map((t) => rescueVec[t] || [0, 0, 1]);
+    const off = createCore({
+      store: seeded.store, embed, fieldEnabled: () => false,
+      getEdgeStore: () => new EdgeStore(tmp("c-i9-off.edges.json")),
+    });
+    const on = createCore({
+      store: seeded.store, embed, fieldEnabled: () => true,
+      getEdgeStore: () => new EdgeStore(tmp("c-i9-on.edges.json")),
+    });
+    const offOut = await off.recall(DESSERT_Q, 1);
+    const onOut = await on.recall(DESSERT_Q, 1);
+    assert.strictEqual(primaryBlock(onOut), primaryBlock(offOut), "I9: primary cosine must not move");
+    assert.strictEqual(primaryBlock(onOut), offOut, "field-off has no Related: tail");
+    assert.ok(/\n\nRelated:/.test(onOut), "field-on is allowed to append Related:");
+  });
+
+  await atest("I3: corrupt .edges.json still returns cosine; recall does not throw", async () => {
+    const seeded = liveField("c-i3.jsonl", false);
+    await seeded.core.save(DIABETIC);
+    await seeded.core.save(LEMON);
+    await seeded.core.save(MEETING);
+    const embed = async (texts) => texts.map((t) => rescueVec[t] || [0, 0, 1]);
+    const offOut = await createCore({
+      store: seeded.store, embed, fieldEnabled: () => false,
+    }).recall(DESSERT_Q, 1);
+    const edgesPath = tmp("c-i3.edges.json");
+    fs.writeFileSync(edgesPath, "{ this is not json");
+    let out;
+    await assert.doesNotReject(async () => {
+      out = await createCore({
+        store: seeded.store, embed, fieldEnabled: () => true,
+        getEdgeStore: () => new EdgeStore(edgesPath),
+      }).recall(DESSERT_Q, 1);
+    });
+    assert.ok(/lemon bars/.test(out), "cosine primary survived a corrupt sidecar");
+    assert.strictEqual(primaryBlock(out), offOut, "corrupt sidecar degrades to plain cosine");
+  });
+
+  await atest("I3: a throwing getEdgeStore degrades to plain cosine", async () => {
+    const seeded = liveField("c-i3-throw.jsonl", false);
+    await seeded.core.save(DIABETIC);
+    await seeded.core.save(LEMON);
+    const embed = async (texts) => texts.map((t) => rescueVec[t] || [0, 0, 1]);
+    const expected = await createCore({
+      store: seeded.store, embed, fieldEnabled: () => false,
+    }).recall(DESSERT_Q, 1);
+    const got = await createCore({
+      store: seeded.store, embed, fieldEnabled: () => true,
+      getEdgeStore: () => { throw new Error("edges boom"); },
+    }).recall(DESSERT_Q, 1);
+    assert.strictEqual(got, expected, "throw from getEdgeStore must not escape recall()");
+  });
+
+  await atest("I5: reinforcement writes .edges.json and never the JSONL store", async () => {
+    const { core, store, edgesPath } = liveField("c-i5.jsonl", true);
+    await core.save(DIABETIC);
+    await core.save(LEMON);
+    await core.save(MEETING);
+    const jsonlBytes = fs.readFileSync(store.file, "utf8");
+    const assocPath = edgesPath.replace(/\.edges\.json$/, ".assoc.json");
+    const out = await core.recall(DESSERT_Q, 1);
+    assert.ok(/lemon bars/.test(out));
+    assert.strictEqual(fs.readFileSync(store.file, "utf8"), jsonlBytes, "recall must not rewrite the JSONL store");
+    assert.ok(fs.existsSync(edgesPath), "reinforcement persisted to .edges.json");
+    assert.strictEqual(fs.existsSync(assocPath), false, "must not write the retired .assoc.json");
+    const j = JSON.parse(fs.readFileSync(edgesPath, "utf8"));
+    assert.strictEqual(j.kind, SIDECAR_KIND);
+    assert.ok(j.recalls >= 1, "epoch clock ticked");
+    assert.ok(Object.keys(j.edges).length >= 1, "co-recall wrote at least one Hebbian edge");
+  });
+
+  await atest("edit() does not write the edge store (transition table)", async () => {
+    const { core, store, edgesPath } = liveField("c-edit.jsonl", true);
+    await core.save(DIABETIC);
+    await core.save(LEMON);
+    await core.save(MEETING);
+    await core.recall(DESSERT_Q, 1);
+    const before = fs.readFileSync(edgesPath, "utf8");
+    const id = store.current().find((m) => m.text === MEETING).id;
+    await core.edit(id, MEETING);   // re-embed, bump embedding_version; no edge write
+    assert.strictEqual(fs.readFileSync(edgesPath, "utf8"), before, "edit must not touch .edges.json");
+  });
+
+  await atest("legacy .assoc.json bonuses survive through recall (storage move ≠ number move)", async () => {
+    const file = tmp("c-mig.jsonl");
+    const store = new JsonlStore(file);
+    const assoc = file + ".assoc.json";
+    const edges = file + ".edges.json";
+    const embed = async (texts) => texts.map((t) => rescueVec[t] || [0, 0, 1]);
+    const off = createCore({ store, embed, fieldEnabled: () => false });
+    await off.save(DIABETIC);
+    await off.save(LEMON);
+    await off.save(MEETING);
+    const ids = store.current().map((m) => String(m.id));
+    // Seed a learned weight between lemon and diabetic that Ledger would have held.
+    writeLegacyAssoc(assoc, { [ [ids[0], ids[1]].sort().join(":") ]: 0.8 });
+    const L = new Ledger(assoc);
+    let _e = null;
+    const on = createCore({
+      store, embed,
+      fieldEnabled: () => true,
+      getEdgeStore: () => { if (!_e) _e = new EdgeStore(edges, { now: () => T0 }); return _e; },
+    });
+    // Constructing the store (first field-on recall) migrates. Bonuses must match
+    // Ledger's reading of the same fixture BEFORE the recall reinforces.
+    const E = new EdgeStore(edges, { now: () => T0 });
+    for (let i = 0; i < ids.length; i++) {
+      for (let j = i + 1; j < ids.length; j++) {
+        assert.strictEqual(E.bonus(ids[i], ids[j]), L.bonus(ids[i], ids[j]),
+          "migrated bonus drifted for " + ids[i] + ":" + ids[j]);
+      }
+    }
+    const out = await on.recall(DESSERT_Q, 1);
+    assert.ok(/lemon bars/.test(primaryBlock(out)));
+    assert.strictEqual(fs.readFileSync(assoc, "utf8").includes("resonance-edges"), false,
+      ".assoc.json must stay the old format (untouched)");
+    void out;
   });
 }
 
