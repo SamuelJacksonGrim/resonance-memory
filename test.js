@@ -42,6 +42,7 @@ const {
   detectSupersession, hasSupersedeCue,
   detectNearDuplicate, pickMergeSurvivor,
   normalizeText, splitFacts, guardSecrets, prepareWrite, isStandaloneFact,
+  isVector, hasVector,
 } = require("./record.js");
 
 let passed = 0, failed = 0;
@@ -107,6 +108,44 @@ test("normalize treats a JSON-null embedding_version as missing (defaults to 1)"
   // JSON null. Next read must not keep null — version comparison needs a number.
   const r = normalize({ id: 1, text: "hi", embedding_version: null });
   assert.strictEqual(r.embedding_version, 1);
+});
+
+test("normalize DROPS a Float32Array embedding (typed array is not Array.isArray)", () => {
+  // Spike trap: SqliteStore stored NULLs for a whole run because normalize()
+  // only keeps Array.isArray embeddings. The drop is the schema's job; the
+  // store attaches the typed array AFTER. This test fails if someone "fixes"
+  // normalize() to accept ArrayLike without updating the store contract.
+  const f32 = new Float32Array([1, 0, 0.5]);
+  const r = normalize({ id: 1, text: "x", embedding: f32 });
+  assert.strictEqual(r.embedding, null, "Float32Array must not survive normalize()");
+  const arr = normalize({ id: 2, text: "y", embedding: [1, 0, 0.5] });
+  assert.deepStrictEqual(arr.embedding, [1, 0, 0.5], "JSON number[] still kept");
+});
+
+test("isVector accepts both JSON number[] and Float32Array", () => {
+  assert.strictEqual(isVector([1, 0]), true);
+  assert.strictEqual(isVector(new Float32Array([1, 0])), true);
+  assert.strictEqual(isVector(null), false);
+  assert.strictEqual(isVector([]), false);
+  assert.strictEqual(hasVector({ embedding: new Float32Array([0.1, 0.2]) }), true);
+  assert.strictEqual(hasVector({ embedding: null }), false);
+});
+
+test("detectNearDuplicate sees a Float32Array neighbor (SqliteStore cache form)", () => {
+  const incoming = normalize({ id: 99, text: "I prefer tea", embedding: [1, 0] });
+  const stored = {
+    id: 1, text: "I prefer tea", embedding: new Float32Array([1, 0]),
+    deleted: false, valid_to: null,
+  };
+  const cosineFn = (a, b) => {
+    let d = 0, na = 0, nb = 0;
+    for (let i = 0; i < a.length; i++) { d += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; }
+    return na && nb ? d / (Math.sqrt(na) * Math.sqrt(nb)) : 0;
+  };
+  const hit = detectNearDuplicate(incoming, [stored], cosineFn, { hi: 0.95, lo: 0.88 });
+  assert.ok(hit, "typed-array neighbor must participate");
+  assert.strictEqual(hit.action, "restate");
+  assert.strictEqual(hit.match.id, 1);
 });
 
 test("isCurrent: superseded and deleted are both excluded", () => {
@@ -584,6 +623,243 @@ test("recall backfill of a vectorless row does NOT increment embedding_version",
   assert.strictEqual(s.get(1).embedding_version, 1, "backfill is not a re-embed");
 });
 
+// ------------------------------------------------- RM-07 SqliteStore + conformance
+section("SqliteStore (RM-07 drop-in) + Store conformance");
+
+const {
+  SqliteStore, openStore, resolveStoreBackend, sqlitePathFor,
+} = require("./store.js");
+
+function sqliteAvailable() {
+  try { require("node:sqlite"); return true; } catch { return false; }
+}
+
+function freshSqlite(name) {
+  const dir = tmp("sqlite-" + (name || Math.random().toString(36).slice(2)));
+  fs.mkdirSync(dir, { recursive: true });
+  const s = new SqliteStore(path.join(dir, "mem.db"));
+  return s;
+}
+
+function embClose(a, b, eps) {
+  eps = eps == null ? 1e-5 : eps;
+  if (a == null && b == null) return true;
+  if (!a || !b || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (Math.abs(a[i] - b[i]) > eps) return false;
+  return true;
+}
+
+function recFields(r) {
+  return {
+    id: String(r.id),
+    created: r.created,
+    text: r.text,
+    valid_from: r.valid_from,
+    valid_to: r.valid_to,
+    superseded_by: r.superseded_by == null ? null : String(r.superseded_by),
+    supersedes: r.supersedes == null ? null : String(r.supersedes),
+    revision: r.revision,
+    deleted: !!r.deleted,
+    is_constraint: !!r.is_constraint,
+    source: r.source,
+    embedding_version: r.embedding_version,
+    access_count: r.access_count,
+  };
+}
+
+if (!sqliteAvailable()) {
+  test("SqliteStore SKIPPED (node:sqlite not in this Node)", () => {
+    assert.ok(true);
+  });
+} else {
+
+test("resolveStoreBackend defaults to sqlite; jsonl pin stays", () => {
+  const prev = process.env.RESONANCE_STORE;
+  try {
+    delete process.env.RESONANCE_STORE;
+    assert.strictEqual(resolveStoreBackend(null), "sqlite");
+    assert.strictEqual(resolveStoreBackend({}), "sqlite");
+    assert.strictEqual(resolveStoreBackend({ store: "jsonl" }), "jsonl", "live-config pin");
+    assert.strictEqual(resolveStoreBackend({ store: "sqlite" }), "sqlite");
+    process.env.RESONANCE_STORE = "jsonl";
+    assert.strictEqual(resolveStoreBackend(null), "jsonl", "env pin");
+    assert.strictEqual(resolveStoreBackend({ store: "sqlite" }), "sqlite", "config beats env");
+    process.env.RESONANCE_STORE = "sqlite";
+    assert.strictEqual(resolveStoreBackend(null), "sqlite");
+    assert.strictEqual(sqlitePathFor("C:/data/resonance-memory.jsonl").replace(/\\/g, "/"),
+      "C:/data/resonance-memory.db");
+    assert.strictEqual(sqlitePathFor("mem.db"), "mem.db");
+  } finally {
+    if (prev == null) delete process.env.RESONANCE_STORE;
+    else process.env.RESONANCE_STORE = prev;
+  }
+});
+
+test("SqliteStore NEVER constructs AccessLog (BUG-007 trap)", () => {
+  const s = freshSqlite("no-access");
+  assert.strictEqual(s.access, undefined, "no AccessLog on the instance");
+  assert.ok(!fs.existsSync(s.file + ".access.json"), "must not create a sidecar");
+  // A leftover live sidecar next to the .db is ignored — counts come from the row.
+  fs.writeFileSync(s.file + ".access.json", JSON.stringify({ counts: { "1": { n: 99, last: "X" } } }));
+  s.add(normalize({ id: 1, text: "x", created: "2026-01-01T00:00:00.000Z" }));
+  assert.strictEqual(s.get(1).access_count, 0, "leftover sidecar must not fold in");
+  s.applyRecall([1], new Map());
+  assert.strictEqual(s.get(1).access_count, 1, "in-table bump only");
+  assert.notStrictEqual(s.get(1).access_count, 100, "99 + 1 would be the doubling costume");
+  s.close();
+});
+
+test("SqliteStore preserves the opaque id (never AUTOINCREMENT-renumbers)", () => {
+  const s = freshSqlite("ids");
+  const id = 1700000000001;
+  s.add(normalize({ id, text: "keep this id", created: "2026-01-01T00:00:00.000Z" }));
+  assert.strictEqual(Number(s.get(id).id), id);
+  assert.strictEqual(Number(s.current()[0].id), id);
+  s.add(normalize({ id: 7, text: "small id", created: "2026-01-01T00:00:00.000Z" }));
+  assert.strictEqual(Number(s.get(7).id), 7, "a small explicit id is not reassigned to 1 or 2");
+  assert.strictEqual(s.all().length, 2);
+  s.close();
+});
+
+test("SqliteStore preserves created as a real column", () => {
+  const s = freshSqlite("created");
+  const created = "2020-06-15T12:34:56.000Z";
+  s.add(normalize({ id: 1, text: "old fact", created, modified: "2021-01-01T00:00:00.000Z" }));
+  assert.strictEqual(s.get(1).created, created);
+  s.update(1, { text: "edited", modified: "2022-01-01T00:00:00.000Z" });
+  assert.strictEqual(s.get(1).created, created, "an edit must not rewrite created");
+  s.close();
+  const reopened = new SqliteStore(s.file);
+  assert.strictEqual(reopened.get(1).created, created, "created survives reopen");
+  reopened.close();
+});
+
+test("SqliteStore attaches Float32Array AFTER normalize() (typed-array trap)", () => {
+  const s = freshSqlite("f32");
+  const f32 = new Float32Array([1, 0, 0.25]);
+  s.add({
+    id: 1, text: "vec", created: "2026-01-01T00:00:00.000Z",
+    modified: "2026-01-01T00:00:00.000Z", embedding: f32,
+  });
+  const got = s.get(1);
+  assert.ok(got.embedding instanceof Float32Array, "store returns typed array, not number[]");
+  assert.ok(embClose(got.embedding, f32), "round-trip within 1e-5");
+  assert.strictEqual(normalize({ embedding: got.embedding }).embedding, null,
+    "normalize still drops it — attach-after is the store's job");
+  s.close();
+});
+
+test("I5-SQLite / BUG-002: recall updates only retention columns on returned rows", () => {
+  const s = freshSqlite("bug002");
+  const created = "2026-01-01T00:00:00.000Z";
+  s.add(normalize({ id: 1, text: "a", embedding: [1, 0], created, source: "user_stated" }));
+  s.add(normalize({ id: 2, text: "b", embedding: [0, 1], created, source: "user_stated" }));
+  const snap = (r) => ({
+    id: Number(r.id), created: r.created, modified: r.modified, text: r.text,
+    valid_from: r.valid_from, valid_to: r.valid_to, last_confirmed: r.last_confirmed,
+    superseded_by: r.superseded_by, supersedes: r.supersedes, revision: r.revision,
+    needs_review: r.needs_review, embedding_version: r.embedding_version,
+    source: r.source, is_constraint: r.is_constraint, deleted: r.deleted,
+    embedding: Array.from(r.embedding || []),
+  });
+  const before1 = snap(s.get(1));
+  const before2 = snap(s.get(2));
+  const nBefore = s.all().length;
+  s.applyRecall([1], new Map());
+  assert.strictEqual(s.all().length, nBefore, "row count unchanged");
+  const after1 = s.get(1);
+  const after2 = s.get(2);
+  assert.strictEqual(after1.access_count, 1, "returned row was bumped");
+  assert.ok(after1.last_access, "last_access stamped");
+  assert.deepStrictEqual(snap(after1), before1, "no non-retention column on id 1 changed");
+  assert.strictEqual(after2.access_count, 0, "non-returned row not bumped");
+  assert.strictEqual(after2.last_access, null);
+  assert.deepStrictEqual(snap(after2), before2, "id 2 entirely untouched");
+  s.close();
+});
+
+test("SqliteStore: access_count does not double after an edit (BUG-007 class)", () => {
+  const s = freshSqlite("no-double");
+  s.add(normalize({ id: 1, text: "x", created: "2026-01-01T00:00:00.000Z" }));
+  s.applyRecall([1], new Map());
+  s.applyRecall([1], new Map());
+  assert.strictEqual(s.get(1).access_count, 2);
+  s.update(1, { text: "edited" });
+  assert.strictEqual(s.get(1).access_count, 2, "edit must not inflate");
+  s.close();
+});
+
+test("SqliteStore vacuum drops deleted rows, keeps counts on survivors", () => {
+  const s = freshSqlite("vac");
+  s.add(normalize({ id: 1, text: "keep", created: "2026-01-01T00:00:00.000Z" }));
+  s.add(normalize({ id: 2, text: "gone", deleted: true, created: "2026-01-01T00:00:00.000Z" }));
+  s.applyRecall([1], new Map());
+  assert.strictEqual(s.hasDeleted(), true);
+  assert.strictEqual(s.vacuum(), 1);
+  assert.strictEqual(s.all().length, 1);
+  assert.strictEqual(s.get(1).access_count, 1);
+  assert.strictEqual(s.hasDeleted(), false);
+  s.close();
+});
+
+test("SqliteStore nextId stays unique under rapid saves", () => {
+  const s = freshSqlite("nextid");
+  const ids = [];
+  for (let i = 0; i < 200; i++) {
+    const id = s.nextId();
+    ids.push(String(id));
+    s.add(normalize({ id, text: "m" + i, created: "2026-01-01T00:00:00.000Z" }));
+  }
+  assert.strictEqual(new Set(ids).size, 200);
+  assert.strictEqual(s.all().length, 200);
+  s.close();
+});
+
+test("conformance: add/get/current/active/updateMany/vacuum match JsonlStore", () => {
+  const created = "2026-03-01T00:00:00.000Z";
+  const jsonl = freshStore();
+  const sqlite = freshSqlite("conf");
+  const recs = [
+    normalize({ id: 1, text: "I work at Acme", embedding: [1, 0, 0], created }),
+    normalize({ id: 2, text: "I prefer tea", embedding: [0, 1, 0], created }),
+    normalize({ id: 3, text: "gone", deleted: true, embedding: [0, 0, 1], created }),
+  ];
+  for (const r of recs) { jsonl.add(r); sqlite.add(r); }
+
+  const cmp = (a, b, label) => {
+    assert.strictEqual(a.length, b.length, label + " length");
+    const A = a.map(recFields).sort((x, y) => x.id.localeCompare(y.id));
+    const B = b.map(recFields).sort((x, y) => x.id.localeCompare(y.id));
+    assert.deepStrictEqual(A, B, label + " fields");
+    for (let i = 0; i < a.length; i++) {
+      const ja = jsonl.get(A[i].id), sa = sqlite.get(A[i].id);
+      assert.ok(embClose(ja.embedding, sa.embedding), label + " embedding id " + A[i].id);
+    }
+  };
+  cmp(jsonl.current(), sqlite.current(), "current");
+  cmp(jsonl.active(), sqlite.active(), "active");
+  cmp(jsonl.all(), sqlite.all(), "all");
+
+  const p = supersedePatches(jsonl.get(1), jsonl.get(2), "T2");
+  assert.strictEqual(jsonl.updateMany({ "1": p.old, "2": p.new }), 2);
+  assert.strictEqual(sqlite.updateMany({ "1": p.old, "2": p.new }), 2);
+  cmp(jsonl.current(), sqlite.current(), "after supersession current");
+  cmp(jsonl.active(), sqlite.active(), "after supersession active");
+  assert.strictEqual(jsonl.get(1).valid_to, sqlite.get(1).valid_to);
+  assert.strictEqual(String(jsonl.get(1).superseded_by), String(sqlite.get(1).superseded_by));
+
+  jsonl.applyRecall([2], new Map());
+  sqlite.applyRecall([2], new Map());
+  assert.strictEqual(jsonl.get(2).access_count, sqlite.get(2).access_count);
+  assert.strictEqual(jsonl.get(1).access_count, sqlite.get(1).access_count);
+
+  assert.strictEqual(jsonl.vacuum(), sqlite.vacuum());
+  cmp(jsonl.all(), sqlite.all(), "after vacuum");
+  sqlite.close();
+});
+
+} // sqliteAvailable
+
 // ------------------------------------------------- associative field topology
 section("associative field: reciprocal kNN (RM-00)");
 
@@ -675,6 +951,7 @@ const {
   IncompatibleEdgeFormatError,
   SIDECAR_KIND, SIDECAR_VERSION, EdgeStore,
   DEDUP_LRU_SIZE, canonRequestId,
+  SqliteEdgePersist, openEdgeStore, migrateEdgesSidecarIntoDb, isSqliteStore, envelope,
   effectiveHebbian, lambdaFromHalfLife, halfLifeFor, hebbianDecayType,
   elapsedSeconds, HALF_LIFE_SECONDS, DEFAULT_HALF_LIFE_TYPE, DAY, HOUR,
   SEMANTIC_PRUNE_GATE, HEBBIAN_PRUNE_FLOOR,
@@ -685,6 +962,52 @@ const { Ledger } = require("./ledger.js");
 const T0 = "2026-09-05T00:00:00.000Z";
 function plusIso(iso, seconds) {
   return new Date(Date.parse(iso) + seconds * 1000).toISOString();
+}
+
+// RM-07 slice 5: the Phase 0.2–0.5 edge matrix runs against BOTH persistence
+// adapters. JSON sidecar stays the JsonlStore companion; sqlite shares the
+// SqliteStore connection. Behaviour must be identical (the API did not move).
+function persistKinds() {
+  const kinds = ["json"];
+  if (typeof sqliteAvailable === "function" && sqliteAvailable()) kinds.push("sqlite");
+  return kinds;
+}
+
+function makeEdgeStore(kind, name, opts) {
+  opts = opts || {};
+  if (kind === "sqlite") {
+    const dir = tmp("edb-" + name);
+    fs.mkdirSync(dir, { recursive: true });
+    const store = new SqliteStore(path.join(dir, "mem.db"));
+    const persist = new SqliteEdgePersist(store.db);
+    const E = new EdgeStore(null, Object.assign({}, opts, { persist }));
+    E._ownedStore = store;
+    return E;
+  }
+  return new EdgeStore(tmp(name + ".edges.json"), opts);
+}
+
+function reopenEdgeStore(E, opts) {
+  opts = opts || {};
+  const now = opts.now || E.now;
+  if (E.persist && E.persist.kind === "sqlite") {
+    const file = E._ownedStore.file;
+    try { E._ownedStore.close(); } catch { /* reopening */ }
+    const store = new SqliteStore(file);
+    const E2 = new EdgeStore(null, Object.assign({}, opts, {
+      persist: new SqliteEdgePersist(store.db),
+      now,
+    }));
+    E2._ownedStore = store;
+    return E2;
+  }
+  return new EdgeStore(E.file, Object.assign({ now }, opts));
+}
+
+function ptest(name, fn) {
+  for (const kind of persistKinds()) {
+    test(name + " [" + kind + "]", () => fn(kind));
+  }
 }
 
 test("edgeKey is undirected: A↔B and B↔A are one edge", () => {
@@ -870,9 +1193,8 @@ test("readLegacyAssoc still accepts a real .assoc.json", () => {
   assert.strictEqual(sidecarKind({ recalls: 7, edges: { "1:2": 0.4 } }), "legacy-assoc");
 });
 
-test("persistence round-trip: write → reload → identical records", () => {
-  const file = tmp("roundtrip.edges.json");
-  const a = new EdgeStore(file, { now: () => T0 });
+ptest("persistence round-trip: write → reload → identical records", (kind) => {
+  const a = makeEdgeStore(kind, "roundtrip", { now: () => T0 });
   const e1 = makeEdge(1, 2, {
     origin: "save-time-neighbor", now: T0,
     semantic: { value: 0.61, src_versions: { a: 1, b: 3 } },
@@ -881,7 +1203,7 @@ test("persistence round-trip: write → reload → identical records", () => {
   a.put(e1);
   a.put(e2);
   a.save();
-  const b = new EdgeStore(file, { now: () => T0 });
+  const b = reopenEdgeStore(a, { now: () => T0 });
   assert.strictEqual(b.size, 2);
   assert.deepStrictEqual(b.get(2, 1), a.get(1, 2));
   assert.deepStrictEqual(b.get(4, 5), a.get(5, 4));
@@ -931,8 +1253,8 @@ test("old Ledger.save stripping kind does not drop records (envelope recovery)",
   assert.throws(() => readLegacyAssoc(JSON.parse(fs.readFileSync(file, "utf8"))), IncompatibleEdgeFormatError);
 });
 
-test("incident() lists unpruned edges for an endpoint (Slice C absorption helper)", () => {
-  const store = new EdgeStore(tmp("incident.json"), { now: () => T0 });
+ptest("incident() lists unpruned edges for an endpoint (Slice C absorption helper)", (kind) => {
+  const store = makeEdgeStore(kind, "incident", { now: () => T0 });
   store.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 0.2 }));
   store.put(makeEdge(1, 3, { origin: "save-time-neighbor", now: T0 }));
   store.put(makeEdge(4, 5, { origin: "co-activation", now: T0 }));
@@ -995,9 +1317,9 @@ test("corrupt .edges.json fails open and does NOT fall back to .assoc.json", () 
 });
 
 // --- Hebbian math: moving storage must not move the numbers -----------------
-test("EdgeStore.bonus matches shipped Ledger.bonus on the same weights (tanh bound)", () => {
-  const L = new Ledger(tmp("math-l.assoc.json"));
-  const E = new EdgeStore(tmp("math-e.edges.json"), { now: () => T0 });
+ptest("EdgeStore.bonus matches shipped Ledger.bonus on the same weights (tanh bound)", (kind) => {
+  const L = new Ledger(tmp("math-l-" + kind + ".assoc.json"));
+  const E = makeEdgeStore(kind, "math-e", { now: () => T0 });
   L.edges.set("1:2", 0.4);
   L.edges.set("1:3", 1.2);
   E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 0.4 }));
@@ -1009,9 +1331,9 @@ test("EdgeStore.bonus matches shipped Ledger.bonus on the same weights (tanh bou
   assert.strictEqual(E.bonus(9, 9), 0);
 });
 
-test("EdgeStore.reinforceRecall + tick match Ledger on the same event (alphaPP/PN/NN + epoch decay)", () => {
-  const L = new Ledger(tmp("reinf-l.assoc.json"));
-  const E = new EdgeStore(tmp("reinf-e.edges.json"), { now: () => T0 });
+ptest("EdgeStore.reinforceRecall + tick match Ledger on the same event (alphaPP/PN/NN + epoch decay)", (kind) => {
+  const L = new Ledger(tmp("reinf-l-" + kind + ".assoc.json"));
+  const E = makeEdgeStore(kind, "reinf-e", { now: () => T0 });
   L.reinforceRecall(["1", "2"], ["3", "4"]);
   E.reinforceRecall(["1", "2"], ["3", "4"]);
   assert.strictEqual(E.weight(1, 2), L.weight(1, 2), "primary<->primary alphaPP");
@@ -1041,10 +1363,10 @@ test("migrated .assoc.json produces the same Hebbian bonuses as shipped Ledger",
   assert.strictEqual(E.recalls, L.recalls, "epoch clock imported");
 });
 
-test("retired epoch decay does not stamp hebbian.last_updated (live clock is wall-clock)", () => {
+ptest("retired epoch decay does not stamp hebbian.last_updated (live clock is wall-clock)", (kind) => {
   // tick() is off the live path as of 0.2; this only proves the retired copy
   // still matches Ledger and does not mix clocks if someone replays it.
-  const E = new EdgeStore(tmp("decay-stamp.edges.json"), { now: () => T0 });
+  const E = makeEdgeStore(kind, "decay-stamp", { now: () => T0 });
   E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 1.0 }));
   for (let i = 0; i < 10; i++) E.tick();
   assert.ok(E.weight(1, 2) < 1.0, "decayed");
@@ -1077,9 +1399,9 @@ test("hebbianDecayType: a constraint endpoint gets the long half-life class", ()
   assert.strictEqual(hebbianDecayType(null, null), "fact");
 });
 
-test("I6 proof: 100 reads under a FROZEN clock leave stored weight + last_updated unmoved; then reinforce does change them", () => {
+ptest("I6 proof: 100 reads under a FROZEN clock leave stored weight + last_updated unmoved; then reinforce does change them", (kind) => {
   let now = T0;
-  const E = new EdgeStore(tmp("i6-frozen.edges.json"), { now: () => now });
+  const E = makeEdgeStore(kind, "i6-frozen", { now: () => now });
   const e0 = E.put(makeEdge(1, 2, {
     origin: "co-activation", now: T0, hebbianWeight: 1.0,
     semantic: { value: 0.72, src_versions: { a: 1, b: 1 } },
@@ -1096,6 +1418,7 @@ test("I6 proof: 100 reads under a FROZEN clock leave stored weight + last_update
   assert.deepStrictEqual(after.hebbian, hebSnap, "stored Hebbian bytes unmoved by reads (I6)");
   assert.deepStrictEqual(after.semantic, semSnap, "semantic unmoved by reads");
   assert.strictEqual(effectiveHebbian(after, now), 1.0, "frozen clock → effective == stored");
+  assert.strictEqual(E.persist.writes, 0, "a read must not persist (SELECT is not an UPDATE)");
   // Genuine reinforcement, after the clock has moved, MUST change both.
   now = plusIso(T0, 60);
   E.reinforceRecall(["1", "2"], []);
@@ -1138,9 +1461,9 @@ test("negative clock delta clamps to no decay (cannot amplify)", () => {
   assert.ok(effectiveHebbian(e, plusIso(T0, 1), { type: "fact" }) < 0.6, "forward still decays");
 });
 
-test("semantic does NOT decay while Hebbian does", () => {
+ptest("semantic does NOT decay while Hebbian does", (kind) => {
   let now = T0;
-  const E = new EdgeStore(tmp("sem-vs-heb.edges.json"), { now: () => now });
+  const E = makeEdgeStore(kind, "sem-vs-heb", { now: () => now });
   E.put(makeEdge(1, 2, {
     origin: "save-time-neighbor", now: T0, hebbianWeight: 1.0,
     semantic: { value: 0.81, src_versions: { a: 1, b: 1 } },
@@ -1153,9 +1476,9 @@ test("semantic does NOT decay while Hebbian does", () => {
   assert.strictEqual(E.get(1, 2).hebbian.last_updated, T0, "read must not stamp last_updated");
 });
 
-test("bonus uses effectiveHebbian, not the stored weight", () => {
+ptest("bonus uses effectiveHebbian, not the stored weight", (kind) => {
   let now = T0;
-  const E = new EdgeStore(tmp("bonus-eff.edges.json"), { now: () => now });
+  const E = makeEdgeStore(kind, "bonus-eff", { now: () => now });
   E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 1.0 }));
   assert.strictEqual(E.bonus(1, 2), 0.3 * Math.tanh(1.0), "Δt=0 → tanh(stored)");
   now = plusIso(T0, HALF_LIFE_SECONDS.fact);
@@ -1191,10 +1514,10 @@ test("canonRequestId: missing/null/empty are no-id; 0 is a real id; 1 and \"1\" 
   assert.strictEqual(canonRequestId("req-abc"), "s:req-abc");
 });
 
-test("reinforce after a long idle materializes decay first (no ghost weight)", () => {
+ptest("reinforce after a long idle materializes decay first (no ghost weight)", (kind) => {
   // Failure signature: stored becomes original+α instead of decayed+α.
   let now = T0;
-  const E = new EdgeStore(tmp("m-idle.edges.json"), { now: () => now });
+  const E = makeEdgeStore(kind, "m-idle", { now: () => now });
   const e0 = E.put(makeEdge(1, 2, {
     origin: "co-activation", now: T0, hebbianWeight: 1.0,
     semantic: { value: 0.77, src_versions: { a: 1, b: 1 } },
@@ -1219,21 +1542,21 @@ test("reinforce after a long idle materializes decay first (no ghost weight)", (
   assert.strictEqual(after.pruned_at, null, "already-active edge: reactivate is a no-op");
 });
 
-test("Δt=0 reinforce is byte-identical to the pre-0.3 stored+α rule (why the golden holds)", () => {
-  const E = new EdgeStore(tmp("m-dt0.edges.json"), { now: () => T0 });
+ptest("Δt=0 reinforce is byte-identical to the pre-0.3 stored+α rule (why the golden holds)", (kind) => {
+  const E = makeEdgeStore(kind, "m-dt0", { now: () => T0 });
   E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 1.0 }));
   E.reinforceRecall(["1", "2"], []);
   assert.strictEqual(E.weight(1, 2), 1.0 + E.alphaPP, "fresh edge: materialize is a no-op");
   assert.strictEqual(E.get(1, 2).hebbian.last_updated, T0);
   // Ledger parity at Δt=0: same number the retired path would have written.
-  const L = new Ledger(tmp("m-dt0.assoc.json"));
+  const L = new Ledger(tmp("m-dt0-" + kind + ".assoc.json"));
   L.edges.set("1:2", 1.0);
   L.reinforceRecall(["1", "2"], []);
   assert.strictEqual(E.weight(1, 2), L.weight(1, 2), "Δt=0 matches Ledger.reinforceRecall");
 });
 
-test("same request id retried applies exactly once", () => {
-  const E = new EdgeStore(tmp("m-once.edges.json"), { now: () => T0 });
+ptest("same request id retried applies exactly once", (kind) => {
+  const E = makeEdgeStore(kind, "m-once", { now: () => T0 });
   E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 0 }));
   const first = E.reinforceRecall(["1", "2"], [], "req-1");
   const w = E.weight(1, 2);
@@ -1245,16 +1568,16 @@ test("same request id retried applies exactly once", () => {
   assert.ok(E.hasProcessed("req-1"));
 });
 
-test("two distinct request ids reinforcing the same pair both apply", () => {
-  const E = new EdgeStore(tmp("m-two.edges.json"), { now: () => T0 });
+ptest("two distinct request ids reinforcing the same pair both apply", (kind) => {
+  const E = makeEdgeStore(kind, "m-two", { now: () => T0 });
   E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 0 }));
   assert.strictEqual(E.reinforceRecall(["1", "2"], [], "req-A"), true);
   assert.strictEqual(E.reinforceRecall(["1", "2"], [], "req-B"), true);
   assert.strictEqual(E.weight(1, 2), 2 * E.alphaPP);
 });
 
-test("no-id caller applies every time (eval / non-JSON-RPC must not dedup or crash)", () => {
-  const E = new EdgeStore(tmp("m-noid.edges.json"), { now: () => T0 });
+ptest("no-id caller applies every time (eval / non-JSON-RPC must not dedup or crash)", (kind) => {
+  const E = makeEdgeStore(kind, "m-noid", { now: () => T0 });
   E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 0 }));
   assert.strictEqual(E.reinforceRecall(["1", "2"], []), true);
   assert.strictEqual(E.reinforceRecall(["1", "2"], [], undefined), true);
@@ -1263,27 +1586,31 @@ test("no-id caller applies every time (eval / non-JSON-RPC must not dedup or cra
   assert.strictEqual(E.processedIds.length, 0, "no-id is never recorded");
 });
 
-test("dedup record and weight land in one durable sidecar write", () => {
-  const file = tmp("m-atomic.edges.json");
-  const E = new EdgeStore(file, { now: () => T0 });
+ptest("dedup record and weight land in one durable write", (kind) => {
+  const E = makeEdgeStore(kind, "m-atomic", { now: () => T0 });
   E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 0.4 }));
   E.reinforceRecall(["1", "2"], [], 42);
   E.save();
-  const j = JSON.parse(fs.readFileSync(file, "utf8"));
-  assert.strictEqual(j.kind, SIDECAR_KIND);
-  assert.deepStrictEqual(j.processed_ids, [42], "id is in the same envelope as the edges");
-  assert.strictEqual(j.edges["1:2"].hebbian.weight, 0.4 + E.alphaPP);
-  // Reload: both facts survive one parse, which is the pair I5 cannot
-  // otherwise make atomic if they were two files.
-  const E2 = new EdgeStore(file, { now: () => T0 });
+  if (kind === "json") {
+    const j = JSON.parse(fs.readFileSync(E.file, "utf8"));
+    assert.strictEqual(j.kind, SIDECAR_KIND);
+    assert.deepStrictEqual(j.processed_ids, [42], "id is in the same envelope as the edges");
+    assert.strictEqual(j.edges["1:2"].hebbian.weight, 0.4 + E.alphaPP);
+  } else {
+    const n = E.persist.db.prepare("SELECT COUNT(*) AS n FROM edge_processed_ids").get().n;
+    assert.strictEqual(Number(n), 1, "id claimed in the same db as the edges");
+    const row = E.persist.db.prepare("SELECT hebbian_weight FROM edges WHERE a='1' AND b='2'").get();
+    assert.strictEqual(row.hebbian_weight, 0.4 + E.alphaPP);
+  }
+  const E2 = reopenEdgeStore(E, { now: () => T0 });
   assert.ok(E2.hasProcessed(42));
   assert.strictEqual(E2.weight(1, 2), 0.4 + E.alphaPP);
   assert.strictEqual(E2.reinforceRecall(["1", "2"], [], 42), false, "survives process restart");
 });
 
-test("DEDUP_LRU_SIZE bound: the oldest id is evicted and can apply again", () => {
+ptest("DEDUP_LRU_SIZE bound: the oldest id is evicted and can apply again", (kind) => {
   assert.strictEqual(DEDUP_LRU_SIZE, 256, "bound is a named constant, not a magic number");
-  const E = new EdgeStore(tmp("m-lru.edges.json"), { now: () => T0 });
+  const E = makeEdgeStore(kind, "m-lru", { now: () => T0 });
   E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 0 }));
   for (let i = 0; i < DEDUP_LRU_SIZE; i++) {
     assert.strictEqual(E.reinforceRecall(["1", "2"], [], "id-" + i), true);
@@ -1300,9 +1627,9 @@ test("DEDUP_LRU_SIZE bound: the oldest id is evicted and can apply again", () =>
   assert.strictEqual(E.weight(1, 2), w + E.alphaPP);
 });
 
-test("materialize uses the caller-supplied half-life class (constraint vs working)", () => {
+ptest("materialize uses the caller-supplied half-life class (constraint vs working)", (kind) => {
   let now = T0;
-  const E = new EdgeStore(tmp("m-type.edges.json"), { now: () => now });
+  const E = makeEdgeStore(kind, "m-type", { now: () => now });
   E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 1.0 }));
   now = plusIso(T0, HOUR);
   E.reinforceRecall(["1", "2"], [], { type: "working" });
@@ -1310,17 +1637,17 @@ test("materialize uses the caller-supplied half-life class (constraint vs workin
     "working H=1h → one hour fades to half, then +α");
 });
 
-test("numeric 0 is a real request id (not treated as no-id)", () => {
-  const E = new EdgeStore(tmp("m-zero.edges.json"), { now: () => T0 });
+ptest("numeric 0 is a real request id (not treated as no-id)", (kind) => {
+  const E = makeEdgeStore(kind, "m-zero", { now: () => T0 });
   E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 0 }));
   assert.strictEqual(E.reinforceRecall(["1", "2"], [], 0), true);
   assert.strictEqual(E.reinforceRecall(["1", "2"], [], 0), false);
   assert.strictEqual(E.weight(1, 2), E.alphaPP);
 });
 
-test("decay-to-zero (computed) leaves the edge alive with semantic intact", () => {
+ptest("decay-to-zero (computed) leaves the edge alive with semantic intact", (kind) => {
   let now = T0;
-  const E = new EdgeStore(tmp("decay-zero.edges.json"), { now: () => now });
+  const E = makeEdgeStore(kind, "decay-zero", { now: () => now });
   E.put(makeEdge(1, 2, {
     origin: "save-time-neighbor", now: T0, hebbianWeight: 0.4,
     semantic: { value: 0.66, src_versions: { a: 1, b: 1 } },
@@ -1351,10 +1678,10 @@ function putCombo(store, a, b, heb, sem) {
   }));
 }
 
-test("pruneSweep fires only for unreinforced AND semantically weak (4 combinations)", () => {
+ptest("pruneSweep fires only for unreinforced AND semantically weak (4 combinations)", (kind) => {
   // Failure signature: a merged scalar prunes the strong-semantic rarely-recalled
   // pair and constraint rescue regresses (RESULTS field experiment #2).
-  const E = new EdgeStore(tmp("p-4combo.edges.json"), { now: () => T0 });
+  const E = makeEdgeStore(kind, "p-4combo", { now: () => T0 });
   putCombo(E, 1, 2, 1.0, 0.70);   // reinforced + strong
   putCombo(E, 3, 4, 1.0, 0.10);   // reinforced + weak
   putCombo(E, 5, 6, 0, 0.70);     // unreinforced + strong  ← must SURVIVE
@@ -1369,8 +1696,8 @@ test("pruneSweep fires only for unreinforced AND semantically weak (4 combinatio
   assert.strictEqual(E.get(7, 8).first_pruned_at, T0);
 });
 
-test("semantic exactly at the prune gate survives (same >= as save-time bind)", () => {
-  const E = new EdgeStore(tmp("p-gate.edges.json"), { now: () => T0 });
+ptest("semantic exactly at the prune gate survives (same >= as save-time bind)", (kind) => {
+  const E = makeEdgeStore(kind, "p-gate", { now: () => T0 });
   putCombo(E, 1, 2, 0, SEMANTIC_PRUNE_GATE);          // 0.25 on the gate
   putCombo(E, 3, 4, 0, SEMANTIC_PRUNE_GATE - 1e-9);    // just under
   E.pruneSweep();
@@ -1378,8 +1705,8 @@ test("semantic exactly at the prune gate survives (same >= as save-time bind)", 
   assert.ok(E.get(3, 4).pruned_at, "just under 0.25 prunes when unreinforced");
 });
 
-test("null/empty semantic is weak: unreinforced migrated edges prune", () => {
-  const E = new EdgeStore(tmp("p-nullsem.edges.json"), { now: () => T0 });
+ptest("null/empty semantic is weak: unreinforced migrated edges prune", (kind) => {
+  const E = makeEdgeStore(kind, "p-nullsem", { now: () => T0 });
   E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 0, migrated_from: "assoc.json" }));
   E.put(makeEdge(3, 4, { origin: "co-activation", now: T0, hebbianWeight: 0.8, migrated_from: "assoc.json" }));
   E.pruneSweep();
@@ -1387,9 +1714,9 @@ test("null/empty semantic is weak: unreinforced migrated edges prune", () => {
   assert.strictEqual(E.get(3, 4).pruned_at, null, "no semantic but still reinforced → keep");
 });
 
-test("decayed-to-~0 Hebbian counts as unreinforced (effective, not stored)", () => {
+ptest("decayed-to-~0 Hebbian counts as unreinforced (effective, not stored)", (kind) => {
   let now = T0;
-  const E = new EdgeStore(tmp("p-decayed.edges.json"), { now: () => now });
+  const E = makeEdgeStore(kind, "p-decayed", { now: () => now });
   putCombo(E, 1, 2, 0.4, 0.10);   // will be unreinforced+weak after idle
   putCombo(E, 3, 4, 0.4, 0.70);   // will be unreinforced+strong after idle
   now = plusIso(T0, 100 * HALF_LIFE_SECONDS.fact);
@@ -1404,11 +1731,11 @@ test("decayed-to-~0 Hebbian counts as unreinforced (effective, not stored)", () 
   assert.strictEqual(E.get(1, 2).hebbian.last_updated, T0, "prune does not stamp last_updated");
 });
 
-test("a semantically-strong unreinforced edge still serves constraint-rescue after a sweep", () => {
+ptest("a semantically-strong unreinforced edge still serves constraint-rescue after a sweep", (kind) => {
   // The live field.js walk rebuilds from embeddings (it does not yet read
   // this table), but the failure signature is about THIS record vanishing.
   // incident() is the retrieval surface a later rescue walk would use.
-  const E = new EdgeStore(tmp("p-rescue.edges.json"), { now: () => T0 });
+  const E = makeEdgeStore(kind, "p-rescue", { now: () => T0 });
   putCombo(E, "lemon", "diabetic", 0, 0.60);   // >= CONSTRAINT_GATE 0.45
   putCombo(E, "lemon", "noise", 0, 0.10);
   E.pruneSweep();
@@ -1419,9 +1746,8 @@ test("a semantically-strong unreinforced edge still serves constraint-rescue aft
   assert.ok(inc[0].semantic.value >= 0.45, "surviving bridge still clears the rescue gate");
 });
 
-test("I8: pruned edges are excluded from retrieval but the record persists and reloads", () => {
-  const file = tmp("p-i8.edges.json");
-  const E = new EdgeStore(file, { now: () => T0 });
+ptest("I8: pruned edges are excluded from retrieval but the record persists and reloads", (kind) => {
+  const E = makeEdgeStore(kind, "p-i8", { now: () => T0 });
   putCombo(E, 1, 2, 0, 0.10);
   putCombo(E, 1, 3, 0, 0.70);
   E.pruneSweep();
@@ -1432,25 +1758,24 @@ test("I8: pruned edges are excluded from retrieval but the record persists and r
   assert.strictEqual(E.weight(1, 2), 0, "weight() of a pruned edge is 0");
   assert.strictEqual(E.bonus(1, 2), 0, "bonus() of a pruned edge is 0");
   assert.ok(E.hasPruned());
-  // Reload: the marker survives, the row survives.
-  const E2 = new EdgeStore(file, { now: () => T0 });
+  const E2 = reopenEdgeStore(E, { now: () => T0 });
   assert.strictEqual(E2.size, 2);
   assert.ok(E2.get(1, 2).pruned_at);
   assert.strictEqual(E2.get(1, 2).prune_count, 1);
   assert.strictEqual(E2.incident(1).length, 1);
 });
 
-test("a second pruneSweep of an already-pruned edge is a no-op (prune_count stays 1)", () => {
-  const E = new EdgeStore(tmp("p-twice.edges.json"), { now: () => T0 });
+ptest("a second pruneSweep of an already-pruned edge is a no-op (prune_count stays 1)", (kind) => {
+  const E = makeEdgeStore(kind, "p-twice", { now: () => T0 });
   putCombo(E, 1, 2, 0, 0.10);
   assert.strictEqual(E.pruneSweep(), 1);
   assert.strictEqual(E.pruneSweep(), 0);
   assert.strictEqual(E.get(1, 2).prune_count, 1);
 });
 
-test("reactivate preserves created_at, prune_count, first_pruned_at, and the decayed weight", () => {
+ptest("reactivate preserves created_at, prune_count, first_pruned_at, and the decayed weight", (kind) => {
   let now = T0;
-  const E = new EdgeStore(tmp("p-re.edges.json"), { now: () => now });
+  const E = makeEdgeStore(kind, "p-re", { now: () => now });
   const created = T0;
   E.put(makeEdge(1, 2, {
     origin: "co-activation", now: created, hebbianWeight: 1.0,
@@ -1476,17 +1801,17 @@ test("reactivate preserves created_at, prune_count, first_pruned_at, and the dec
   assert.strictEqual(E.incident(1).length, 1, "back in retrieval");
 });
 
-test("reactivate of an already-active edge is a no-op (last_reactivated_at stays null)", () => {
-  const E = new EdgeStore(tmp("p-re-noop.edges.json"), { now: () => T0 });
+ptest("reactivate of an already-active edge is a no-op (last_reactivated_at stays null)", (kind) => {
+  const E = makeEdgeStore(kind, "p-re-noop", { now: () => T0 });
   putCombo(E, 1, 2, 0, 0.70);
   assert.strictEqual(E.reactivateIncident(1), 0);
   assert.strictEqual(E.get(1, 2).last_reactivated_at, null);
   assert.strictEqual(E.get(1, 2).pruned_at, null);
 });
 
-test("reinforce of a pruned edge reactivates then materializes+α (does not reset to original)", () => {
+ptest("reinforce of a pruned edge reactivates then materializes+α (does not reset to original)", (kind) => {
   let now = T0;
-  const E = new EdgeStore(tmp("p-re-bump.edges.json"), { now: () => now });
+  const E = makeEdgeStore(kind, "p-re-bump", { now: () => now });
   putCombo(E, 1, 2, 1.0, 0.10);
   now = plusIso(T0, HALF_LIFE_SECONDS.fact);   // effective = 0.5; still above floor, so force-mark
   markPruned(E.get(1, 2), now);
@@ -1498,9 +1823,8 @@ test("reinforce of a pruned edge reactivates then materializes+α (does not rese
   assert.strictEqual(after.created_at, T0);
 });
 
-test("hard vacuum drops pruned edges and is explicit (does not run from pruneSweep)", () => {
-  const file = tmp("p-vac.edges.json");
-  const E = new EdgeStore(file, { now: () => T0 });
+ptest("hard vacuum drops pruned edges and is explicit (does not run from pruneSweep)", (kind) => {
+  const E = makeEdgeStore(kind, "p-vac", { now: () => T0 });
   putCombo(E, 1, 2, 0, 0.10);
   putCombo(E, 3, 4, 0, 0.70);
   E.pruneSweep();
@@ -1508,21 +1832,18 @@ test("hard vacuum drops pruned edges and is explicit (does not run from pruneSwe
   assert.strictEqual(E.vacuum(), 1, "vacuum returns remaining count, like JsonlStore");
   assert.strictEqual(E.get(1, 2), undefined, "pruned row is gone");
   assert.ok(E.get(3, 4), "active row kept");
-  const E2 = new EdgeStore(file, { now: () => T0 });
+  const E2 = reopenEdgeStore(E, { now: () => T0 });
   assert.strictEqual(E2.size, 1);
   assert.strictEqual(E2.get(1, 2), undefined);
 });
 
-test("pruneSweep with nothing to prune does not rewrite the sidecar", () => {
-  const file = tmp("p-nowrite.edges.json");
-  const E = new EdgeStore(file, { now: () => T0 });
+ptest("pruneSweep with nothing to prune does not rewrite persistence", (kind) => {
+  const E = makeEdgeStore(kind, "p-nowrite", { now: () => T0 });
   putCombo(E, 1, 2, 1.0, 0.70);
   E.save();
-  const before = fs.readFileSync(file, "utf8");
-  const mtime = fs.statSync(file).mtimeMs;
+  const writes = E.persist.writes;
   assert.strictEqual(E.pruneSweep(), 0);
-  assert.strictEqual(fs.readFileSync(file, "utf8"), before);
-  assert.strictEqual(fs.statSync(file).mtimeMs, mtime);
+  assert.strictEqual(E.persist.writes, writes, "no-op sweep must not persist");
 });
 
 test("shouldPrune helpers: the two-signal conjunction is the whole predicate", () => {
@@ -1593,56 +1914,225 @@ test("transition: EdgeStore.save failure does not throw and does not empty the i
   assert.strictEqual(E.get(1, 2).hebbian.weight, 0.4);
 });
 
-test("transition: soft prune writes the sidecar; semantic + hebbian + created_at + last_updated unmoved", () => {
-  const file = tmp("p05-soft-cols.edges.json");
-  const E = new EdgeStore(file, { now: () => T0 });
+ptest("transition: soft prune writes; semantic + hebbian + created_at + last_updated unmoved", (kind) => {
+  const E = makeEdgeStore(kind, "p05-soft-cols", { now: () => T0 });
   const e0 = putCombo(E, 1, 2, 0, 0.10);
   const created = e0.created_at;
   const hebSnap = JSON.parse(JSON.stringify(e0.hebbian));
   const semSnap = JSON.parse(JSON.stringify(e0.semantic));
   E.save();
-  const before = fs.readFileSync(file, "utf8");
+  const writes = E.persist.writes;
   assert.strictEqual(E.pruneSweep(), 1);
   const after = E.get(1, 2);
-  assert.notStrictEqual(fs.readFileSync(file, "utf8"), before, "Writes? yes");
+  assert.ok(E.persist.writes > writes, "Writes? yes");
   assert.deepStrictEqual(after.semantic, semSnap, "semantic unchanged");
   assert.deepStrictEqual(after.hebbian, hebSnap, "stored Hebbian unchanged (keeps the decayed value)");
   assert.strictEqual(after.created_at, created);
   assert.strictEqual(after.pruned_at, T0);
   assert.strictEqual(after.prune_count, 1);
-  const disk = JSON.parse(fs.readFileSync(file, "utf8"));
-  assert.strictEqual(disk.edges["1:2"].pruned_at, T0);
+  const E2 = reopenEdgeStore(E, { now: () => T0 });
+  assert.strictEqual(E2.get(1, 2).pruned_at, T0);
 });
 
-test("transition: hard compaction writes the sidecar and drops both signals", () => {
-  const file = tmp("p05-vac-write.edges.json");
-  const E = new EdgeStore(file, { now: () => T0 });
+ptest("transition: hard compaction writes and drops both signals", (kind) => {
+  const E = makeEdgeStore(kind, "p05-vac-write", { now: () => T0 });
   putCombo(E, 1, 2, 0, 0.10);
   putCombo(E, 3, 4, 0.8, 0.70);
   E.pruneSweep();
-  const before = fs.readFileSync(file, "utf8");
-  assert.ok(JSON.parse(before).edges["1:2"], "soft-pruned row still on disk");
+  const writes = E.persist.writes;
+  assert.ok(E.get(1, 2), "soft-pruned row still in the table");
   assert.strictEqual(E.vacuum(), 1);
-  const after = fs.readFileSync(file, "utf8");
-  assert.notStrictEqual(after, before, "Writes? yes");
-  const j = JSON.parse(after);
-  assert.strictEqual(j.edges["1:2"], undefined, "pruned row dropped (both signals gone)");
-  assert.ok(j.edges["3:4"], "active row kept");
-  assert.strictEqual(j.edges["3:4"].hebbian.weight, 0.8);
-  assert.strictEqual(j.edges["3:4"].semantic.value, 0.70);
+  assert.ok(E.persist.writes > writes, "Writes? yes");
+  const E2 = reopenEdgeStore(E, { now: () => T0 });
+  assert.strictEqual(E2.get(1, 2), undefined, "pruned row dropped (both signals gone)");
+  assert.ok(E2.get(3, 4), "active row kept");
+  assert.strictEqual(E2.get(3, 4).hebbian.weight, 0.8);
+  assert.strictEqual(E2.get(3, 4).semantic.value, 0.70);
 });
 
-test("transition: vacuum of nothing does not rewrite the sidecar", () => {
-  const file = tmp("p05-vac-nowrite.edges.json");
-  const E = new EdgeStore(file, { now: () => T0 });
+ptest("transition: vacuum of nothing does not rewrite persistence", (kind) => {
+  const E = makeEdgeStore(kind, "p05-vac-nowrite", { now: () => T0 });
   putCombo(E, 1, 2, 1.0, 0.70);
   E.save();
-  const before = fs.readFileSync(file, "utf8");
-  const mtime = fs.statSync(file).mtimeMs;
+  const writes = E.persist.writes;
   assert.strictEqual(E.vacuum(), 1, "remaining count, nothing dropped");
-  assert.strictEqual(fs.readFileSync(file, "utf8"), before);
-  assert.strictEqual(fs.statSync(file).mtimeMs, mtime);
+  assert.strictEqual(E.persist.writes, writes);
 });
+
+// --- RM-07 slice 5: edges-in-db (persistence adapter, not a second EdgeStore)
+section("RM-07 slice 5 — EdgeStore SQLite adapter + one-file sovereignty");
+
+if (sqliteAvailable()) {
+
+test("openEdgeStore selects sqlite persist when the Store is SqliteStore", () => {
+  const s = freshSqlite("open-edge");
+  const E = openEdgeStore({ store: s, storePath: tmp("open-edge.jsonl") });
+  assert.strictEqual(E.persist.kind, "sqlite");
+  assert.ok(isSqliteStore(s));
+  s.close();
+});
+
+test("openEdgeStore keeps the JSON sidecar for JsonlStore", () => {
+  const file = tmp("open-jsonl.jsonl");
+  const s = new JsonlStore(file);
+  const E = openEdgeStore({ store: s, storePath: file });
+  assert.strictEqual(E.persist.kind, "json");
+  assert.ok(E.file.endsWith(".edges.json"));
+});
+
+test("edges-migration lossless: every sidecar edge survives into the table", () => {
+  const dir = tmp("mig-edges");
+  fs.mkdirSync(dir, { recursive: true });
+  const jsonl = path.join(dir, "store.jsonl");
+  const sidecar = jsonl + ".edges.json";
+  const s = new SqliteStore(path.join(dir, "store.db"));
+  s.add(normalize({ id: 1, text: "keep me", created: T0, embedding: [1, 0] }));
+  const src = new EdgeStore(sidecar, { now: () => T0 });
+  src.put(makeEdge(1, 2, {
+    origin: "co-activation", now: T0, hebbianWeight: 0.42,
+    semantic: { value: 0.61, src_versions: { a: 1, b: 3 } },
+  }));
+  src.put(makeEdge(3, 4, { origin: "save-time-neighbor", now: T0, hebbianWeight: 0 }));
+  src.processedIds = [42, "rpc-1"];
+  src.save();
+  const srcN = src.size;
+  const result = migrateEdgesSidecarIntoDb(s.db, { storePath: jsonl, dbPath: s.file, log() {} });
+  assert.strictEqual(result.migrated, true);
+  assert.strictEqual(result.count, srcN);
+  assert.ok(!fs.existsSync(sidecar), "sidecar renamed off the live path");
+  assert.ok(fs.existsSync(sidecar + ".bak"), "recovery snapshot kept");
+  const E = openEdgeStore({ store: s });
+  assert.strictEqual(E.size, srcN, "count-verify: every edge survived");
+  assert.strictEqual(E.get(1, 2).hebbian.weight, 0.42);
+  assert.strictEqual(E.get(1, 2).semantic.value, 0.61);
+  assert.deepStrictEqual(E.get(1, 2).semantic.src_versions, { a: 1, b: 3 });
+  assert.strictEqual(E.get(3, 4).hebbian.weight, 0);
+  assert.ok(E.hasProcessed(42));
+  assert.ok(E.hasProcessed("rpc-1"));
+  s.close();
+});
+
+test("edges-migration does not merge leftover .assoc.json when .edges.json exists", () => {
+  const dir = tmp("mig-auth");
+  fs.mkdirSync(dir, { recursive: true });
+  const jsonl = path.join(dir, "store.jsonl");
+  const sidecar = jsonl + ".edges.json";
+  const assoc = jsonl + ".assoc.json";
+  fs.writeFileSync(sidecar, JSON.stringify({
+    kind: SIDECAR_KIND, version: SIDECAR_VERSION, recalls: 0,
+    edges: { "8:9": makeEdge(8, 9, { origin: "co-activation", now: T0, hebbianWeight: 0.01 }) },
+  }));
+  fs.writeFileSync(assoc, JSON.stringify({ recalls: 40, edges: { "2:5": 1.2, "1:3": 0.4 } }));
+  const s = new SqliteStore(path.join(dir, "store.db"));
+  migrateEdgesSidecarIntoDb(s.db, { storePath: jsonl, dbPath: s.file, log() {} });
+  const E = openEdgeStore({ store: s });
+  assert.strictEqual(E.size, 1, "must not pull in the leftover .assoc.json");
+  assert.ok(E.get(8, 9));
+  assert.strictEqual(E.get(2, 5), undefined);
+  assert.ok(fs.existsSync(assoc), ".assoc.json left untouched");
+  s.close();
+});
+
+test("edges-migration fail-open: missing sidecar leaves memories reachable", () => {
+  const s = freshSqlite("mig-missing");
+  s.add(normalize({ id: 7, text: "still here", created: T0 }));
+  const result = migrateEdgesSidecarIntoDb(s.db, {
+    storePath: tmp("no-such-store.jsonl"), dbPath: s.file, log() {},
+  });
+  assert.strictEqual(result.migrated, false);
+  assert.strictEqual(s.get(7).text, "still here");
+  s.close();
+});
+
+test("0.3 atomicity fix: throw-before-commit rolls back BOTH the id claim and the weight", () => {
+  // Failure signature the JSON envelope flagged: durable-each, not atomic-as-a-pair.
+  // SQLite: one txn. Crash after the DML and before COMMIT must restore BOTH.
+  const E = makeEdgeStore("sqlite", "atomic-crash", { now: () => T0 });
+  E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 0.4 }));
+  E.save();
+  E.persist.throwBeforeCommit = () => { throw new Error("injected crash"); };
+  E.reinforceRecall(["1", "2"], [], 42);
+  const writes = E.persist.writes;
+  E.save(); // I3: swallowed
+  assert.strictEqual(E.persist.writes, writes, "COMMIT must not have landed");
+  // In-memory still has the mutation (I3: failed persist must not wipe the Map).
+  assert.strictEqual(E.weight(1, 2), 0.4 + E.alphaPP);
+  assert.ok(E.hasProcessed(42));
+  // Disk / reopen: neither fact committed.
+  const E2 = reopenEdgeStore(E, { now: () => T0 });
+  assert.strictEqual(E2.weight(1, 2), 0.4, "weight rolled back with the id");
+  assert.strictEqual(E2.hasProcessed(42), false, "id claim rolled back with the weight");
+  assert.strictEqual(E2.reinforceRecall(["1", "2"], [], 42), true, "retry applies once after the crash");
+});
+
+test("crash-domain: an edges write failure leaves memories recallable", () => {
+  const s = freshSqlite("crash-domain");
+  s.add(normalize({
+    id: 1, text: "do not lose me", created: T0, embedding: [1, 0],
+  }));
+  const E = openEdgeStore({ store: s });
+  E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 0.5 }));
+  E.save();
+  // Poison only the edges table. A subsequent edges save fails; memories
+  // INSERT/SELECT on the same connection must still work (own txn, I3).
+  s.db.exec("DROP TABLE edges");
+  E.put(makeEdge(3, 4, { origin: "co-activation", now: T0, hebbianWeight: 0.1 }));
+  assert.doesNotThrow(() => E.save(), "I3: edges persist must never throw into recall");
+  assert.strictEqual(s.get(1).text, "do not lose me", "memory survived the edges failure");
+  s.add(normalize({ id: 2, text: "new fact after edges boom", created: T0 }));
+  assert.strictEqual(s.get(2).text, "new fact after edges boom", "connection not poisoned");
+  assert.strictEqual(s.all().length, 2);
+  s.close();
+});
+
+test("one-file sovereignty: memories + edges + access live in the single .db", () => {
+  const s = freshSqlite("one-file");
+  s.add(normalize({
+    id: 1, text: "tea", created: T0, embedding: [1, 0],
+  }));
+  s.applyRecall([1], new Map());
+  const E = openEdgeStore({ store: s });
+  E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 0.3 }));
+  E.reinforceRecall(["1", "2"], [], "rpc-onefile");
+  E.save();
+  s.checkpoint();
+  assert.ok(!fs.existsSync(s.file + ".edges.json"), "no edges sidecar next to the db");
+  assert.ok(!fs.existsSync(s.file + ".access.json"), "no access sidecar next to the db");
+  assert.strictEqual(s.rowCount(), 1);
+  assert.strictEqual(s.get(1).access_count, 1, "access is in the row");
+  const nEdges = Number(s.db.prepare("SELECT COUNT(*) AS n FROM edges").get().n);
+  assert.strictEqual(nEdges, 1, "edges table in the same file");
+  const nProc = Number(s.db.prepare("SELECT COUNT(*) AS n FROM edge_processed_ids").get().n);
+  assert.strictEqual(nProc, 1, "dedup LRU in the same file");
+  const dbPath = s.file;
+  s.close();
+  assert.ok(fs.existsSync(dbPath));
+  assert.ok(!fs.existsSync(dbPath + "-wal") || fs.statSync(dbPath + "-wal").size === 0,
+    "checkpointed: the .db is the whole store");
+});
+
+test("I6 sqlite: 100 reads do not UPDATE hebbian_weight or last_updated on disk", () => {
+  const E = makeEdgeStore("sqlite", "i6-disk", { now: () => T0 });
+  E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 1.0 }));
+  E.save();
+  const rowBefore = E.persist.db.prepare(
+    "SELECT hebbian_weight AS w, hebbian_last_updated AS t FROM edges WHERE a='1' AND b='2'"
+  ).get();
+  const writes = E.persist.writes;
+  for (let i = 0; i < 100; i++) {
+    E.bonus(1, 2);
+    E.effectiveWeight(1, 2);
+    effectiveHebbian(E.get(1, 2), T0);
+  }
+  const rowAfter = E.persist.db.prepare(
+    "SELECT hebbian_weight AS w, hebbian_last_updated AS t FROM edges WHERE a='1' AND b='2'"
+  ).get();
+  assert.strictEqual(rowAfter.w, rowBefore.w);
+  assert.strictEqual(rowAfter.t, rowBefore.t);
+  assert.strictEqual(E.persist.writes, writes, "a SELECT is not an UPDATE");
+});
+
+} // sqliteAvailable
 
 // ------------------------------------------------- ROC/TBR field signals (RM-00)
 section("field signals: ROC / TBR (RM-00)");
@@ -1703,6 +2193,38 @@ test("recall_at_k skips unlabeled queries and defaults k=5", () => {
   ] };
   assert.strictEqual(computeMetric("recall_at_k", mixed, null), 1);
   assert.strictEqual(explainMetric("recall_at_k", mixed, null).n, 1);
+});
+
+test("mrr on a tiny known-ranked set", () => {
+  // q1 hit @2 → 1/2; q2 miss → 0; q3 hit @1 → 1. MRR = 1.5/3 = 0.5
+  assert.strictEqual(computeMetric("mrr", REGISTRY_QUERIES, null), 0.5);
+  const expl = explainMetric("mrr", REGISTRY_QUERIES, null);
+  assert.strictEqual(expl.n, 3);
+  assert.strictEqual(expl.n_found, 2);
+  assert.strictEqual(expl.n_missed, 1);
+  assert.deepStrictEqual(expl.misses, ["q2"]);
+  assert.strictEqual(expl.mean_rank, 1.5);          // (2+1)/2 over found
+  assert.strictEqual(expl.median_rank, 1.5);
+  assert.strictEqual(expl.byQuery[0].rank, 2);
+  assert.strictEqual(expl.byQuery[0].reciprocal, 0.5);
+  assert.strictEqual(expl.byQuery[1].rank, null);
+  assert.strictEqual(expl.byQuery[2].rank, 1);
+});
+
+test("mrr skips unlabeled queries; miss contributes 0 not NaN", () => {
+  const mixed = { queries: [
+    { id: "hit", ranked_ids: ["a", "b"], relevant_ids: ["b"] },
+    { id: "unlabeled", ranked_ids: ["x"], relevant_ids: [] },
+    { id: "miss", ranked_ids: ["y"], relevant_ids: ["z"] },
+  ] };
+  assert.strictEqual(computeMetric("mrr", mixed, null), 0.25); // (0.5 + 0) / 2
+  const expl = explainMetric("mrr", mixed, null);
+  assert.strictEqual(expl.n, 2);
+  assert.deepStrictEqual(expl.misses, ["miss"]);
+});
+
+test("mrr is registered alongside recall_at_k", () => {
+  assert.ok(listMetrics().some((m) => m.name === "mrr"));
 });
 
 test("duplicate_rate on a known-labeled set", () => {
@@ -1957,6 +2479,95 @@ test("messy corpus: current-save simulation is the pre-extraction baseline", () 
   assert.strictEqual(expl.rate, 6 / 23);
   assert.strictEqual(expl.n_pii, s.writes.filter((w) => w.expect_refusal).length);
   assert.strictEqual(expl.pii_refusal_rate, 0);
+});
+
+// ------------------------------------------------- S1 substrate generator (eval/substrate)
+section("S1 substrate scale generator");
+
+const {
+  generateScaleCorpus, attachSyntheticEmbeddings, NEEDLES, DEFAULT_SEED, plantedCountFor,
+} = require("./eval/substrate/generate.js");
+
+test("generator produces well-formed labeled memories + needles with known relevance", () => {
+  const corpus = generateScaleCorpus({ n: 250, seed: DEFAULT_SEED });
+  assert.strictEqual(corpus.records.length, 250);
+  assert.strictEqual(corpus.queries.length, NEEDLES.length);
+  assert.ok(corpus.planted >= NEEDLES.length * 2, "each needle has at least one distractor");
+  const texts = new Set();
+  const needles = [];
+  const distractors = [];
+  for (const r of corpus.records) {
+    assert.ok(r.id >= 1 && r.text && r.role, "record needs id/text/role");
+    assert.ok(["needle", "distractor", "haystack"].includes(r.role), r.role);
+    assert.ok(!texts.has(r.text.toLowerCase()), "duplicate text: " + r.text);
+    texts.add(r.text.toLowerCase());
+    if (r.role === "needle") {
+      assert.ok(r.needleId);
+      needles.push(r);
+    }
+    if (r.role === "distractor") {
+      assert.ok(r.needleId && r.kind, "distractor needs needleId + kind");
+      distractors.push(r);
+    }
+  }
+  assert.strictEqual(needles.length, NEEDLES.length);
+  assert.ok(distractors.length >= NEEDLES.length, "hard near-topic distractors planted");
+  const byId = new Map(corpus.records.map((r) => [String(r.id), r]));
+  for (const q of corpus.queries) {
+    assert.ok(q.query && q.needleId && q.relevant_ids.length === 1, q.id);
+    const rec = byId.get(String(q.relevant_ids[0]));
+    assert.ok(rec && rec.role === "needle" && rec.needleId === q.needleId, q.id + " relevant is the needle");
+    assert.strictEqual(rec.text, q.relevant_text);
+  }
+  const height = corpus.records.find((r) => /terrified of heights/i.test(r.text));
+  assert.ok(height && height.role === "distractor" && height.needleId === "height-bookshelf",
+    "adv-height-homonym is a planted distractor for the bookshelf needle");
+});
+
+test("generator is deterministic for a seed; larger N is a planted+haystack prefix", () => {
+  const a = generateScaleCorpus({ n: 200, seed: 7 });
+  const b = generateScaleCorpus({ n: 200, seed: 7 });
+  assert.deepStrictEqual(a.records.map((r) => r.text), b.records.map((r) => r.text));
+  const c = generateScaleCorpus({ n: 200, seed: 8 });
+  assert.notDeepStrictEqual(a.records.map((r) => r.text), c.records.map((r) => r.text));
+  const small = generateScaleCorpus({ n: 200, seed: 1 });
+  const large = generateScaleCorpus({ n: 500, seed: 1 });
+  assert.deepStrictEqual(
+    small.records.map((r) => r.text),
+    large.records.slice(0, 200).map((r) => r.text)
+  );
+  const plantedSmall = small.records.filter((r) => r.role !== "haystack");
+  const plantedLarge = large.records.filter((r) => r.role !== "haystack");
+  assert.deepStrictEqual(plantedSmall.map((r) => r.id + ":" + r.text), plantedLarge.map((r) => r.id + ":" + r.text));
+});
+
+test("generator rejects n below planted count and unknown needle ids", () => {
+  const nNeed = plantedCountFor(NEEDLES);
+  assert.throws(() => generateScaleCorpus({ n: nNeed - 1 }), /planted/);
+  assert.throws(() => generateScaleCorpus({ n: 100, needleIds: ["no-such-needle"] }), /unknown needle/);
+});
+
+test("haystack does not restatement-collide with a needle's current first-person slot", () => {
+  const corpus = generateScaleCorpus({ n: 2000, seed: DEFAULT_SEED });
+  const hay = corpus.records.filter((r) => r.role === "haystack");
+  assert.ok(hay.length > 100);
+  for (const r of hay) {
+    assert.ok(!/\bi work at\b/i.test(r.text), "haystack stole the job slot: " + r.text);
+    assert.ok(!/\bi live in\b/i.test(r.text), "haystack stole the city slot: " + r.text);
+    assert.ok(!/\bi(?:'m| am) allergic to\b/i.test(r.text), "haystack stole the allergy slot: " + r.text);
+    assert.ok(!/terrified of heights/i.test(r.text));
+    assert.ok(!/penicillin/i.test(r.text));
+    assert.ok(!/globex/i.test(r.text));
+  }
+});
+
+test("subset of 3 needles in n=100 is well-formed (S1 e2e fixture)", () => {
+  const ids = ["allergy-penicillin", "height-bookshelf", "job-globex"];
+  const corpus = generateScaleCorpus({ n: 100, seed: 1, needleIds: ids });
+  assert.strictEqual(corpus.records.length, 100);
+  assert.strictEqual(corpus.queries.length, 3);
+  assert.strictEqual(corpus.records.filter((r) => r.role === "needle").length, 3);
+  assert.ok(corpus.records.filter((r) => r.role === "distractor").length >= 9);
 });
 
 // ------------------------------------------------- RM-01.b write-side extraction
@@ -2426,11 +3037,1252 @@ test("emitWarmTrace is callable and does not throw (hot path is `if (warmTrace()
   assert.ok(writes.some((s) => /"activation"/.test(s)), "activation is its own field");
 });
 
+// ------------------------------------------------ RM-07 slice 2b export / zip
+section("RM-07 slice 2b — zip writer + sovereignty export (read-only)");
+
+const {
+  ZipWriter, ZipReader, hasZip64Eocd, crcOf, FLAG_UTF8, U16_MAX,
+} = require("./zip.js");
+const exp = require("./export-memory.js");
+
+test("slug: lowercase, spaces→hyphens, keep words", () => {
+  assert.strictEqual(exp.memorySlug(42, "I like tea"), "42-i-like-tea.json");
+});
+
+test("slug: filesystem-illegal stripped, not replaced with junk", () => {
+  assert.strictEqual(exp.memorySlug(1, 'hello<>:"/\\|?*world'), "1-helloworld.json");
+});
+
+test("slug: reserved CON/PRN/NUL/COM1-9/LPT1-9/empty → <id>.json (no hash)", () => {
+  assert.strictEqual(exp.memorySlug(7, "CON"), "7.json");
+  assert.strictEqual(exp.memorySlug(7, "prn"), "7.json");
+  assert.strictEqual(exp.memorySlug(7, "NUL"), "7.json");
+  assert.strictEqual(exp.memorySlug(7, "COM1"), "7.json");
+  assert.strictEqual(exp.memorySlug(7, "LPT9"), "7.json");
+  assert.strictEqual(exp.memorySlug(7, ""), "7.json");
+  assert.strictEqual(exp.memorySlug(7, "???"), "7.json", "illegal-only collapses to empty");
+  assert.strictEqual(exp.memorySlug(7, "COM10"), "7-com10.json", "COM10 is not reserved");
+});
+
+test("slug: trailing dots/spaces stripped", () => {
+  assert.strictEqual(exp.memorySlug(3, "hello..."), "3-hello.json");
+  assert.strictEqual(exp.memorySlug(3, "hello   "), "3-hello.json");
+});
+
+test("slug: cap ~40 at the last hyphen (whole words, no hash suffix)", () => {
+  const long = "this-is-a-very-long-memory-about-something-important-indeed";
+  const s = exp.memorySlug(9, long);
+  assert.ok(s.startsWith("9-"));
+  assert.ok(s.endsWith(".json"));
+  const body = s.slice(2, -5);
+  assert.ok(body.length <= 40, "slug body capped, got " + body.length + " " + body);
+  assert.ok(!/-$/.test(body));
+  assert.ok(!/hash|sha|md5/i.test(s), "no hash suffix");
+});
+
+test("slug: DON'T ASCII-fold CJK — empty-fold is the payload failure", () => {
+  assert.strictEqual(exp.memorySlug(11, "记忆测试"), "11-记忆测试.json");
+  assert.strictEqual(exp.memorySlug(12, "café notes"), "12-café-notes.json");
+});
+
+test("folder path is f(created) UTC day-granular, zero-padded", () => {
+  assert.strictEqual(exp.memoryDayPath("2026-03-05T12:34:56.000Z"), "memories/2026/03/05");
+  assert.strictEqual(exp.memoryDayPath("2019-01-09T00:00:00.000Z"), "memories/2019/01/09");
+  assert.notStrictEqual(exp.memoryDayPath("2026-03-05T12:34:56.000Z"), "memories/2026/3/5");
+});
+
+test("catalog columns: id status created path bytes text", () => {
+  const rec = normalize({
+    id: 5, text: "I prefer tea in the morning with honey",
+    created: "2026-01-02T00:00:00.000Z", deleted: true,
+  });
+  const line = exp.catalogLine(rec, "root/memories/2026/01/02/5-i-prefer-tea.json", 123);
+  const cols = line.replace(/\n$/, "").split("\t");
+  assert.deepStrictEqual(exp.catalogHeader().replace(/\n$/, "").split("\t"),
+    ["id", "status", "created", "path", "bytes", "text"]);
+  assert.strictEqual(cols[0], "5");
+  assert.strictEqual(cols[1], "deleted");
+  assert.strictEqual(cols[2], "2026-01-02T00:00:00.000Z");
+  assert.strictEqual(cols[3], "root/memories/2026/01/02/5-i-prefer-tea.json");
+  assert.strictEqual(cols[4], "123");
+  assert.ok(cols[5].indexOf("I prefer tea") === 0);
+  assert.ok(cols[5].length <= 80);
+});
+
+test("recordStatus: deleted wins; superseded via valid_to or superseded_by", () => {
+  assert.strictEqual(exp.recordStatus({ deleted: true, valid_to: "x" }), "deleted");
+  assert.strictEqual(exp.recordStatus({ superseded_by: 2 }), "superseded");
+  assert.strictEqual(exp.recordStatus({ valid_to: "2026-01-01T00:00:00Z" }), "superseded");
+  assert.strictEqual(exp.recordStatus({ text: "hi" }), "current");
+});
+
+test("sanitizeExportName / never-overwrite Name (2).zip", () => {
+  assert.strictEqual(exp.sanitizeExportName("foo/bar<>.zip", "fb"), "foo-bar");
+  const dir = tmp("export-unique");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "Name.zip"), "x");
+  const p2 = exp.uniqueZipPath(dir, "Name");
+  assert.strictEqual(path.basename(p2), "Name (2).zip");
+  fs.writeFileSync(p2, "y");
+  const p3 = exp.uniqueZipPath(dir, "Name");
+  assert.strictEqual(path.basename(p3), "Name (3).zip");
+});
+
+test("human JSON omits embedding; jsonl line keeps embedding as a JSON array", () => {
+  const rec = {
+    id: 1, text: "hi", created: "2026-01-01T00:00:00.000Z",
+    embedding: Float32Array.from([0.1, 0.2, 0.3]),
+  };
+  const human = JSON.parse(exp.recordToHumanJson(rec));
+  assert.strictEqual("embedding" in human, false);
+  const line = JSON.parse(exp.recordToJsonlLine(rec));
+  assert.ok(Array.isArray(line.embedding));
+  assert.strictEqual(line.embedding.length, 3);
+});
+
+test("zip writer: STORE + DEFLATE round-trip, CRC, UTF-8 flag, ZIP64 always", () => {
+  const zpath = tmp("tiny.zip");
+  const w = new ZipWriter(zpath);
+  w.addStored("root/hello.txt", "hello store\n");
+  w.addDeflated("root/café.txt", "deflated payload " + "x".repeat(200));
+  const fin = w.finalize();
+  assert.ok(fs.existsSync(zpath), "renamed off .tmp");
+  assert.ok(!fs.existsSync(zpath + ".tmp"), "tmp gone after EOCD rename");
+  assert.strictEqual(fin.entries, 2);
+  assert.ok(hasZip64Eocd(zpath), "ZIP64 EOCD+locator even at 2 entries — no classic-only path");
+  const r = ZipReader.open(zpath);
+  assert.strictEqual(r.entries.length, 2);
+  assert.strictEqual(r.readStored("root/hello.txt").toString("utf8"), "hello store\n");
+  assert.strictEqual(r.readStored("root/café.txt").toString("utf8"), "deflated payload " + "x".repeat(200));
+  const cafe = r.get("root/café.txt");
+  assert.ok(cafe.utf8, "UTF-8 flag set so CJK/accents survive");
+  assert.strictEqual(cafe.flag & FLAG_UTF8, FLAG_UTF8);
+  assert.strictEqual(cafe.crc, crcOf(Buffer.from("deflated payload " + "x".repeat(200))) >>> 0);
+  assert.ok(cafe.usize < U16_MAX, "this member is small; ZIP64 is still used for the archive");
+});
+
+test("zip writer: killed-looking abort leaves no dest zip", () => {
+  const zpath = tmp("aborted.zip");
+  const w = new ZipWriter(zpath);
+  w.addStored("a.txt", "aa");
+  assert.ok(fs.existsSync(zpath + ".tmp"));
+  w.abort();
+  assert.ok(!fs.existsSync(zpath), "dest was never renamed");
+  assert.ok(!fs.existsSync(zpath + ".tmp"), "abort unlinks tmp");
+});
+
+test("README + manifest layout field", () => {
+  const readme = exp.buildReadme();
+  assert.ok(/you own/i.test(readme));
+  assert.ok(/diary/i.test(readme));
+  assert.ok(/do not sanitize/i.test(readme));
+  assert.ok(/memories\.jsonl/.test(readme));
+  assert.ok(/catalog\.txt/.test(readme));
+  assert.ok(/MAX_PATH/.test(readme));
+  const man = JSON.parse(exp.buildManifest({
+    exportedAt: "2026-09-05T00:00:00.000Z",
+    name: "resonance-memories-2026-09-05",
+    count: { total: 3, current: 1, superseded: 1, deleted: 1 },
+  }));
+  assert.strictEqual(man.layout, "memories/YYYY/MM/DD");
+  assert.strictEqual(man.schema_version, 1);
+});
+
+test("uniqueZipPath({ create:false }) does not mkdir (panel preview must not write)", () => {
+  const dir = tmp("preview-no-mkdir");
+  assert.ok(!fs.existsSync(dir));
+  const p = exp.uniqueZipPath(dir, "resonance-memories-preview", { create: false });
+  assert.ok(!fs.existsSync(dir), "preview must not create the dest dir");
+  assert.ok(p.endsWith(".zip"));
+});
+
+test("panel page source ships the export button + confirm modal (not a browser test)", () => {
+  // The actual click/modal is a browser UI — no browser tooling here.
+  // This only asserts the page we serve contains the settled 2c copy.
+  const src = fs.readFileSync(path.join(__dirname, "panel.js"), "utf8");
+  assert.ok(src.includes("Export my memories"), "visible button");
+  assert.ok(/read-only/i.test(src), "confirm modal says read-only");
+  assert.ok(/Filenames may contain a preview/.test(src), "filename-preview note");
+  assert.ok(/this can take a minute at large N/.test(src), "honest in-flight copy, not a fake %");
+  assert.ok(src.includes("pauseWatchdog"), "watchdog pause is in the panel server");
+  assert.ok(src.includes("copy path") || src.includes("exportCopyPath"), "copy-path control");
+  assert.ok(/not an MCP tool/i.test(src), "exfil path stays off the four verbs");
+});
+
+test("export is not an MCP tool (four verbs stay four)", () => {
+  const src = fs.readFileSync(path.join(__dirname, "server.js"), "utf8");
+  assert.ok(/name: "save_memory"/.test(src));
+  assert.ok(/name: "recall_memory"/.test(src));
+  assert.ok(/name: "edit_memory"/.test(src));
+  assert.ok(/name: "delete_memory"/.test(src));
+  assert.ok(!/name: "export_memory"/.test(src));
+  assert.ok(!/name: "export"/.test(src));
+  const toolNames = [...src.matchAll(/name:\s*"(save_memory|recall_memory|edit_memory|delete_memory|export\w*)"/g)]
+    .map((m) => m[1]);
+  assert.deepStrictEqual(
+    toolNames.filter((n, i) => toolNames.indexOf(n) === i),
+    ["save_memory", "recall_memory", "edit_memory", "delete_memory"]
+  );
+});
+
 // ------------------------------------------------ edit() embedding safety
 // An embedder outage is transient; losing an embedding is not.
 // createCore already required above (warm-field section)
 
 async function asyncTests() {
+  // ------------------------------------------------- RM-07 slice 2a migrator
+  section("JSONL→SQLite migrator (RM-07 slice 2a, 10-step protocol)");
+
+  if (!sqliteAvailable()) {
+    await atest("JSONL→SQLite migrator SKIPPED (node:sqlite not in this Node)", async () => {
+      assert.ok(true);
+    });
+  } else {
+    const { migrateJsonlToSqlite } = require("./migrate-sqlite.js");
+
+    function writeJsonlFixture(file, recs, extra) {
+      extra = extra || {};
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      const lines = recs.map((r) => JSON.stringify(r));
+      if (extra.blankLines) lines.push("", "   ");
+      fs.writeFileSync(file, lines.join("\n") + "\n");
+      if (extra.access) {
+        fs.writeFileSync(file + ".access.json", JSON.stringify({ counts: extra.access }));
+      }
+      return file;
+    }
+
+    function migrateFixture(name) {
+      const dir = tmp("mig-" + name + "-" + Math.random().toString(36).slice(2));
+      fs.mkdirSync(dir, { recursive: true });
+      return path.join(dir, "mem.jsonl");
+    }
+
+    const FIXTURE_RECS = [
+      {
+        id: 1700000000001,
+        text: "I work at Acme",
+        created: "2020-06-15T12:34:56.000Z",
+        modified: "2020-06-15T12:34:56.000Z",
+        embedding: [1, 0, 0.25],
+        access_count: 2,
+        source: "user_stated",
+        embedding_version: 1,
+      },
+      {
+        id: 1700000000002,
+        text: "I used to work at Globex",
+        created: "2019-01-01T00:00:00.000Z",
+        modified: "2019-01-01T00:00:00.000Z",
+        embedding: [0, 1, 0],
+        valid_from: "2019-01-01T00:00:00.000Z",
+        valid_to: "2020-06-15T12:34:56.000Z",
+        superseded_by: 1700000000001,
+        last_access: "2020-01-01T00:00:00.000Z",
+      },
+      {
+        id: 7,
+        text: "no vector here",
+        created: "2021-03-03T03:03:03.000Z",
+        modified: "2021-03-03T03:03:03.000Z",
+      },
+      {
+        id: 8,
+        text: "soft deleted",
+        created: "2021-04-04T04:04:04.000Z",
+        modified: "2021-04-04T04:04:04.000Z",
+        deleted: true,
+        embedding: [0, 0, 1],
+      },
+    ];
+    const FIXTURE_ACCESS = {
+      "1700000000001": { n: 3, last: "2026-09-01T00:00:00.000Z" },
+      "7": { n: 1, last: "2026-09-02T00:00:00.000Z" },
+    };
+
+    await atest("10-step happy path: lossless, ids, access-fold-once, created, JSONL→.bak", async () => {
+      const jsonl = migrateFixture("happy");
+      writeJsonlFixture(jsonl, FIXTURE_RECS, { blankLines: true, access: FIXTURE_ACCESS });
+      const logs = [];
+      const result = await migrateJsonlToSqlite(jsonl, { log: (m) => logs.push(m) });
+      assert.strictEqual(result.status, "migrated");
+      assert.strictEqual(result.count, 4, "blank lines are not rows");
+      const dbPath = sqlitePathFor(jsonl);
+      assert.ok(fs.existsSync(dbPath), ".db at the live path");
+      assert.ok(!fs.existsSync(jsonl), "JSONL renamed off MEMORY_FILE_PATH");
+      assert.ok(fs.existsSync(jsonl + ".bak"), "recovery snapshot at .bak");
+      assert.ok(!fs.existsSync(jsonl + ".access.json"), "live access sidecar is gone");
+      assert.ok(fs.existsSync(jsonl + ".access.json.bak"), "access sidecar bak'd");
+      assert.ok(!fs.existsSync(dbPath + ".migrating"), "temp gone after rename");
+      assert.ok(logs.some((m) => /migrated 4 memories; original kept at /.test(m)));
+
+      const s = new SqliteStore(dbPath);
+      const all = s.all();
+      assert.strictEqual(all.length, 4);
+      const byId = new Map(all.map((r) => [String(r.id), r]));
+
+      const a = byId.get("1700000000001");
+      assert.strictEqual(Number(a.id), 1700000000001, "opaque id preserved (not AUTOINCREMENT 1)");
+      assert.strictEqual(a.created, "2020-06-15T12:34:56.000Z", "created preserved (not now())");
+      assert.strictEqual(a.text, "I work at Acme");
+      assert.strictEqual(a.access_count, 5, "in-row 2 + sidecar 3, folded ONCE");
+      assert.strictEqual(a.last_access, "2026-09-01T00:00:00.000Z");
+      assert.strictEqual(a.importance, 5, "AccessLog.apply sets importance = folded count");
+      assert.ok(embClose(a.embedding, [1, 0, 0.25]));
+
+      const b = byId.get("1700000000002");
+      assert.strictEqual(String(b.superseded_by), "1700000000001", "superseded_by preserved");
+      assert.strictEqual(b.created, "2019-01-01T00:00:00.000Z");
+      assert.strictEqual(b.valid_to, "2020-06-15T12:34:56.000Z");
+      assert.strictEqual(b.access_count, 0, "no sidecar entry, in-row stays 0");
+
+      const c = byId.get("7");
+      assert.strictEqual(Number(c.id), 7, "small explicit id is not reassigned");
+      assert.strictEqual(c.created, "2021-03-03T03:03:03.000Z");
+      assert.strictEqual(c.embedding, null, "vectorless stays vectorless — do not invent");
+      assert.strictEqual(c.access_count, 1, "sidecar-only count folded");
+
+      const d = byId.get("8");
+      assert.strictEqual(d.deleted, true);
+      assert.ok(embClose(d.embedding, [0, 0, 1]));
+
+      assert.strictEqual(s.current().length, 2, "superseded + deleted excluded from current()");
+      // BUG-007: leftover bak sidecar must not fold again on read.
+      assert.strictEqual(s.get(1700000000001).access_count, 5, "SqliteStore does not re-fold .bak sidecar");
+      s.close();
+    });
+
+    await atest("vectorless row migrates vectorless (do not invent a blob)", async () => {
+      const jsonl = migrateFixture("vectorless");
+      writeJsonlFixture(jsonl, [{
+        id: 42, text: "bare fact", created: "2018-08-08T08:08:08.000Z",
+      }]);
+      await migrateJsonlToSqlite(jsonl, { log() {} });
+      const s = new SqliteStore(sqlitePathFor(jsonl));
+      const r = s.get(42);
+      assert.strictEqual(r.embedding, null);
+      assert.strictEqual(r.created, "2018-08-08T08:08:08.000Z");
+      assert.strictEqual(s.embeddingRowCount(), 0);
+      s.close();
+    });
+
+    await atest("count-mismatch aborts non-destructively (JSONL live, no half .db)", async () => {
+      const jsonl = migrateFixture("mismatch");
+      writeJsonlFixture(jsonl, [
+        { id: 1, text: "a", created: "2020-01-01T00:00:00.000Z", embedding: [1, 0] },
+        { id: 2, text: "b", created: "2020-01-01T00:00:00.000Z", embedding: [0, 1] },
+      ]);
+      const before = fs.readFileSync(jsonl, "utf8");
+      let threw = null;
+      try {
+        await migrateJsonlToSqlite(jsonl, {
+          log() {},
+          onAfterIngest(store) {
+            store.db.exec("DELETE FROM memories WHERE id = 1");
+          },
+        });
+      } catch (e) { threw = e; }
+      assert.ok(threw, "must abort");
+      assert.strictEqual(threw.code, "MIGRATE_COUNT_MISMATCH");
+      assert.strictEqual(fs.readFileSync(jsonl, "utf8"), before, "JSONL still live, bytes unchanged");
+      const dbPath = sqlitePathFor(jsonl);
+      assert.ok(!fs.existsSync(dbPath), "no half .db at the live path");
+      assert.ok(!fs.existsSync(dbPath + ".migrating"), "temp deleted on abort");
+    });
+
+    await atest("in-process crash-before-rename leaves JSONL live + no half db", async () => {
+      const jsonl = migrateFixture("crash-throw");
+      writeJsonlFixture(jsonl, [
+        { id: 9, text: "keep me", created: "2017-07-07T07:07:07.000Z", embedding: [1, 1] },
+      ]);
+      const before = fs.readFileSync(jsonl, "utf8");
+      let threw = null;
+      try {
+        await migrateJsonlToSqlite(jsonl, {
+          log() {},
+          async onBeforeRename() { throw new Error("simulated crash before step 7"); },
+        });
+      } catch (e) { threw = e; }
+      assert.ok(threw);
+      assert.ok(/simulated crash/.test(threw.message));
+      assert.strictEqual(fs.readFileSync(jsonl, "utf8"), before);
+      const dbPath = sqlitePathFor(jsonl);
+      assert.ok(!fs.existsSync(dbPath), "no .db at MEMORY_FILE_PATH");
+      assert.ok(!fs.existsSync(dbPath + ".migrating"), "temp cleaned on in-process throw");
+    });
+
+    await atest("kill-9 before step 7: JSONL live, no half .db, re-run completes", async () => {
+      const { spawn } = require("child_process");
+      const jsonl = migrateFixture("kill9");
+      writeJsonlFixture(jsonl, FIXTURE_RECS, { access: FIXTURE_ACCESS });
+      const before = fs.readFileSync(jsonl, "utf8");
+      const ready = jsonl + ".ready";
+      const child = spawn(process.execPath, [path.join(__dirname, "migrate-sqlite.js"), jsonl], {
+        env: Object.assign({}, process.env, {
+          RM_MIGRATE_CRASH_BEFORE_RENAME: "1",
+          RM_MIGRATE_CRASH_READY: ready,
+        }),
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const t0 = Date.now();
+      while (!fs.existsSync(ready)) {
+        if (Date.now() - t0 > 15000) {
+          try { child.kill("SIGKILL"); } catch { /* */ }
+          throw new Error("kill-9 child never wrote ready file: " + (child.stderr && child.stderr.read()));
+        }
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      child.kill("SIGKILL");
+      await new Promise((resolve) => {
+        if (child.exitCode != null || child.signalCode) return resolve();
+        child.on("exit", resolve);
+        setTimeout(resolve, 5000);
+      });
+      assert.ok(fs.existsSync(jsonl), "JSONL still at its path after kill-9");
+      assert.strictEqual(fs.readFileSync(jsonl, "utf8"), before, "JSONL bytes unchanged");
+      const dbPath = sqlitePathFor(jsonl);
+      assert.ok(!fs.existsSync(dbPath), "no half .db sits at MEMORY_FILE_PATH");
+      // Leftover .db.migrating is allowed (finally did not run). Re-run must
+      // drop it (no resume-from-partial) and complete.
+      const result = await migrateJsonlToSqlite(jsonl, { log() {} });
+      assert.strictEqual(result.status, "migrated");
+      assert.strictEqual(result.count, 4);
+      assert.ok(fs.existsSync(dbPath));
+      assert.ok(!fs.existsSync(jsonl), "JSONL now at .bak");
+      assert.ok(fs.existsSync(jsonl + ".bak"));
+      assert.ok(!fs.existsSync(dbPath + ".migrating"));
+      const s = new SqliteStore(dbPath);
+      assert.strictEqual(s.get(1700000000001).access_count, 5);
+      assert.strictEqual(s.get(7).embedding, null);
+      assert.strictEqual(s.get(1700000000001).created, "2020-06-15T12:34:56.000Z");
+      s.close();
+    });
+
+    await atest("second run on an already-migrated store is a no-op (ignore leftover JSONL)", async () => {
+      const jsonl = migrateFixture("noop");
+      writeJsonlFixture(jsonl, [
+        { id: 1, text: "original", created: "2020-01-01T00:00:00.000Z", embedding: [1, 0] },
+      ]);
+      const first = await migrateJsonlToSqlite(jsonl, { log() {} });
+      assert.strictEqual(first.status, "migrated");
+      const dbPath = sqlitePathFor(jsonl);
+      const s1 = new SqliteStore(dbPath);
+      assert.strictEqual(s1.get(1).text, "original");
+      s1.close();
+      // A leftover JSONL at the original path must NOT be dual-read or re-ingested.
+      writeJsonlFixture(jsonl, [
+        { id: 99, text: "stale leftover — must be ignored", created: "2026-01-01T00:00:00.000Z" },
+      ]);
+      const logs = [];
+      const second = await migrateJsonlToSqlite(jsonl, { log: (m) => logs.push(m) });
+      assert.strictEqual(second.status, "already_migrated");
+      assert.strictEqual(second.ignoredJsonl, true);
+      assert.ok(logs.some((m) => /leftover JSONL ignored/.test(m)));
+      assert.ok(fs.existsSync(jsonl), "leftover JSONL is ignored, not consumed");
+      const s2 = new SqliteStore(dbPath);
+      assert.strictEqual(s2.all().length, 1, "db not re-ingested");
+      assert.strictEqual(s2.get(1).text, "original");
+      assert.strictEqual(s2.get(99), null, "leftover JSONL rows did not land");
+      s2.close();
+    });
+
+    await atest("empty .db beside a live JSONL is refused (openStore footgun), JSONL kept", async () => {
+      const jsonl = migrateFixture("empty-db");
+      writeJsonlFixture(jsonl, [
+        { id: 3, text: "do not lose me", created: "2016-06-06T06:06:06.000Z" },
+      ]);
+      const dbPath = sqlitePathFor(jsonl);
+      const empty = new SqliteStore(dbPath);
+      assert.strictEqual(empty.rowCount(), 0);
+      empty.close();
+      const before = fs.readFileSync(jsonl, "utf8");
+      let threw = null;
+      try { await migrateJsonlToSqlite(jsonl, { log() {} }); }
+      catch (e) { threw = e; }
+      assert.ok(threw);
+      assert.strictEqual(threw.code, "MIGRATE_EMPTY_DB");
+      assert.strictEqual(fs.readFileSync(jsonl, "utf8"), before, "JSONL still live");
+    });
+
+    await atest("CLI --migrate (entry.js) runs the protocol; not a fifth verb", async () => {
+      const { spawnSync } = require("child_process");
+      const jsonl = migrateFixture("cli");
+      writeJsonlFixture(jsonl, [
+        { id: 11, text: "cli fact", created: "2022-02-02T02:02:02.000Z", embedding: [0.5, 0.5] },
+      ]);
+      const entry = path.join(__dirname, "entry.js");
+      const env = Object.assign({}, process.env);
+      delete env.RM_MIGRATE_CRASH_BEFORE_RENAME;
+      delete env.RM_MIGRATE_CRASH_READY;
+      const ran = spawnSync(process.execPath, [entry, "--migrate", "--json", jsonl], {
+        encoding: "utf8", timeout: 20000, env,
+      });
+      assert.strictEqual(ran.status, 0, "cli exit: " + (ran.stderr || ran.stdout));
+      const out = JSON.parse(ran.stdout);
+      assert.strictEqual(out.status, "migrated");
+      assert.strictEqual(out.count, 1);
+      assert.ok(fs.existsSync(sqlitePathFor(jsonl)));
+      assert.ok(fs.existsSync(jsonl + ".bak"));
+      assert.ok(!fs.existsSync(jsonl));
+    });
+
+    await atest("unparseable non-blank line aborts; JSONL live", async () => {
+      const jsonl = migrateFixture("badline");
+      fs.mkdirSync(path.dirname(jsonl), { recursive: true });
+      fs.writeFileSync(jsonl, JSON.stringify({
+        id: 1, text: "ok", created: "2020-01-01T00:00:00.000Z",
+      }) + "\nthis is not json\n");
+      let threw = null;
+      try { await migrateJsonlToSqlite(jsonl, { log() {} }); }
+      catch (e) { threw = e; }
+      assert.ok(threw);
+      assert.strictEqual(threw.code, "MIGRATE_PARSE");
+      assert.ok(fs.existsSync(jsonl), "JSONL still live");
+      assert.ok(!fs.existsSync(sqlitePathFor(jsonl)));
+    });
+  }
+
+  section("RM-07 slice 4 — default switch (openStore auto-migrate)");
+
+  if (!sqliteAvailable()) {
+    await atest("openStore default-switch SKIPPED (node:sqlite not in this Node)", async () => {
+      assert.ok(true);
+    });
+  } else {
+    function switchFixture(name) {
+      const dir = tmp("sw4-" + name + "-" + Math.random().toString(36).slice(2));
+      fs.mkdirSync(dir, { recursive: true });
+      return path.join(dir, "mem.jsonl");
+    }
+    function writeSwitchJsonl(file, recs, extra) {
+      extra = extra || {};
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, recs.map((r) => JSON.stringify(r)).join("\n") + "\n");
+      if (extra.access) {
+        fs.writeFileSync(file + ".access.json", JSON.stringify({ counts: extra.access }));
+      }
+      return file;
+    }
+    function closeQuiet(s) {
+      try { if (s && typeof s.close === "function") s.close(); } catch { /* */ }
+    }
+
+    await atest("openStore jsonl-override stays JsonlStore (even with a sibling .db)", async () => {
+      const jsonl = switchFixture("pin-jsonl");
+      writeSwitchJsonl(jsonl, [
+        { id: 1, text: "pinned jsonl", created: "2020-01-01T00:00:00.000Z" },
+      ]);
+      const db = new SqliteStore(sqlitePathFor(jsonl));
+      db.add(normalize({ id: 99, text: "sqlite twin", created: "2021-01-01T00:00:00.000Z" }));
+      db.close();
+      const s = await openStore(jsonl, { backend: "jsonl", log() {} });
+      assert.ok(s instanceof JsonlStore);
+      assert.strictEqual(s.get(1).text, "pinned jsonl");
+      assert.strictEqual(s.get(99), null, "must not dual-read the .db");
+      assert.ok(fs.existsSync(jsonl), "pin must not bak the JSONL");
+    });
+
+    await atest("openStore .db-exists → SqliteStore (no JSONL)", async () => {
+      const jsonl = switchFixture("db-only");
+      const dbPath = sqlitePathFor(jsonl);
+      const seed = new SqliteStore(dbPath);
+      seed.add(normalize({
+        id: 7, text: "already sqlite", created: "2019-09-09T09:09:09.000Z",
+      }));
+      seed.close();
+      const s = await openStore(jsonl, { log() {} });
+      assert.ok(s instanceof SqliteStore);
+      assert.strictEqual(s.get(7).text, "already sqlite");
+      assert.strictEqual(s.get(7).created, "2019-09-09T09:09:09.000Z");
+      closeQuiet(s);
+    });
+
+    await atest("openStore .db + leftover JSONL finishes step 8 (never dual-read)", async () => {
+      const jsonl = switchFixture("leftover");
+      const dbPath = sqlitePathFor(jsonl);
+      const seed = new SqliteStore(dbPath);
+      seed.add(normalize({
+        id: 1, text: "live db truth", created: "2020-01-01T00:00:00.000Z", embedding: [1, 0],
+      }));
+      seed.close();
+      writeSwitchJsonl(jsonl, [
+        { id: 99, text: "stale leftover — must not be read", created: "2026-01-01T00:00:00.000Z" },
+      ]);
+      const logs = [];
+      const s = await openStore(jsonl, { log: (m) => logs.push(m) });
+      assert.ok(s instanceof SqliteStore);
+      assert.strictEqual(s.all().length, 1);
+      assert.strictEqual(s.get(1).text, "live db truth");
+      assert.strictEqual(s.get(99), null, "leftover JSONL was not dual-read");
+      assert.ok(!fs.existsSync(jsonl), "JSONL renamed off MEMORY_FILE_PATH");
+      assert.ok(fs.existsSync(jsonl + ".bak"), "recovery snapshot kept");
+      assert.ok(logs.some((m) => /leftover JSONL renamed/.test(m)));
+      closeQuiet(s);
+    });
+
+    await atest("openStore jsonl-only auto-migrates lossless then opens SqliteStore", async () => {
+      const jsonl = switchFixture("auto");
+      writeSwitchJsonl(jsonl, [
+        {
+          id: 1700000000001, text: "I work at Acme",
+          created: "2020-06-15T12:34:56.000Z",
+          embedding: [1, 0, 0.25], access_count: 2,
+        },
+        {
+          id: 1700000000002, text: "I used to work at Globex",
+          created: "2019-01-01T00:00:00.000Z",
+          superseded_by: 1700000000001,
+          valid_to: "2020-06-15T12:34:56.000Z",
+          embedding: [0, 1, 0],
+        },
+        { id: 7, text: "vectorless", created: "2021-03-03T03:03:03.000Z" },
+        { id: 8, text: "deleted", created: "2018-01-01T00:00:00.000Z", deleted: true, embedding: [0, 0, 1] },
+      ], {
+        access: {
+          "1700000000001": { n: 3, last: "2026-09-01T00:00:00.000Z" },
+          "7": { n: 1, last: "2026-09-02T00:00:00.000Z" },
+        },
+      });
+      const logs = [];
+      const s = await openStore(jsonl, { log: (m) => logs.push(m) });
+      assert.ok(s instanceof SqliteStore, "auto-migrate destination is sqlite");
+      assert.ok(fs.existsSync(sqlitePathFor(jsonl)));
+      assert.ok(!fs.existsSync(jsonl), "JSONL at .bak");
+      assert.ok(fs.existsSync(jsonl + ".bak"));
+      assert.ok(!fs.existsSync(jsonl + ".access.json"), "access sidecar folded and bak'd");
+      assert.strictEqual(s.all().length, 4);
+      assert.strictEqual(Number(s.get(1700000000001).id), 1700000000001);
+      assert.strictEqual(s.get(1700000000001).created, "2020-06-15T12:34:56.000Z");
+      assert.strictEqual(s.get(1700000000001).access_count, 5, "in-row 2 + sidecar 3, folded ONCE");
+      assert.strictEqual(s.get(7).embedding, null, "vectorless stays vectorless");
+      assert.strictEqual(s.get(7).access_count, 1);
+      assert.strictEqual(s.get(8).deleted, true);
+      assert.ok(logs.some((m) => /migrated 4 memories; original kept at /.test(m)));
+      closeQuiet(s);
+    });
+
+    await atest("openStore neither-exists → fresh SqliteStore", async () => {
+      const jsonl = switchFixture("new-user");
+      assert.ok(!fs.existsSync(jsonl));
+      assert.ok(!fs.existsSync(sqlitePathFor(jsonl)));
+      const s = await openStore(jsonl, { log() {} });
+      assert.ok(s instanceof SqliteStore);
+      assert.ok(fs.existsSync(sqlitePathFor(jsonl)), "creates the .db");
+      assert.ok(!fs.existsSync(jsonl), "must not invent a JSONL");
+      assert.strictEqual(s.all().length, 0);
+      s.add(normalize({ id: 1, text: "first save", created: "2026-01-01T00:00:00.000Z" }));
+      assert.strictEqual(s.get(1).text, "first save");
+      closeQuiet(s);
+    });
+
+    await atest("FAILED auto-migrate falls back to JSONL; store intact; no half .db", async () => {
+      const jsonl = switchFixture("fail-open");
+      const recs = [
+        { id: 1, text: "do not lose me", created: "2016-06-06T06:06:06.000Z", embedding: [1, 0] },
+        { id: 2, text: "or me", created: "2017-07-07T07:07:07.000Z", embedding: [0, 1] },
+      ];
+      writeSwitchJsonl(jsonl, recs);
+      const before = fs.readFileSync(jsonl, "utf8");
+      const logs = [];
+      const s = await openStore(jsonl, {
+        log: (m) => logs.push(m),
+        migrate: {
+          async onBeforeRename() { throw new Error("simulated crash before step 7"); },
+        },
+      });
+      assert.ok(s instanceof JsonlStore, "fail-open to JSONL");
+      assert.strictEqual(fs.readFileSync(jsonl, "utf8"), before, "JSONL bytes unchanged");
+      assert.strictEqual(s.all().length, 2);
+      assert.strictEqual(s.get(1).text, "do not lose me");
+      const dbPath = sqlitePathFor(jsonl);
+      assert.ok(!fs.existsSync(dbPath), "no half .db at MEMORY_FILE_PATH");
+      assert.ok(!fs.existsSync(dbPath + ".migrating"), "temp cleaned");
+      assert.ok(logs.some((m) => /auto-migrate failed/.test(m)));
+      assert.ok(logs.some((m) => /opening JSONL/.test(m)));
+    });
+
+    await atest("second open after successful auto-migrate is a no-op", async () => {
+      const jsonl = switchFixture("second-open");
+      writeSwitchJsonl(jsonl, [
+        { id: 1, text: "once", created: "2020-01-01T00:00:00.000Z", embedding: [1, 0] },
+      ]);
+      const first = await openStore(jsonl, { log() {} });
+      assert.ok(first instanceof SqliteStore);
+      assert.strictEqual(first.get(1).text, "once");
+      closeQuiet(first);
+      assert.ok(!fs.existsSync(jsonl));
+      assert.ok(fs.existsSync(jsonl + ".bak"));
+      const logs = [];
+      const second = await openStore(jsonl, { log: (m) => logs.push(m) });
+      assert.ok(second instanceof SqliteStore);
+      assert.strictEqual(second.all().length, 1);
+      assert.strictEqual(second.get(1).text, "once");
+      assert.ok(!logs.some((m) => /migrated /.test(m)), "no second migrate");
+      closeQuiet(second);
+    });
+
+    await atest("empty .db beside live JSONL is dropped and auto-migrated (not step-8)", async () => {
+      const jsonl = switchFixture("empty-db-footgun");
+      writeSwitchJsonl(jsonl, [
+        { id: 3, text: "do not lose me", created: "2016-06-06T06:06:06.000Z" },
+      ]);
+      const dbPath = sqlitePathFor(jsonl);
+      const empty = new SqliteStore(dbPath);
+      assert.strictEqual(empty.rowCount(), 0);
+      empty.close();
+      const s = await openStore(jsonl, { log() {} });
+      assert.ok(s instanceof SqliteStore);
+      assert.strictEqual(s.get(3).text, "do not lose me");
+      assert.ok(!fs.existsSync(jsonl), "JSONL migrated off the path");
+      assert.ok(fs.existsSync(jsonl + ".bak"));
+      closeQuiet(s);
+    });
+
+    await atest("count-mismatch auto-migrate fail-opens; JSONL intact", async () => {
+      const jsonl = switchFixture("count-mismatch");
+      writeSwitchJsonl(jsonl, [
+        { id: 1, text: "a", created: "2020-01-01T00:00:00.000Z", embedding: [1, 0] },
+        { id: 2, text: "b", created: "2020-01-01T00:00:00.000Z", embedding: [0, 1] },
+      ]);
+      const before = fs.readFileSync(jsonl, "utf8");
+      const s = await openStore(jsonl, {
+        log() {},
+        migrate: {
+          onAfterIngest(store) {
+            store.db.exec("DELETE FROM memories WHERE id = 1");
+          },
+        },
+      });
+      assert.ok(s instanceof JsonlStore);
+      assert.strictEqual(fs.readFileSync(jsonl, "utf8"), before);
+      assert.strictEqual(s.all().length, 2);
+      assert.ok(!fs.existsSync(sqlitePathFor(jsonl)));
+    });
+  }
+
+  section("RM-07 slice 2b — export bundle (read-only, golden-safe)");
+
+  {
+    const { spawn, spawnSync } = require("child_process");
+    const { JsonlStore } = require("./store.js");
+
+    function stamp(p) {
+      if (!p || !fs.existsSync(p)) return null;
+      const st = fs.statSync(p);
+      const buf = fs.readFileSync(p);
+      return st.size + ":" + st.mtimeMs + ":" + require("crypto").createHash("sha256").update(buf).digest("hex");
+    }
+    function storeStamp(file) {
+      return {
+        store: stamp(file),
+        edges: stamp(file + ".edges.json"),
+        access: stamp(file + ".access.json"),
+        db: stamp(file.replace(/\.jsonl$/i, ".db")),
+        wal: stamp(file.replace(/\.jsonl$/i, ".db-wal")),
+      };
+    }
+
+    function seedExportStore(name) {
+      const file = tmp("export-" + name + ".jsonl");
+      const store = new JsonlStore(file);
+      store.add(normalize({
+        id: 1, text: "I prefer tea", created: "2026-03-05T12:00:00.000Z",
+        embedding: [0.1, 0.2, 0.3],
+      }));
+      store.add(normalize({
+        id: 2, text: "I used to prefer coffee", created: "2026-03-05T13:00:00.000Z",
+        embedding: [0.2, 0.1, 0.3], superseded_by: 1, valid_to: "2026-03-05T12:00:00.000Z",
+      }));
+      store.add(normalize({
+        id: 3, text: "old secret I deleted", created: "2026-01-09T00:00:00.000Z",
+        embedding: [0.0, 0.1, 0.0], deleted: true,
+      }));
+      store.add(normalize({
+        id: 4, text: "记忆测试", created: "2026-03-05T14:00:00.000Z",
+        embedding: [0.4, 0.1, 0.1],
+      }));
+      store.add(normalize({
+        id: 5, text: "CON", created: "2026-03-05T15:00:00.000Z",
+        embedding: [0.5, 0.1, 0.1],
+      }));
+      const { EdgeStore, makeEdge } = require("./edges.js");
+      const E = new EdgeStore(file + ".edges.json");
+      E.put(makeEdge(1, 2, { origin: "co-activation", now: "2026-03-05T12:00:00.000Z", hebbianWeight: 0.42 }));
+      E.processedIds = ["rpc-should-not-export"];
+      E.save();
+      return { file, store };
+    }
+
+    await atest("export zip: whole store incl deleted+superseded, layout, catalog, edges, README", async () => {
+      const { file } = seedExportStore("full");
+      const outDir = tmp("export-out-full");
+      fs.mkdirSync(outDir, { recursive: true });
+      const result = await exp.runExport({
+        mode: "zip", name: "bundle", outDir, storePath: file,
+      });
+      assert.ok(fs.existsSync(result.path));
+      const z = ZipReader.open(result.path);
+      const names = z.names();
+      const root = "bundle";
+      assert.ok(names.indexOf(root + "/README.txt") >= 0);
+      assert.ok(names.indexOf(root + "/manifest.json") >= 0);
+      assert.ok(names.indexOf(root + "/catalog.txt") >= 0);
+      assert.ok(names.indexOf(root + "/edges.json") >= 0);
+      assert.ok(names.indexOf(root + "/memories.jsonl") >= 0);
+      const man = JSON.parse(z.readStored(root + "/manifest.json").toString("utf8"));
+      assert.strictEqual(man.layout, "memories/YYYY/MM/DD");
+      assert.strictEqual(man.count.total, 5);
+      assert.strictEqual(man.count.current, 3, "tea + CJK + CON");
+      assert.strictEqual(man.count.superseded, 1);
+      assert.strictEqual(man.count.deleted, 1);
+      const jsonl = z.readStored(root + "/memories.jsonl").toString("utf8").trim().split("\n");
+      assert.strictEqual(jsonl.length, 5, "jsonl is the whole store, not current() only");
+      const recs = jsonl.map((l) => JSON.parse(l));
+      assert.ok(recs.some((r) => r.deleted));
+      assert.ok(recs.some((r) => r.superseded_by));
+      assert.ok(recs.every((r) => Array.isArray(r.embedding) || r.embedding === null));
+      const teaPath = root + "/memories/2026/03/05/1-i-prefer-tea.json";
+      const cjkPath = root + "/memories/2026/03/05/4-记忆测试.json";
+      const reservedPath = root + "/memories/2026/03/05/5.json";
+      const deletedPath = root + "/memories/2026/01/09/3-old-secret-i-deleted.json";
+      assert.ok(z.has(teaPath), "day-granular created path");
+      assert.ok(z.has(cjkPath), "CJK slug preserved (UTF-8 flag)");
+      assert.ok(z.has(reservedPath), "CON → <id>.json");
+      assert.ok(z.has(deletedPath), "deleted memory still has a human file");
+      const human = JSON.parse(z.readStored(teaPath).toString("utf8"));
+      assert.strictEqual("embedding" in human, false, "human file has no vectors");
+      assert.strictEqual(human.text, "I prefer tea");
+      const catalog = z.readStored(root + "/catalog.txt").toString("utf8");
+      const catLines = catalog.trim().split("\n");
+      assert.strictEqual(catLines[0].split("\t")[3], "path");
+      for (const line of catLines.slice(1)) {
+        const cols = line.split("\t");
+        assert.strictEqual(cols.length, 6, "catalog columns");
+        assert.ok(z.has(cols[3]), "catalog path resolves: " + cols[3]);
+      }
+      const edges = JSON.parse(z.readStored(root + "/edges.json").toString("utf8"));
+      assert.ok(edges.edges);
+      const ev = Object.values(edges.edges)[0];
+      assert.ok(ev && ev.hebbian && ev.hebbian.weight > 0, "Hebbian weight carried");
+      assert.strictEqual("processed_ids" in edges, false, "runtime LRU stays out");
+      const readme = z.readStored(root + "/README.txt").toString("utf8");
+      assert.ok(/you own/i.test(readme));
+      assert.ok(hasZip64Eocd(result.path));
+    });
+
+    await atest("export mutates NOTHING (store bytes unchanged)", async () => {
+      const { file } = seedExportStore("readonly");
+      const before = storeStamp(file);
+      const outDir = tmp("export-out-ro");
+      fs.mkdirSync(outDir, { recursive: true });
+      await exp.runExport({ mode: "zip", name: "ro", outDir, storePath: file });
+      assert.deepStrictEqual(storeStamp(file), before);
+    });
+
+    await atest("export never overwrites an existing zip", async () => {
+      const { file } = seedExportStore("ow");
+      const outDir = tmp("export-out-ow");
+      fs.mkdirSync(outDir, { recursive: true });
+      fs.writeFileSync(path.join(outDir, "mine.zip"), "keep-me");
+      const result = await exp.runExport({ mode: "zip", name: "mine", outDir, storePath: file });
+      assert.strictEqual(path.basename(result.path), "mine (2).zip");
+      assert.strictEqual(fs.readFileSync(path.join(outDir, "mine.zip"), "utf8"), "keep-me");
+    });
+
+    await atest("--export-jsonl is the raw scripting primitive (not replaced by the zip)", async () => {
+      const { file } = seedExportStore("jsonl");
+      const outDir = tmp("export-out-jsonl");
+      fs.mkdirSync(outDir, { recursive: true });
+      const result = await exp.runExport({
+        mode: "jsonl", name: "raw", outFile: outDir, storePath: file,
+      });
+      assert.ok(result.path.endsWith(".jsonl"));
+      const lines = fs.readFileSync(result.path, "utf8").trim().split("\n");
+      assert.strictEqual(lines.length, 5);
+      const recs = lines.map((l) => JSON.parse(l));
+      assert.strictEqual(recs[0].text, "I prefer tea");
+      assert.ok(Array.isArray(recs[0].embedding));
+    });
+
+    await atest("CLI --export (entry.js) is not a fifth verb; --export-jsonl stays its own flag", async () => {
+      const { file } = seedExportStore("cli");
+      const outDir = tmp("export-out-cli");
+      fs.mkdirSync(outDir, { recursive: true });
+      const entry = path.join(__dirname, "entry.js");
+      const zip = spawnSync(process.execPath, [
+        entry, "--export", "--json", "--name", "cli-bundle", "--out", outDir, file,
+      ], { encoding: "utf8" });
+      assert.strictEqual(zip.status, 0, zip.stderr || zip.stdout);
+      const z = JSON.parse(zip.stdout);
+      assert.ok(z.path && fs.existsSync(z.path));
+      assert.strictEqual(z.count.total, 5);
+      const raw = spawnSync(process.execPath, [
+        entry, "--export-jsonl", "--json", "--name", "cli-raw", "--out", outDir, file,
+      ], { encoding: "utf8" });
+      assert.strictEqual(raw.status, 0, raw.stderr || raw.stdout);
+      const j = JSON.parse(raw.stdout);
+      assert.ok(j.path.endsWith(".jsonl"));
+      assert.strictEqual(j.count, 5);
+    });
+
+    await atest("killed export leaves .zip.tmp, never a valid-looking truncated zip", async () => {
+      const { file } = seedExportStore("kill");
+      const outDir = tmp("export-out-kill");
+      fs.mkdirSync(outDir, { recursive: true });
+      const ready = tmp("export-kill.ready");
+      const child = spawn(process.execPath, [
+        path.join(__dirname, "export-memory.js"),
+        "--export", "--name", "killed", "--out", outDir, file,
+      ], {
+        env: Object.assign({}, process.env, {
+          RM_EXPORT_CRASH_AFTER: "1",
+          RM_EXPORT_CRASH_READY: ready,
+        }),
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const t0 = Date.now();
+      while (!fs.existsSync(ready)) {
+        if (Date.now() - t0 > 15000) {
+          try { child.kill("SIGKILL"); } catch { /* */ }
+          throw new Error("export crash-child never wrote ready: " +
+            String(child.stderr && child.stderr.read()));
+        }
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      child.kill("SIGKILL");
+      await new Promise((resolve) => {
+        if (child.exitCode != null || child.signalCode) return resolve();
+        child.on("exit", resolve);
+        setTimeout(resolve, 5000);
+      });
+      const dest = path.join(outDir, "killed.zip");
+      assert.ok(!fs.existsSync(dest), "no dest zip that looks valid");
+      assert.ok(fs.existsSync(dest + ".tmp"), "leftover is the .tmp");
+    });
+
+    if (sqliteAvailable()) {
+      await atest("sqlite export is read-only (no WAL checkpoint, bytes unchanged)", async () => {
+        const dir = tmp("export-sqlite");
+        fs.mkdirSync(dir, { recursive: true });
+        const dbPath = path.join(dir, "mem.db");
+        const s = new SqliteStore(dbPath);
+        s.add(normalize({
+          id: 1, text: "sqlite tea", created: "2026-04-01T00:00:00.000Z",
+          embedding: [1, 0, 0],
+        }));
+        s.close();
+        const before = stamp(dbPath);
+        const walBefore = fs.existsSync(dbPath + "-wal") ? stamp(dbPath + "-wal") : null;
+        const outDir = path.join(dir, "out");
+        fs.mkdirSync(outDir, { recursive: true });
+        const result = await exp.runExport({
+          mode: "zip", name: "sql", outDir, storePath: dbPath,
+        });
+        assert.ok(fs.existsSync(result.path));
+        assert.strictEqual(stamp(dbPath), before, ".db bytes unchanged");
+        const z = ZipReader.open(result.path);
+        assert.ok(z.has("sql/memories/2026/04/01/1-sqlite-tea.json"));
+        const jsonl = z.readStored("sql/memories.jsonl").toString("utf8").trim();
+        const rec = JSON.parse(jsonl);
+        assert.strictEqual(rec.text, "sqlite tea");
+        assert.ok(Array.isArray(rec.embedding));
+        void walBefore;
+      });
+
+      await atest("sqlite export sources edges.json from the table (not a sidecar)", async () => {
+        const dir = tmp("export-sqlite-edges");
+        fs.mkdirSync(dir, { recursive: true });
+        const jsonl = path.join(dir, "mem.jsonl");
+        const dbPath = path.join(dir, "mem.db");
+        const s = new SqliteStore(dbPath);
+        s.add(normalize({
+          id: 1, text: "sqlite tea", created: "2026-04-01T00:00:00.000Z",
+          embedding: [1, 0, 0],
+        }));
+        const E = openEdgeStore({ store: s, storePath: jsonl });
+        E.put(makeEdge(1, 2, {
+          origin: "co-activation", now: "2026-04-01T00:00:00.000Z", hebbianWeight: 0.42,
+        }));
+        E.processedIds = ["rpc-should-not-export"];
+        E._processedDirty = true;
+        E.save();
+        s.checkpoint();
+        s.close();
+        const outDir = path.join(dir, "out");
+        fs.mkdirSync(outDir, { recursive: true });
+        const result = await exp.runExport({
+          mode: "zip", name: "sqe", outDir, storePath: jsonl,
+        });
+        const z = ZipReader.open(result.path);
+        const edges = JSON.parse(z.readStored("sqe/edges.json").toString("utf8"));
+        const ev = Object.values(edges.edges)[0];
+        assert.ok(ev && ev.hebbian && ev.hebbian.weight === 0.42, "Hebbian weight from the table");
+        assert.strictEqual("processed_ids" in edges, false, "runtime LRU stays out");
+        assert.ok(!fs.existsSync(jsonl + ".edges.json"), "no sidecar; the .db carried the edges");
+      });
+    }
+  }
+
+  section("RM-07 slice 2c — panel export button (route-level, golden-safe)");
+
+  {
+    const { spawn } = require("child_process");
+    const net = require("net");
+    const { ZipReader } = require("./zip.js");
+    const { JsonlStore } = require("./store.js");
+
+    function freePort() {
+      return new Promise((resolve, reject) => {
+        const s = net.createServer();
+        s.once("error", reject);
+        s.listen(0, "127.0.0.1", () => {
+          const p = s.address().port;
+          s.close((err) => err ? reject(err) : resolve(p));
+        });
+      });
+    }
+
+    async function startPanelChild(opts) {
+      opts = opts || {};
+      const home = opts.home || tmp("panel-home-" + Math.random().toString(36).slice(2));
+      const desktop = path.join(home, "Desktop");
+      fs.mkdirSync(desktop, { recursive: true });
+      const store = opts.store || path.join(home, "resonance-memory.jsonl");
+      const port = opts.port || await freePort();
+      const hold = opts.hold || null;
+      const env = Object.assign({}, process.env, {
+        MEMORY_FILE_PATH: store,
+        USERPROFILE: home,
+        HOME: home,
+        RESONANCE_MEMORY_PANEL_PORT: String(port),
+        RESONANCE_MEMORY_NO_OPEN: "1",
+        RESONANCE_STORE: opts.storeBackend || "jsonl",
+      });
+      delete env.RESONANCE_MEMORY_CONFIG;
+      if (opts.watchdogMs) env.RESONANCE_MEMORY_WATCHDOG_MS = String(opts.watchdogMs);
+      if (hold) env.RM_PANEL_EXPORT_HOLD = hold;
+      const child = spawn(process.execPath, [path.join(__dirname, "panel.js")], {
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const url = "http://127.0.0.1:" + port;
+      const t0 = Date.now();
+      let lastErr = null;
+      while (Date.now() - t0 < 12000) {
+        if (child.exitCode != null) {
+          const err = String(child.stderr && child.stderr.read() || "");
+          throw new Error("panel exited early (" + child.exitCode + "): " + err);
+        }
+        try {
+          const r = await fetch(url + "/");
+          if (r.ok) {
+            return { child, port, url, home, desktop, store };
+          }
+        } catch (e) { lastErr = e; }
+        await new Promise((r) => setTimeout(r, 40));
+      }
+      try { child.kill("SIGKILL"); } catch { /* */ }
+      throw new Error("panel did not start: " + String(lastErr && lastErr.message || lastErr));
+    }
+
+    async function stopPanelChild(child) {
+      if (!child) return;
+      try { child.kill("SIGKILL"); } catch { /* */ }
+      await new Promise((resolve) => {
+        if (child.exitCode != null || child.signalCode) return resolve();
+        child.on("exit", resolve);
+        setTimeout(resolve, 3000);
+      });
+    }
+
+    await atest("previewExport: empty store, count 0, dest on Desktop, no write", async () => {
+      const home = tmp("preview-home");
+      fs.mkdirSync(path.join(home, "Desktop"), { recursive: true });
+      const store = path.join(home, "resonance-memory.jsonl");
+      const origHome = process.env.USERPROFILE;
+      const origHome2 = process.env.HOME;
+      process.env.USERPROFILE = home;
+      process.env.HOME = home;
+      try {
+        const p = await exp.previewExport(store);
+        assert.strictEqual(p.count.total, 0);
+        assert.strictEqual(p.count.current, 0);
+        assert.ok(p.destPath.indexOf(path.join(home, "Desktop")) === 0, "Desktop default: " + p.destPath);
+        assert.ok(!fs.existsSync(p.destPath), "preview writes no zip");
+        assert.ok(!fs.existsSync(store), "preview does not create the store");
+      } finally {
+        if (origHome == null) delete process.env.USERPROFILE; else process.env.USERPROFILE = origHome;
+        if (origHome2 == null) delete process.env.HOME; else process.env.HOME = origHome2;
+      }
+    });
+
+    await atest("previewExport: current vs history + estimate, store bytes unchanged", async () => {
+      const file = tmp("preview-counts.jsonl");
+      const store = new JsonlStore(file);
+      store.add(normalize({ id: 1, text: "current tea", created: "2026-03-05T12:00:00.000Z" }));
+      store.add(normalize({
+        id: 2, text: "old coffee", created: "2026-03-05T11:00:00.000Z",
+        superseded_by: 1, valid_to: "2026-03-05T12:00:00.000Z",
+      }));
+      store.add(normalize({ id: 3, text: "deleted", created: "2026-01-01T00:00:00.000Z", deleted: true }));
+      const before = fs.readFileSync(file);
+      const p = await exp.previewExport(file, { outDir: tmp("preview-out") });
+      assert.strictEqual(p.count.total, 3);
+      assert.strictEqual(p.count.current, 1);
+      assert.strictEqual(p.count.superseded, 1);
+      assert.strictEqual(p.count.deleted, 1);
+      assert.ok(p.estimateBytes > 0);
+      assert.deepStrictEqual(fs.readFileSync(file), before, "preview is read-only");
+    });
+
+    await atest("GET /api/export preview + POST writes zip, empty store, never demo-seed", async () => {
+      const panel = await startPanelChild();
+      try {
+        const page = await (await fetch(panel.url + "/")).text();
+        assert.ok(page.includes("Export my memories"));
+        assert.ok(/read-only/i.test(page));
+        const prev = await (await fetch(panel.url + "/api/export")).json();
+        assert.strictEqual(prev.demo, false);
+        assert.strictEqual(prev.busy, false);
+        assert.strictEqual(prev.count.total, 0);
+        assert.strictEqual(prev.storePath, panel.store);
+        assert.ok(prev.destPath.indexOf(panel.desktop) === 0, prev.destPath);
+        const posted = await fetch(panel.url + "/api/export", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+        });
+        const body = await posted.json();
+        assert.strictEqual(posted.status, 200, JSON.stringify(body));
+        assert.strictEqual(body.ok, true);
+        assert.ok(body.path && fs.existsSync(body.path), "zip written");
+        assert.strictEqual(body.demo, false);
+        assert.strictEqual(body.storePath, panel.store);
+        assert.ok(body.path.indexOf("Nightfall") < 0);
+        const z = ZipReader.open(body.path);
+        const names = z.names();
+        const readme = names.find((n) => n.endsWith("/README.txt"));
+        const jsonlName = names.find((n) => n.endsWith("/memories.jsonl"));
+        assert.ok(readme, "empty store still writes README");
+        assert.ok(jsonlName, "empty store still writes memories.jsonl");
+        const jsonl = z.readStored(jsonlName).toString("utf8");
+        assert.ok(!/Nightfall/.test(jsonl), "export is the user store, never demo-seed");
+        assert.strictEqual(jsonl.trim(), "", "empty jsonl");
+      } finally {
+        await stopPanelChild(panel.child);
+      }
+    });
+
+    await atest("POST /api/export exports the USER store (not demo-seed) and is read-only", async () => {
+      const home = tmp("panel-user-home");
+      const store = path.join(home, "resonance-memory.jsonl");
+      fs.mkdirSync(home, { recursive: true });
+      const js = new JsonlStore(store);
+      js.add(normalize({
+        id: 42, text: "user-only-panel-export-xyz", created: "2026-03-05T12:00:00.000Z",
+        embedding: [0.1, 0.2, 0.3],
+      }));
+      const before = fs.readFileSync(store);
+      const panel = await startPanelChild({ home, store });
+      try {
+        const posted = await fetch(panel.url + "/api/export", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+        });
+        const body = await posted.json();
+        assert.strictEqual(body.ok, true);
+        assert.strictEqual(body.count.total, 1);
+        assert.deepStrictEqual(fs.readFileSync(store), before, "export is read-only");
+        const z = ZipReader.open(body.path);
+        const jsonlName = z.names().find((n) => n.endsWith("/memories.jsonl"));
+        const jsonl = z.readStored(jsonlName).toString("utf8");
+        assert.ok(jsonl.indexOf("user-only-panel-export-xyz") >= 0);
+        assert.ok(!/Nightfall/.test(jsonl), "demo-seed must not leak into the user export");
+      } finally {
+        await stopPanelChild(panel.child);
+      }
+    });
+
+    await atest("in-flight POST returns 409; watchdog is paused; pings still answered", async () => {
+      const hold = tmp("panel-export.hold");
+      try { if (fs.existsSync(hold)) fs.unlinkSync(hold); } catch { /* */ }
+      const panel = await startPanelChild({ hold, watchdogMs: 400 });
+      try {
+        await fetch(panel.url + "/api/ping", { method: "POST" });
+        const first = fetch(panel.url + "/api/export", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+        });
+        const t0 = Date.now();
+        let preview = null;
+        while (Date.now() - t0 < 5000) {
+          preview = await (await fetch(panel.url + "/api/export")).json();
+          if (preview.busy && preview.watchdog_paused) break;
+          await new Promise((r) => setTimeout(r, 30));
+        }
+        assert.ok(preview && preview.busy, "in-flight is server-observable");
+        assert.ok(preview.watchdog_paused, "watchdog paused for the duration");
+        const dup = await fetch(panel.url + "/api/export", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+        });
+        assert.strictEqual(dup.status, 409);
+        const dupBody = await dup.json();
+        assert.strictEqual(dupBody.code, "busy");
+        const ping = await fetch(panel.url + "/api/ping", { method: "POST" });
+        assert.strictEqual(ping.status, 200, "yield/pause: ping is answered in-flight");
+        // connectedOnce is set; if pause were missing the 400ms watchdog
+        // would have killed the process. Wait well past that, no pings.
+        await new Promise((r) => setTimeout(r, 1200));
+        assert.strictEqual(panel.child.exitCode, null, "paused watchdog must not process.exit");
+        const still = await (await fetch(panel.url + "/api/export")).json();
+        assert.strictEqual(still.busy, true);
+        assert.strictEqual(still.watchdog_paused, true);
+        fs.writeFileSync(hold, "go\n");
+        const result = await first;
+        const body = await result.json();
+        assert.strictEqual(result.status, 200, JSON.stringify(body));
+        assert.strictEqual(body.ok, true);
+        assert.ok(fs.existsSync(body.path));
+        const after = await (await fetch(panel.url + "/api/export")).json();
+        assert.strictEqual(after.busy, false);
+        assert.strictEqual(after.watchdog_paused, false);
+      } finally {
+        try { fs.writeFileSync(hold, "go\n"); } catch { /* */ }
+        await stopPanelChild(panel.child);
+      }
+    });
+
+    if (sqliteAvailable()) {
+      await atest("panel export works on SqliteStore (same engine, user store)", async () => {
+        const home = tmp("panel-sqlite-home");
+        fs.mkdirSync(path.join(home, "Desktop"), { recursive: true });
+        const jsonl = path.join(home, "resonance-memory.jsonl");
+        const { SqliteStore } = require("./store-sqlite.js");
+        const { sqlitePathFor } = require("./store.js");
+        const dbPath = sqlitePathFor(jsonl);
+        const s = new SqliteStore(dbPath);
+        s.add(normalize({
+          id: 7, text: "sqlite panel export", created: "2026-04-01T00:00:00.000Z",
+          embedding: [1, 0, 0],
+        }));
+        s.close();
+        const panel = await startPanelChild({ home, store: jsonl, storeBackend: "sqlite" });
+        try {
+          const prev = await (await fetch(panel.url + "/api/export")).json();
+          assert.strictEqual(prev.backend, "sqlite");
+          assert.ok(prev.count.total >= 1);
+          const posted = await fetch(panel.url + "/api/export", {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+          });
+          const body = await posted.json();
+          assert.strictEqual(body.ok, true, JSON.stringify(body));
+          const z = ZipReader.open(body.path);
+          const jsonlName = z.names().find((n) => n.endsWith("/memories.jsonl"));
+          const text = z.readStored(jsonlName).toString("utf8");
+          assert.ok(text.indexOf("sqlite panel export") >= 0);
+        } finally {
+          await stopPanelChild(panel.child);
+        }
+      });
+    }
+  }
+
   section("eval measure runner (RM-02.a)");
 
   await atest("duplicates corpus: both metrics compute via pipeline.js (cached embed)", async () => {
@@ -2439,6 +4291,8 @@ async function asyncTests() {
     const r = await runScenario(scenarios[0], { k: 5 });
     assert.ok(r.metrics.duplicate_rate >= 0 && r.metrics.duplicate_rate <= 1);
     assert.ok(r.metrics.recall_at_k >= 0 && r.metrics.recall_at_k <= 1);
+    assert.ok(typeof r.metrics.mrr === "number" && r.metrics.mrr >= 0 && r.metrics.mrr <= 1,
+      "mrr ships as a reporting metric (S1 registry extension)");
     assert.strictEqual(r.queries.length, scenarios[0].queries.length);
     assert.ok(r.queries.every((q) => Array.isArray(q.ranked_ids)), "each query has ranked_ids from recall output");
     assert.ok(r.exact_restatements_caught >= 1,
@@ -2482,6 +4336,184 @@ async function asyncTests() {
     assert.ok(r.queries.every((q) => Array.isArray(q.ranked_ids) && q.ranked_ids.length >= 1),
       "each messy query resolved to a stored origin id");
   });
+
+  section("S1 substrate scale (generator → real recall path)");
+
+  await atest("plant 3 needles in 100 distractors: real recall finds them (synthetic geometry)", async () => {
+    // Plumbing, not the live embedder: needle ≡ query axis, hard
+    // distractors mix 0.65/0.35, haystack is random. The live 1k→50k
+    // curve is eval/substrate/scale.js.
+    const { createMemory } = require("./eval/pipeline.js");
+    const ids = ["allergy-penicillin", "height-bookshelf", "job-globex"];
+    const corpus = generateScaleCorpus({ n: 100, seed: 1, needleIds: ids });
+    attachSyntheticEmbeddings(corpus, 16, 1);
+    const file = tmp("s1-e2e.jsonl");
+    const store = new JsonlStore(file);
+    for (const rec of corpus.records) {
+      store.add(normalize({
+        id: rec.id, text: rec.text, embedding: rec.embedding,
+        created: "2026-01-01T00:00:00Z",
+      }));
+    }
+    const qv = new Map(corpus.queries.map((q) => [q.query, q.embedding]));
+    const mem = createMemory({
+      store,
+      embed: async (texts) => texts.map((t) => {
+        const v = qv.get(t);
+        if (!v) throw new Error("unexpected embed: " + t);
+        return v;
+      }),
+      fieldEnabled: false,
+    });
+    const ranked = [];
+    for (const q of corpus.queries) {
+      const out = await mem.recall(q.query, 10);
+      const hits = parsePrimaryHits(out);
+      assert.ok(hits.length >= 1, q.id + " empty recall");
+      const top5 = hits.slice(0, 5).map((h) => String(h.id));
+      assert.ok(top5.includes(String(q.relevant_ids[0])),
+        q.id + " needle not in top-5: " + hits.map((h) => h.id + " " + h.text).join(" | "));
+      assert.strictEqual(String(hits[0].id), String(q.relevant_ids[0]),
+        q.id + " synthetic geometry should put the needle at rank 1, got " + hits[0].text);
+      ranked.push({
+        id: q.id,
+        ranked_ids: hits.map((h) => String(h.id)),
+        relevant_ids: q.relevant_ids,
+      });
+    }
+    assert.strictEqual(computeMetric("recall_at_k", { queries: ranked }, null, { k: 1 }), 1);
+    assert.strictEqual(computeMetric("mrr", { queries: ranked }, null), 1);
+  });
+
+  if (sqliteAvailable()) {
+    section("Store conformance through createCore (JsonlStore ≡ SqliteStore)");
+
+    const confEmbedBank = {
+      "I work at Acme": [1, 0, 0, 0],
+      "I prefer tea": [0, 1, 0, 0],
+      "I'm allergic to peanuts": [0, 0, 1, 0],
+      "where do I work": [0.95, 0.05, 0, 0],
+      "what do I drink": [0.05, 0.95, 0, 0],
+      // Same-slot correction at ~0.60 cosine to Acme: above RM-03 floor
+      // (0.535) and below DEDUP_LO (0.88) so it supersedes rather than
+      // restates. Mass on dim 4 so it does not argmax onto tea.
+      "Actually I work at Globex now": [0.60, 0.05, 0.05, 0.797],
+      "I work at Globex": [0.60, 0.05, 0.05, 0.797],
+    };
+    const confEmbed = async (texts) => texts.map((t) => {
+      if (confEmbedBank[t]) return confEmbedBank[t].slice();
+      const v = new Array(4).fill(0);
+      v[t.length % 4] = 1;
+      return v;
+    });
+
+    function seedPair(suffix) {
+      const created = "2026-01-01T00:00:00.000Z";
+      const jsonl = new JsonlStore(tmp("conf-core-" + suffix + ".jsonl"));
+      const sqlite = freshSqlite("conf-core-" + suffix);
+      const recs = [
+        normalize({ id: 11, text: "I work at Acme", embedding: [1, 0, 0, 0], created }),
+        normalize({ id: 12, text: "I prefer tea", embedding: [0, 1, 0, 0], created }),
+        normalize({ id: 13, text: "I'm allergic to peanuts", embedding: [0, 0, 1, 0], created }),
+      ];
+      for (const r of recs) { jsonl.add(r); sqlite.add(r); }
+      const jCore = createCore({ store: jsonl, embed: confEmbed });
+      const sCore = createCore({ store: sqlite, embed: confEmbed });
+      return { jsonl, sqlite, jCore, sCore };
+    }
+
+    await atest("recall ranking/ids are identical on both backends", async () => {
+      const { sqlite, jCore, sCore } = seedPair("recall");
+      const jq = await jCore.recall("where do I work", 3);
+      const sq = await sCore.recall("where do I work", 3);
+      const jHits = parsePrimaryHits(jq).map((h) => String(h.id));
+      const sHits = parsePrimaryHits(sq).map((h) => String(h.id));
+      assert.deepStrictEqual(sHits, jHits, "same id order\n jsonl=" + jHits + "\n sqlite=" + sHits);
+      assert.strictEqual(sHits[0], "11", "Acme is rank-1 for 'where do I work'");
+      sqlite.close();
+    });
+
+    await atest("save restatement / supersession / edit / delete match", async () => {
+      const { jsonl, sqlite, jCore, sCore } = seedPair("verbs");
+      // HI restatement of tea: confirm, do not append.
+      await jCore.save("I prefer tea");
+      await sCore.save("I prefer tea");
+      assert.strictEqual(jsonl.current().length, sqlite.current().length, "restatement did not append");
+      assert.strictEqual(jsonl.get(12).access_count, sqlite.get(12).access_count);
+
+      // Cue-gated supersession of the job.
+      await jCore.save("Actually I work at Globex now");
+      await sCore.save("Actually I work at Globex now");
+      const jCur = jsonl.current().map((r) => r.text).sort();
+      const sCur = sqlite.current().map((r) => r.text).sort();
+      assert.deepStrictEqual(sCur, jCur, "current texts after supersession");
+      const jOld = jsonl.get(11), sOld = sqlite.get(11);
+      assert.ok(jOld.valid_to && sOld.valid_to, "old job retired on both");
+      assert.ok(jOld.superseded_by != null && sOld.superseded_by != null, "superseded_by set");
+
+      const jNew = jsonl.current().find((r) => /Globex/.test(r.text));
+      const sNew = sqlite.current().find((r) => /Globex/.test(r.text));
+      assert.ok(jNew && sNew, "Globex is current");
+
+      await jCore.edit(jNew.id, "I work at Globex");
+      await sCore.edit(sNew.id, "I work at Globex");
+      assert.strictEqual(jsonl.get(jNew.id).text, sqlite.get(sNew.id).text);
+
+      await jCore.remove(13);
+      await sCore.remove(13);
+      assert.strictEqual(jsonl.get(13).deleted, true);
+      assert.strictEqual(sqlite.get(13).deleted, true);
+      assert.strictEqual(jsonl.vacuum(), sqlite.vacuum());
+      assert.strictEqual(jsonl.all().length, sqlite.all().length);
+      sqlite.close();
+    });
+
+    section("RM-00 golden parity (JsonlStore ≡ SqliteStore)");
+
+    const {
+      parseStoreKind, run: runEval, key: evalKey,
+    } = require("./eval/run.js");
+
+    test("parseStoreKind: default sqlite, --store jsonl / env, flag wins, unknown throws", () => {
+      const prev = process.env.RESONANCE_STORE;
+      try {
+        delete process.env.RESONANCE_STORE;
+        assert.strictEqual(parseStoreKind([]), "sqlite", "product default");
+        assert.strictEqual(parseStoreKind(["--store", "sqlite"]), "sqlite");
+        assert.strictEqual(parseStoreKind(["--store=sqlite"]), "sqlite");
+        assert.strictEqual(parseStoreKind(["--store", "jsonl"]), "jsonl");
+        process.env.RESONANCE_STORE = "jsonl";
+        assert.strictEqual(parseStoreKind([]), "jsonl", "env pin");
+        assert.strictEqual(parseStoreKind(["--store", "sqlite"]), "sqlite", "flag wins over env");
+        process.env.RESONANCE_STORE = "sqlite";
+        assert.strictEqual(parseStoreKind(["--store", "jsonl"]), "jsonl", "flag wins over env");
+        assert.throws(() => parseStoreKind(["--store", "mysql"]), /unknown --store/);
+      } finally {
+        if (prev === undefined) delete process.env.RESONANCE_STORE;
+        else process.env.RESONANCE_STORE = prev;
+      }
+    });
+
+    // Full golden, both backends, same memory-core. 31 checks, cached
+    // embedder, a couple of seconds — cheaper than a fake mini-corpus
+    // that could miss a k=5 near-tie. Any pass/fail flip is a STOP.
+    await atest("golden scorecard is identical on JsonlStore and SqliteStore", async () => {
+      const jsonl = await runEval({ storeKind: "jsonl" });
+      const sqlite = await runEval({ storeKind: "sqlite" });
+      const j = Object.fromEntries(jsonl.map((r) => [evalKey(r), r.pass]));
+      const s = Object.fromEntries(sqlite.map((r) => [evalKey(r), r.pass]));
+      const keys = [...new Set([...Object.keys(j), ...Object.keys(s)])];
+      const flips = keys.filter((k) => j[k] !== s[k])
+        .map((k) => k + " jsonl=" + j[k] + " sqlite=" + s[k]);
+      assert.strictEqual(flips.length, 0, "case flips:\n  " + flips.join("\n  "));
+      assert.strictEqual(jsonl.length, 31, "golden is 31 checks");
+      assert.strictEqual(sqlite.length, 31);
+      assert.strictEqual(
+        jsonl.filter((r) => r.pass).length,
+        sqlite.filter((r) => r.pass).length
+      );
+    });
+  }
 
   section("RM-01.b save() wiring (Tier 0/1 on the live path)");
 

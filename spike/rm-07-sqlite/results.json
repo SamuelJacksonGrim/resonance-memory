@@ -1,0 +1,284 @@
+{
+  "generated": "2026-09-05T14:00:24.112Z",
+  "host": {
+    "node": "v24.18.0",
+    "sqlite": "3.53.1",
+    "execPath": "C:\\Program Files\\nodejs\\node.exe",
+    "platform": "win32",
+    "arch": "x64",
+    "cpus": "Intel(R) Core(TM) Ultra 9 285K",
+    "totalmem_gb": 127.3
+  },
+  "sea": {
+    "story": {
+      "build_copies_process_execPath": true,
+      "esbuild_js_target": "node20",
+      "package_engines": ">=18",
+      "this_process": "v24.18.0",
+      "this_sqlite": "3.53.1",
+      "node_sqlite_requireable": true,
+      "node_sqlite_needs": ">=22.5.0 (module); loadExtension() since v22.13 / v23.5",
+      "experimental": "Stability 1.1 Active development; flagless since v23.4 / v22.13"
+    },
+    "smoke": {
+      "ok": true,
+      "status": 0,
+      "stdout": "SEA node:sqlite OK node=v24.18.0 sqlite=3.53.1 exec=C:\\Users\\spamw\\Desktop\\resonance-memory-workshop\\spike\\rm-07-sqlite\\tmp\\sea\\sea-smoke.exe",
+      "stderr": ""
+    },
+    "extension_story": {
+      "node_sqlite_in_sea": "yes, if the build Node is ≥22.5 (copied execPath contains the module)",
+      "sqlite_vec_in_sea": "loadExtension works in this Node; SEA would need the .dll extracted beside the exe or to a temp path. Stock Node cannot statically link sqlite-vec. allowExtension:true is required at DatabaseSync construction."
+    }
+  },
+  "node_sqlite": {
+    "ok": true,
+    "rows": [
+      {
+        "id": 1,
+        "v": "hello"
+      },
+      {
+        "id": 2,
+        "v": "world"
+      }
+    ],
+    "compile_options_sample": [
+      "ATOMIC_INTRINSICS=1",
+      "COMPILER=clang-19.1.5",
+      "DEFAULT_AUTOVACUUM",
+      "DEFAULT_CACHE_SIZE=-2000",
+      "DEFAULT_FILE_FORMAT=4",
+      "DEFAULT_JOURNAL_SIZE_LIMIT=-1",
+      "DEFAULT_MEMSTATUS=0",
+      "DEFAULT_MMAP_SIZE=0",
+      "DEFAULT_PAGE_SIZE=4096",
+      "DEFAULT_PCACHE_INITSZ=20",
+      "DEFAULT_RECURSIVE_TRIGGERS",
+      "DEFAULT_SECTOR_SIZE=4096",
+      "DEFAULT_SYNCHRONOUS=2",
+      "DEFAULT_WAL_AUTOCHECKPOINT=1000",
+      "DEFAULT_WAL_SYNCHRONOUS=2",
+      "DEFAULT_WORKER_THREADS=0",
+      "DIRECT_OVERFLOW_READ",
+      "ENABLE_COLUMN_METADATA",
+      "ENABLE_DBSTAT_VTAB",
+      "ENABLE_FTS3"
+    ],
+    "fts5": true,
+    "json1": false,
+    "omit_load_extension": false,
+    "methods": [
+      "aggregate",
+      "applyChangeset",
+      "close",
+      "constructor",
+      "createSession",
+      "createTagStore",
+      "deserialize",
+      "enableDefensive",
+      "enableLoadExtension",
+      "exec",
+      "function",
+      "loadExtension",
+      "location",
+      "open",
+      "prepare",
+      "serialize",
+      "setAuthorizer"
+    ]
+  },
+  "sqlite_vec": {
+    "dll": "C:\\Users\\spamw\\Desktop\\resonance-memory-workshop\\spike\\rm-07-sqlite\\vendor\\vec0.dll",
+    "ok": true,
+    "version": "v0.1.9",
+    "entry": "(derived)",
+    "attempts": [
+      {
+        "entry": "(derived)",
+        "ok": true,
+        "version": "v0.1.9"
+      }
+    ]
+  },
+  "vector_correctness": {
+    "n": 400,
+    "dim": 768,
+    "k": 10,
+    "brute_top_ids": [
+      1,
+      331,
+      293,
+      193,
+      111,
+      14,
+      332,
+      94,
+      189,
+      357
+    ],
+    "blob_js_top_ids": [
+      1,
+      331,
+      293,
+      193,
+      111,
+      14,
+      332,
+      94,
+      189,
+      357
+    ],
+    "packed_top_ids": [
+      1,
+      331,
+      293,
+      193,
+      111,
+      14,
+      332,
+      94,
+      189,
+      357
+    ],
+    "blob_js_matches_brute": true,
+    "packed_matches_brute": true,
+    "self_cosine": 1,
+    "sqlite_vec": {
+      "ok": true,
+      "ddl": "CREATE VIRTUAL TABLE vec_items USING vec0(embedding FLOAT[768] distance_metric=cosine)",
+      "sql": "SELECT rowid AS id, distance FROM vec_items WHERE embedding MATCH ? ORDER BY distance LIMIT 10",
+      "ids_match": true,
+      "vec_ids": [
+        1,
+        331,
+        293,
+        193,
+        111,
+        14,
+        332,
+        94,
+        189,
+        357
+      ],
+      "brute_ids": [
+        1,
+        331,
+        293,
+        193,
+        111,
+        14,
+        332,
+        94,
+        189,
+        357
+      ],
+      "max_abs_delta": 6.512323796892261e-8,
+      "sample": [
+        {
+          "id": 1,
+          "distance": 0,
+          "score": 1
+        },
+        {
+          "id": 331,
+          "distance": 0.8864397406578064,
+          "score": 0.1135602593421936
+        },
+        {
+          "id": 293,
+          "distance": 0.891514241695404,
+          "score": 0.10848575830459595
+        },
+        {
+          "id": 193,
+          "distance": 0.8999980092048645,
+          "score": 0.1000019907951355
+        },
+        {
+          "id": 111,
+          "distance": 0.9042498469352722,
+          "score": 0.09575015306472778
+        }
+      ]
+    }
+  },
+  "sovereignty": {
+    "exported_lines": 25,
+    "imported": 25,
+    "lossless": true,
+    "mismatches": [],
+    "jsonl_bytes": 49566
+  },
+  "fts5": {
+    "available": true
+  },
+  "scale": [
+    {
+      "n": 10000,
+      "insert_ms": 161.1811,
+      "db_bytes": 41164800,
+      "current_hydrate_ms": 81.5695,
+      "packed_load_ms": 74.9717,
+      "packed_cosine_ms": 6.1164,
+      "search_dense_ms": 71.9339,
+      "recall_warm_ms": 100.346,
+      "recall_ok": true,
+      "recall_error": null,
+      "trials": 20,
+      "p50": 94.206,
+      "p95": 100.0693,
+      "p99": 100.543,
+      "min": 89.0791,
+      "max": 100.543,
+      "sqlite_vec_knn_ms": 16.3905,
+      "sqlite_vec_error": null,
+      "vs_jsonl": "JSONL S1 field-off p95 was 488.7 ms (parse-bound)"
+    },
+    {
+      "n": 50000,
+      "insert_ms": 726.4231,
+      "db_bytes": 205840384,
+      "current_hydrate_ms": 470.4825,
+      "packed_load_ms": 363.6872,
+      "packed_cosine_ms": 23.4096,
+      "search_dense_ms": 360.9928,
+      "recall_warm_ms": 552.9073,
+      "recall_ok": true,
+      "recall_error": null,
+      "trials": 12,
+      "p50": 493.5181,
+      "p95": 614.597,
+      "p99": 614.597,
+      "min": 460.2201,
+      "max": 614.597,
+      "sqlite_vec_knn_ms": 79.3214,
+      "sqlite_vec_error": null,
+      "vs_jsonl": "JSONL CANNOT LOAD (S1: 834 MB > 512 MB string). SQLite loaded."
+    },
+    {
+      "n": 100000,
+      "insert_ms": 1358.8758,
+      "db_bytes": 411729920,
+      "current_hydrate_ms": 1130.7349,
+      "packed_load_ms": 918.4356,
+      "packed_cosine_ms": 47.9547,
+      "search_dense_ms": 962.8937,
+      "recall_warm_ms": 1368.1785,
+      "recall_ok": true,
+      "recall_error": null,
+      "trials": 8,
+      "p50": 1507.7266,
+      "p95": 1638.7505,
+      "p99": 1638.7505,
+      "min": 1431.3474,
+      "max": 1638.7505,
+      "sqlite_vec_knn_ms": null,
+      "sqlite_vec_error": null,
+      "vs_jsonl": "JSONL CANNOT LOAD (S1: 834 MB > 512 MB string). SQLite loaded."
+    }
+  ],
+  "findings": [
+    "SEA runtime === the Node used to build. This box is v24.18.0 (sqlite 3.53.1), which is ≥22.5, so a SEA built HERE embeds node:sqlite. A SEA built with Node 18/20 would NOT. engines is still \">=18\" and esbuild --target=node20 — both would need a bump before shipping SqliteStore."
+  ]
+}

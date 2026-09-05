@@ -26,8 +26,8 @@ Build `eval/` with seeded, offline, reproducible scoring.
       `temporal` still lands with a later RM-04 expansion.)*
 - [ ] ≥50 contradiction/update cases — **the axis LOCOMO and LongMemEval both under-test.**
       *(4 today; expand as RM-03 detection matures.)*
-- [~] Metrics: `recall@k`, `duplicate_rate`, `extraction_precision`, and
-      `extraction_recall` shipped as **reporting** metrics (registry in
+- [~] Metrics: `recall@k`, `duplicate_rate`, `extraction_precision`,
+      `extraction_recall`, and `mrr` shipped as **reporting** metrics (registry in
       `eval/metrics.js`; `node eval/measure.js`; not folded into `golden.json`),
       plus the field-experiment **ROC / TBR** split.
       *(`staleness_rate`, `false_supersession` still land with RM-03.)*
@@ -307,29 +307,80 @@ deletions, ever.
 > **Update:** the *data-loss* half of this is **fixed** — writes are atomic and recall no
 > longer rewrites the store (`BUG-001`/`BUG-002` in [`BUGS.md`](BUGS.md)). What remains is the
 > *performance* half: `all()` still parses the whole store per call, and mutations still
-> rewrite the file. Comfortable ceiling is **estimated** at ~10k memories — that number comes
-> from reading the code, not from a measurement, and replacing it with a real one is a cheap
-> first task. Phase 0.1's save-time neighbor scan is **not** the thing that forces this:
-> scan p95 at N=100k is 77.1 ms vs. a pre-declared 250 ms budget (`eval/save-time-cost.js`).
+> rewrite the file. Comfortable ceiling was **estimated** at ~10k memories. **S1
+> measured it (2026-09-05):** field-off `recall()` p95 **489 ms at N=10k** (bar was
+> 100 ms → RM-07 GO). A 50k store with embeddings in the JSONL is 834 MB and
+> **cannot load** (`readFileSync` exceeds Node's ~512 MB string cap). Field-on at
+> 10k is 91 s (`field.buildEdges` O(n²), W-03). Quality is a separate finding
+> (13/24 needles stay rank-1 at 100k; underspecified / same-frame queries fail
+> at 1k already). Curve: [`eval/RESULTS.md`](../eval/RESULTS.md) "S1". Phase 0.1's
+> save-time neighbor scan is **not** this: scan p95 at N=100k is 77.1 ms vs. a
+> pre-declared 250 ms budget (`eval/save-time-cost.js`).
 
 - [x] Extract the storage layer into its own module (`store.js`) so it can be constructed and
       tested without starting the MCP stdio loop.
 - [ ] Formalize the documented `Store` interface (`touch`, `searchDense`, `searchSparse`) —
-      the seam exists now but still leaks JSONL assumptions.
-- [ ] Add `SqliteStore` — `sqlite-vec` for vectors, FTS5 for the `RM-05` keyword arm (which
-      makes hybrid retrieval nearly free), WAL mode, incremental writes.
-      **`node:sqlite` is confirmed available** on the Node 22 runtime (`DatabaseSync`,
-      `StatementSync`, `backup`), which settles the dependency question in `proposed/0005`:
-      no native module, no threat to the single-file SEA build. Whether the `sqlite-vec`
-      extension loads inside SEA is the one part still unknown.
-- [ ] Conformance test suite both backends must pass identically.
-- [ ] Transparent one-way migration on first run, with a `.bak`.
-- [ ] JSONL stays the default until SQLite passes conformance + eval parity.
+      the seam exists now but still leaks JSONL assumptions. `searchDense` is a later
+      slice (the 100k-bar shave; product S1 already clears 100 ms at 100k on the
+      JsonlStore surface via the in-process cache).
+- [x] Add `SqliteStore` — drop-in behind the JsonlStore surface (`store-sqlite.js`).
+      WAL + `synchronous=FULL`, BLOB embeddings, in-process Float32 cache, JS cosine.
+      **No sqlite-vec** (spike: slower at 10k–100k + SEA packaging). Selectable via
+      `RESONANCE_STORE` / live-config `store`; **SQLite is the default** as of
+      slice 4 (`RESONANCE_STORE=jsonl` pins JSONL). Product S1 (2026-09-05): **loads 50k (196 MB) and 100k (392 MB)**;
+      field-off cached recall p95 **49.6 ms @50k, 96.4 ms @100k** (JSONL cannot
+      load either). Opaque ids preserved; `created` is a real column; access
+      counts in-table (never `AccessLog` — BUG-007). FTS5 / `searchSparse` wait
+      on RM-05.
+- [x] Conformance test suite both backends must pass identically. `test.js`
+      "Store conformance" + I5-SQLite BUG-002, id-preservation, created-preservation,
+      normalize() typed-array trap. (`touch` / `searchDense` not on this slice's
+      surface.)
+- [x] Streaming JSONL→SQLite migrator (`migrate-sqlite.js`, `--migrate` /
+      `npm run migrate`). 10-step protocol: stream (never `readFileSync`),
+      preserve ids, fold AccessLog once at ingest (BUG-007), count-verify,
+      WAL checkpoint, atomic `.db` rename, **then** JSONL → `.jsonl.bak`.
+      `.bak` is a recovery snapshot, not the sovereignty export. Kill-9
+      before the rename leaves the JSONL live; re-run completes. 50k/768-d
+      proof: lossless in 2.5 s against a 785 MB JSONL that `readFileSync`
+      cannot load. Slice 4's `openStore()` calls the same function on first open.
+- [x] JSONL export / zip bundle (slice 2b) — the live sovereignty artifact.
+      `--export` writes a ZIP64 zip (Desktop, `--name` / `--out`, never-overwrite)
+      with `memories.jsonl` (embeddings as arrays; a competitor reads it without
+      our exe), `memories/YYYY/MM/DD/<id>-<slug>.json` (no vectors), `catalog.txt`,
+      `edges.json` (Hebbian; `processed_ids` out), `manifest.json`, `README.txt`.
+      `--export-jsonl` stays as the raw primitive. Read-only. 50k proof: 34.3 s,
+      387 MB zip, 50k/50k lossless, Windows opens, ZIP64 at 70k entries.
+      Panel button is slice 2c (shipped).
+- [x] Panel export button (slice 2c) — confirm modal, heartbeat pause + yield,
+      POST `/api/export` shells 2b, toast + copy-path + Windows reveal.
+      Not an MCP tool. Empty store still exports. User store, never demo-seed.
+- [x] Transparent one-way migration on first open (slice 4 default switch).
+      SQLite is the default. `openStore()`: jsonl pin → JsonlStore; `.db`
+      exists → SqliteStore (leftover JSONL → `.bak`); JSONL only → auto-migrate
+      via the 2a protocol (fail-open to JSONL if it throws before the atomic
+      rename); neither → fresh `.db`. Downgrade honesty: `.bak` is a recovery
+      snapshot, not a two-way door. `node eval/run.js` (sqlite default) and
+      `--store jsonl` both 27/31.
+- [x] JSONL stays the default until SQLite passes conformance + eval parity.
+      Conformance green. Golden parity (slice 3): SqliteStore matches JSONL
+      **27/31 case-for-case**. Slice 4 flipped the default after 2c (panel
+      export) so migration did not open a lock-in window.
+- [x] Edges-in-db (slice 5). EdgeStore API unchanged; SQLite persistence
+      adapter shares the SqliteStore connection. `processed_ids` + weight
+      UPDATE are one txn (0.3 atomicity fix). I6: `effectiveHebbian`
+      computed-on-read, never stored. I3 crash-domain: an edges write
+      failure leaves memories recallable. Leftover `.edges.json` migrates
+      on first-open (count-verify, sidecar → `.bak`). Export reads edges
+      from the table. Phase 0.2–0.5 matrix green on both adapters. Golden
+      27/31 unmoved. One-file sovereignty is complete; `searchDense` is
+      only-if-250k+.
 
 **Acceptance:** 100k memories, recall p95 <100ms, no full-file rewrite; both backends
 byte-identical on the eval scorecard.
 
-Design: [`proposed/0005`](proposed/0005-store-abstraction.md).
+Design: [`proposed/0005`](proposed/0005-store-abstraction.md) (seam) ·
+[`proposed/0010`](proposed/0010-sqlite-backend.md) (measured backend).
 
 ---
 

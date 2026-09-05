@@ -159,7 +159,7 @@ first, and why these cases are the cheapest first thing to run.
 | Metric | Definition | Why |
 |---|---|---|
 | `recall@k` | fraction of cases whose expected memory is in top-k | baseline quality. **Shipped (RM-02.a)** as reporting metric `recall_at_k` (success@k; registry in `eval/metrics.js`). |
-| `MRR` | mean reciprocal rank of first correct hit | ranking quality, not just presence |
+| `MRR` | mean reciprocal rank of first correct hit | ranking quality, not just presence. **Shipped (S1)** as reporting metric `mrr` (misses contribute 0; truncated at the ranked-list window). |
 | **`staleness_rate`** | answers drawn from a superseded fact | **our differentiating axis** |
 | `false_supersession` | still-true facts wrongly invalidated | **hard gate — must be 0** |
 | `duplicate_rate` | extras beyond one-per-ground-truth-group / current stored count | store hygiene. **Shipped (RM-02.a)** as a labeled reporting metric, *not* "pairs with cos > 0.95" (that would be circular for cosine-dedup). |

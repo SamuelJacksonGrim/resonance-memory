@@ -11,17 +11,20 @@ an opaque `id`.
 |---|---|
 | `server.js` | The MCP server. Four verbs: `save_memory`, `recall_memory`, `edit_memory`, `delete_memory`. |
 | `record.js` | The shared record schema (incl. temporal fields and `embedding_version`), durable atomic writes, and the access sidecar. |
-| `store.js` | `JsonlStore` — the storage backend behind the Store seam. Separate module so it's testable without the stdio loop. |
+| `store.js` | Store seam. `openStore()` default-switch (slice 4): SQLite default; JSONL auto-migrates on first open; fail-open to JSONL. Slice 5 also ingests a leftover `.edges.json` into the same `.db`. `RESONANCE_STORE=jsonl` pins JSONL. |
 | `test.js` | Dependency-free test suite: `npm test`. |
-| `package.json` | No dependencies — scripts only (`test`, `build`, `panel`, `mcp`, `seed`, `inspect`, `dedup-existing`). Sole source of the version string; `server.js` reads it so `serverInfo` can't drift. |
+| `package.json` | No dependencies — scripts only (`test`, `build`, `panel`, `mcp`, `seed`, `inspect`, `dedup-existing`, `migrate`, `export`). Sole source of the version string; `server.js` reads it so `serverInfo` can't drift. |
 | `field.js` | Associative layer (Phase 2a): kNN semantic graph over stored vectors; neighborhood expansion. |
 | `ledger.js` | Retired Hebbian sidecar (Phase 2b). Off the live path; kept as the epoch-decay reference. |
-| `edges.js` | Unified persistent edge store (Phase 0): two-signal record + one-way `.assoc.json` → `.edges.json` migration. On the live recall path. Save-time semantic neighbors persist on `save()` (K=5, min cosine 0.25); recall still uses `field.js`. Hebbian decay is lazy wall-clock via `effectiveHebbian` (I6). Reinforce materializes the decayed weight before applying α; MCP request-ID dedup LRU lives in the sidecar (Phase 0.3). Soft prune (0.4 / I8) is an explicit `pruneSweep()` (not recall/save); reactivation is in-place on save/edit of an endpoint. |
+| `edges.js` | Unified persistent edge store (Phase 0): two-signal record + one-way `.assoc.json` → `.edges.json` migration. On the live recall path. Save-time semantic neighbors persist on `save()` (K=5, min cosine 0.25); recall still uses `field.js`. Hebbian decay is lazy wall-clock via `effectiveHebbian` (I6). Reinforce materializes the decayed weight before applying α; MCP request-ID dedup LRU (Phase 0.3). **RM-07 slice 5:** persistence adapter — SqliteStore shares the `.db`; JsonlStore keeps the sidecar. Soft prune (0.4 / I8) is an explicit `pruneSweep()` (not recall/save); reactivation is in-place on save/edit of an endpoint. |
 | `extract.js` | RM-01.c Tier 2: opt-in LLM extraction (prompt, parser, sanity, chat/sampling, capability detect). Off by default. |
-| `panel.js` | Local 127.0.0.1 control panel: field toggle, LLM-extraction toggle (surfaced when a capable model is detected), Connect/Disconnect, association graph view, heartbeat auto-shutdown. |
+| `panel.js` | Local 127.0.0.1 control panel: field toggle, LLM-extraction toggle (surfaced when a capable model is detected), Connect/Disconnect, association graph view, **Export my memories** (slice 2c: confirm modal, POST `/api/export` shells `export-memory.js`, heartbeat pause + yield), heartbeat auto-shutdown. Not an MCP tool. |
 | `install.js` | Detect + wire into LM Studio / Claude Desktop MCP config (preserves other servers, leaves `.bak`). |
-| `entry.js` | Bundle dispatch: `--mcp` → server, `--install`/`--uninstall` → installer, `--dedup-existing` → RM-02.c backfill (dry-run default), else → panel. |
+| `entry.js` | Bundle dispatch: `--mcp` → server, `--install`/`--uninstall` → installer, `--dedup-existing` → RM-02.c backfill (dry-run default), `--migrate` → RM-07 slice 2a JSONL→SQLite, `--export` / `--export-jsonl` → RM-07 slice 2b sovereignty export, else → panel. |
 | `dedup-existing.js` | RM-02.c CLI. Reports (or `--apply`s) cosine-banded restatements/merges on a store written before 02.b. Calls `dedupExisting()` in `memory-core.js` — same bands as `save()`, no second decision. |
+| `migrate-sqlite.js` | RM-07 slice 2a. Streaming JSONL→SQLite (10-step protocol). Opt-in CLI; `openStore()` calls the same function on first open (slice 4). `.bak` is a recovery snapshot, not the sovereignty export. |
+| `zip.js` | Zero-dep ZIP64 writer (slice 2b). `createDeflateRaw` + `zlib.crc32` + stream to `.zip.tmp` + rename. ZIP64 on every archive. |
+| `export-memory.js` | Slice 2b CLI + the engine the 2c panel button shells. `--export` writes the zip bundle; `--export-jsonl` is the raw primitive. Read-only. Not an MCP tool. |
 | `build-exe.js` | Embed runtime assets → esbuild → Node SEA blob → postject → flip PE subsystem to GUI → stage `dist/`. |
 | `embedded-assets.js` | **Generated** each build (gitignored): `demo-seed.jsonl` + `system-prompt.md` baked in as strings so the shipped exe is one self-contained file. |
 | `inspect_sidecar.js` | Dependency-free telemetry for the Hebbian ledger. |
@@ -29,12 +32,26 @@ an opaque `id`.
 
 ## Store & embeddings
 
-- Flat JSONL at `MEMORY_FILE_PATH` (default `~/.lmstudio/resonance-memory.jsonl`), plus two
-  sidecars beside it: `<store>.edges.json` (unified edge table — Hebbian source of truth)
-  and `<store>.access.json` (access counts — kept out of the store so recall never
-  rewrites it, see `BUG-002`). A leftover `<store>.assoc.json` is legacy /
-  read-only-for-migration. Both live sidecars are regenerable: deleting them loses
-  learned associations and access counts, never a memory.
+- SQLite is the default backend (RM-07 slice 4). `MEMORY_FILE_PATH` is still a
+  `*.jsonl` path (`~/.lmstudio/resonance-memory.jsonl`); `openStore()` walks it:
+  jsonl pin → JsonlStore; `.db` exists → SqliteStore (leftover JSONL → `.bak`,
+  never dual-read); JSONL only → auto-migrate via the 2a protocol then sqlite;
+  neither → fresh `.db`. A failed auto-migrate fail-opens to JSONL (store
+  intact, retry next open). `RESONANCE_STORE=jsonl` / live-config `store: "jsonl"`
+  pins JSONL. **Slice 5:** a SqliteStore holds edges in the same `.db`
+  (one-file sovereignty). JsonlStore still has two sidecars beside the stem:
+  `<store>.edges.json` (Hebbian) and `<store>.access.json` (`BUG-002`). A
+  leftover `<store>.assoc.json` is legacy / read-only-for-migration. A leftover
+  `.edges.json` beside a `.db` migrates on first open (count-verify, → `.bak`).
+  Sidecars are regenerable: deleting them loses learned associations and access
+  counts, never a memory. config.json stays a sidecar (prefs ≠ memory). `npm run eval` is the sqlite parity gate (27/31);
+  `--store jsonl` keeps the JSONL path testable. `--migrate` (`npm run migrate`)
+  is the same 10-step protocol `openStore` calls (see
+  [`proposed/0010`](docs/proposed/0010-sqlite-backend.md)). The `.bak` is a
+  recovery snapshot, not the sovereignty export — do not delete it. After a
+  store is `.db`, an old exe opening the `.bak` sees a stale store; recovery
+  is `--export-jsonl` before downgrade, or keep the new exe. No dual-write
+  "switch back to JSONL" env.
 - Embeddings via an OpenAI-compatible `/v1/embeddings` endpoint (default LM Studio on
   `localhost:1234`, `text-embedding-nomic-embed-text-v1.5`, 768-dim). Keyword-overlap fallback
   if the endpoint is down. The embedder is **not bundled** — the user downloads it via LM Studio;
@@ -51,6 +68,23 @@ an opaque `id`.
   rewrite. File-order, each record vs earlier survivors — the same
   `detectNearDuplicate` decision as `save()`. Vectorless rows skip if the
   embedder is down. Second `--apply` is a no-op.
+- **`--migrate`** (RM-07 slice 2a) streams a JSONL store into the sibling
+  `.db`. Opt-in CLI (`npm run migrate`); slice 4's `openStore()` calls the
+  same function on first open of an existing JSONL. 10-step protocol: temp
+  `.db.migrating`, line-at-a-time INSERT, preserve ids, fold AccessLog once,
+  count-verify, WAL checkpoint, atomic rename, **then** JSONL → `.jsonl.bak`.
+  The `.bak` is a recovery snapshot, not the sovereignty export. Failure
+  before the `.db` rename leaves the JSONL live; `openStore` then fail-opens
+  to JsonlStore.
+- **`--export`** (RM-07 slice 2b) writes the sovereignty zip bundle
+  (default dest Desktop, `--name` / `--out`, never-overwrite). Contains
+  `memories.jsonl` (a competitor reads it without our exe), per-memory
+  files under `memories/YYYY/MM/DD/`, `catalog.txt`, `edges.json`,
+  `manifest.json`, `README.txt`. **`--export-jsonl`** is the raw
+  scripting primitive the zip wraps. Read-only; not a fifth verb. The
+  panel **Export my memories** button (slice 2c) shells the same function:
+  confirm modal, POST `/api/export`, watchdog pause + yield, toast +
+  copy-path + Windows reveal. Extract to a short path (Windows MAX_PATH).
 
 ## Build
 
@@ -80,8 +114,10 @@ in the `resonance-memory-stack` repo. The load-bearing ones:
 - **Embed once at save; server owns all metadata; a `Store` abstraction sits behind the verbs**
   so the backend (JSONL now, SQLite later — see `docs/proposed/0005`) can be swapped without
   changing the MCP API. The seam lives in `store.js`.
-- **All store writes go through `writeFileDurable()`, and nothing on a read path writes to the
-  store.** Both were violated once; see `BUG-001`/`BUG-002`.
+- **Durable writes; no *unbounded* write on a read path (I5).** JSONL mutations go through
+  `writeFileDurable()`; recall writes the AccessLog sidecar, never the JSONL file.
+  SQLite uses WAL + `synchronous=FULL`; recall is a bounded in-table `UPDATE` of the
+  returned ids. Both were violated once as a full-file rewrite; see `BUG-001`/`BUG-002`.
 
 ## Where the work is planned
 

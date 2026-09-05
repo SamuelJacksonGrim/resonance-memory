@@ -8,6 +8,92 @@ stable; sophistication grows in the substrate, not in the API.
 
 ## [Unreleased]
 
+### Added
+- **RM-07 slice 5 — edges-in-db (one-file sovereignty).** EdgeStore keeps its
+  API; persistence is now an adapter. SqliteStore shares the `DatabaseSync`
+  connection so memories, access counts, and learned associations live in
+  ONE `.db`. JsonlStore still uses the `<store>.edges.json` sidecar (unchanged
+  while JSONL is a live write path). `processed_ids` + the weight UPDATE
+  COMMIT in one transaction (the 0.3 atomicity fix the JSON envelope
+  flagged). `effectiveHebbian` stays computed-on-read, never a column (I6).
+  Edges mutations run in their own txn so a thrown edges write cannot poison
+  memories (crash-domain). First-open ingests a leftover `.edges.json` into
+  the table (count-verify, sidecar → `.bak`, fail-open if missing). Export
+  reads Hebbian data from the table when the backend is SQLite. config.json
+  stays a sidecar (prefs ≠ memory). Phase 0.2–0.5 edge matrix green on BOTH
+  adapters; RM-00 golden 27/31 unmoved (I9).
+- **RM-07 slice 4 — SQLite is the default.** New stores are `.db`. An existing
+  JSONL auto-migrates on first open via the 2a 10-step protocol (stream,
+  preserve ids, fold AccessLog once, count-verify, WAL checkpoint, atomic
+  rename, **then** JSONL → `.bak`). `RESONANCE_STORE=jsonl` / live-config
+  `store: "jsonl"` pins JSONL. A leftover JSONL beside a live `.db` is renamed
+  to `.bak` (finish step 8; never dual-read). **Fail-open:** a failed
+  auto-migrate keeps the JSONL live and opens JsonlStore — the user is never
+  locked out of their memories. The `.bak` is the recovery snapshot, not the
+  sovereignty export; do not delete it. Downgrade honesty: an old exe opening
+  the `.bak` sees a stale store; recovery is `--export-jsonl` before
+  downgrade, or keep the new exe. No dual-write "switch back" env.
+  `node eval/run.js` (sqlite default) and `--store jsonl` both 27/31.
+- **RM-07 slice 2c — panel export button.** "Export my memories" on the
+  local control panel (same surface as the field toggle). Click opens a
+  confirm modal (what it writes, that it is read-only, count + size
+  estimate, dest path, filename-preview note) so a curious/accidental
+  click writes nothing. Export POSTs to the panel server, which shells
+  the 2b engine and writes the zip to Desktop, then a "saved to \<path\>"
+  toast + copy-path + Windows `explorer /select`. Pauses the heartbeat
+  watchdog and yields the event loop so a long zip cannot starve
+  `/api/ping` and `process.exit(0)` a truncated tmp. Button disabled
+  in-flight (409 on a concurrent POST). Empty store still exports.
+  User store only — never `demo-seed.jsonl`. **Not an MCP tool.** Last
+  UX gate before the slice-4 default switch.
+- **RM-07 slice 2b — sovereignty export.** `--export` writes a ZIP64 zip
+  (default dest Desktop, `--name` / `--out`, never-overwrite `Name (2).zip`)
+  containing `memories.jsonl` (machine interchange, embeddings as JSON arrays —
+  a competitor reads this without our exe), `memories/YYYY/MM/DD/<id>-<slug>.json`
+  (human, no vectors), `catalog.txt`, `edges.json` (Hebbian; `processed_ids`
+  omitted), `manifest.json` (`layout: "memories/YYYY/MM/DD"`), and `README.txt`.
+  `--export-jsonl` stays as the raw scripting primitive. Zero-dep writer
+  (`zip.js`: `createDeflateRaw` + `zlib.crc32` + stream to `.zip.tmp` + rename;
+  ZIP64 extra + EOCD + locator on every archive). READ-ONLY; not a fifth MCP
+  verb. We do not sanitize the export. 50k/768-d proof: **34.3 s**, 387 MB zip,
+  50k/50k lossless, Windows `ZipFile.OpenRead` 50,005 entries; synthetic ZIP64
+  **70,000** entries. Panel button shipped as slice 2c.
+- **RM-07 slice 3 — RM-00 golden on SqliteStore.** `eval/run.js --store sqlite`
+  (also `RESONANCE_STORE=sqlite`; `--store` wins) runs the same corpora through
+  `SqliteStore` behind the Store seam — same `memory-core.js`, no forked recall
+  path. Offline + deterministic (vectors from `eval/embeddings.cache.json`).
+  The sqlite gate is two-sided parity against `golden.json`; `--accept` is
+  jsonl-only. **27/31 identical case-for-case, no flips.** Cache embeddings
+  are already exact f32, so Float32 BLOB packing is lossless on this embedder;
+  no cosine-tolerance was added. JSONL stays default (switch is slice 4, after
+  the 2c panel button).
+- **RM-07 slice 2a — streaming JSONL→SQLite migrator.** Opt-in CLI
+  (`node entry.js --migrate` / `npm run migrate`). 10-step protocol: stream
+  line-at-a-time into `.db.migrating` (never `readFileSync` — that is the S1
+  834 MB wall), preserve ids, fold AccessLog once at ingest (BUG-007),
+  count-verify, WAL checkpoint, atomic rename to `.db`, **then** JSONL →
+  `.jsonl.bak`. The `.bak` is a recovery snapshot, not the sovereignty export
+  (that's slice 2b). Failure before the `.db` rename leaves the JSONL live;
+  kill-9 is a test. Not auto-run on server startup. 50k/768-d proof:
+  **lossless in 2.5 s** against a 785 MB JSONL that `readFileSync` cannot
+  load. JSONL stays the default backend; golden unmoved.
+- **RM-07 slice 1 — `SqliteStore` drop-in.** Selectable backend (`RESONANCE_STORE=sqlite`
+  / live-config `store`); JSONL stays default. `node:sqlite` `DatabaseSync`, WAL +
+  `synchronous=FULL`, embeddings as Float32 BLOBs, in-process cache, JS cosine (no
+  sqlite-vec). Opaque ids preserved; `created` is a real column; access counts live
+  in the row (`SqliteStore` never constructs `AccessLog`). Conformance suite proves
+  JsonlStore ≡ SqliteStore on save/recall/edit/delete/vacuum. Product S1: **loads
+  50k and 100k** (JSONL cannot); field-off recall p95 **49.6 ms @50k, 96.4 ms @100k**.
+  Export, default switch, edges-in-db (slice 5, shipped), `searchDense` are later slices.
+
+### Changed
+- **I5 restated** to match ARCHITECTURE/ROADMAP: durable writes; no *unbounded* /
+  full-corpus rewrite on a read path. Bounded atomic retention UPDATE of the
+  returned ids is permitted (JSONL = AccessLog sidecar; SQLite = in-table
+  `UPDATE`). CLAUDE.md / AGENTS.md brought in line.
+- **`package.json` `engines`** `>=18` → `>=22.5` (`node:sqlite` floor). esbuild
+  `--target` follows (`node22`).
+
 Beta-readiness pass:
 
 ### Changed

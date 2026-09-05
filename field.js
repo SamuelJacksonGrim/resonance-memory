@@ -58,11 +58,18 @@ function cosine(a, b) {
  *               one-sided hub links. RM-00 judges whether it is a net improvement.
  * Returns Map<id, [{ id, sim }]> sorted by blended score desc.
  */
+function hasEmb(r) {
+  // Array.isArray is false for Float32Array (SqliteStore cache form).
+  // Cosine only needs length + numeric index.
+  const e = r && r.embedding;
+  return !!(e && e.length > 0 && typeof e[0] === "number");
+}
+
 function buildEdges(records, opts = {}) {
   const k = opts.k || 3;
   const minSim = opts.minSim != null ? opts.minSim : 0.55;
   const bonus = opts.bonus || (() => 0);
-  const withVec = records.filter((r) => Array.isArray(r.embedding));
+  const withVec = records.filter(hasEmb);
 
   // Pass 1: each node's gated top-k candidates (the directional kNN).
   const topk = new Map();
@@ -148,7 +155,7 @@ function reachableConstraints(records, seedIds, opts = {}) {
   const max = opts.max || 4;
   const seeds = new Set(seedIds.map(String));
   const exclude = new Set((opts.exclude || []).map(String));
-  const withVec = records.filter((r) => Array.isArray(r.embedding));
+  const withVec = records.filter(hasEmb);
   const out = [];
   for (const c of withVec) {
     if (!c.is_constraint || exclude.has(String(c.id))) continue;

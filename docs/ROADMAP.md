@@ -50,7 +50,7 @@ compete on **reproducibility**, which hosted vendors structurally cannot match. 
 
 | Area | Position | Owned by |
 |---|---|---|
-| Evaluation | **No longer a gap.** `RM-00` shipped: offline, deterministic, golden-gated. Reporting metrics: `recall@k` + `duplicate_rate` shipped (RM-02.a registry); MRR / staleness still open — Phase 2.5. | `RM-00`, `eval/` |
+| Evaluation | **No longer a gap.** `RM-00` shipped: offline, deterministic, golden-gated. Reporting metrics: `recall@k` + `duplicate_rate` (RM-02.a), `extraction_precision` / `extraction_recall` (RM-01), `mrr` (S1). Staleness still open — Phase 2.5. S1 scale curve in `eval/RESULTS.md`. | `RM-00`, `eval/` |
 | Write path | **The real gap, closing.** `RM-04` + `RM-03` v1 + `RM-02` landed; `RM-01` done (Tier 0/1 + opt-in Tier 2). | `RM-01`–`RM-04` |
 | Substrate | **Unified.** One edge table, two signals (semantic derived, Hebbian source-of-truth). Phase 0 exit met (0.6). | Phase 0 ✅, `ARCHITECTURE.md` |
 | Distribution | **Ahead.** Single file, zero terminal, no API key. | `DEVELOPERS.md` |
@@ -113,7 +113,7 @@ Status only. Where each lives and how it works: `ARCHITECTURE.md`. What each sat
 | Embed-at-save, cosine recall, keyword fallback | — | Foundation |
 | Durable atomic writes; recall does no *unbounded* store write | — | `BUG-001`/`BUG-002` |
 | Soft delete + `vacuum()` compaction | — | Records: `deleted` then `vacuum()`. Edges (0.4): `pruned_at` then `EdgeStore.vacuum()`. |
-| Store abstraction behind the verbs | — | SQLite swap is `RM-07` |
+| Store abstraction behind the verbs | `RM-07` | `SqliteStore` is the default (slice 4). Existing JSONL auto-migrates on first open (2a protocol; fail-open to JSONL). `RESONANCE_STORE=jsonl` pins JSONL. Golden 27/31 on sqlite default and `--store jsonl`. S1 product: loads 50k/100k; field-off p95 49.6 / 96.4 ms. |
 | kNN semantic graph, neighborhood expansion, constraint rescue | — | 🟡 ephemeral, rebuilt per recall |
 | Hebbian weights, bounded `maxBonus·tanh(w)`, provenance-discounted | — | 🟡 per-edge bounding solved; wall-clock decay ✅ (0.2) |
 | Decay + prune | — | ✅ lazy wall-clock half-life (0.2); soft prune + reactivation (0.4, I8 held for edges) |
@@ -193,13 +193,13 @@ Not substrate work; what makes it runnable by anyone. Scope + acceptance: `BACKL
 |---|---|---|
 | `RM-01` | Write-side extraction (heuristics first; local LLM optional, off by default, never blocks save) | ✅ 01.a+01.b+01.c (messy precision 0.26→1.00; messy-hard live Tier 2 A/B in RESULTS.md) |
 | `RM-02` | Near-duplicate detection + merge | ✅ 02.a+02.b+02.c (A/B + backfill: dup_rate 0.3182→0.0000, recall@5 held) |
-| `RM-07` | SQLite backend behind the Store seam (`sqlite-vec` + FTS5) | ⬜ |
+| `RM-07` | SQLite backend behind the Store seam (`node:sqlite` + BLOB/JS cosine; FTS5 later) | 🟡 slice 1+2a+2b+2c+3 shipped (selectable Store, `--migrate`, `--export` zip, panel export button, golden parity); default switch still open. [`proposed/0010`](proposed/0010-sqlite-backend.md) |
 | `RM-11` | Cross-platform builds + signing | ⬜ |
 | `RM-12` | SDKs against a documented local HTTP API | ⬜ |
 | `RM-13` | Opt-in local-only telemetry + failure-report bundle | ⬜ |
 | `RM-15` | Longitudinal coherence soak test | ⬜ |
 | `RM-16` | Poisoning / injection defense | ⬜ **gates Phase 2.2 promotion** — threat sketch: [`0009`](proposed/0009-edge-threat-model.md) |
-| `RM-17` | Export / import / backup | ⬜ — priority rises once the sidecar holds irreplaceable state |
+| `RM-17` | Export / import / backup | 🟡 — zip export shipped as RM-07 slice 2b (`--export` / `--export-jsonl`); panel button shipped as 2c; import still open |
 | `RM-18` | Encryption at rest (optional) | ⬜ |
 | `RM-19` | Recall explainability | ⬜ — near-free once 2.2 tracing exists |
 | `RM-20` | First-run quality | ⬜ |

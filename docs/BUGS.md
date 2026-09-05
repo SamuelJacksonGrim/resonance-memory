@@ -78,14 +78,19 @@ that affects an answer. That is the correct thing to make cheap.
 
 **Tests:** `test.js` → "recall does NOT rewrite the store" asserts the store bytes *and*
 mtime are unchanged across `applyRecall`, while the access bump still lands.
+**SQLite (RM-07):** the analogue is not "file mtime unchanged" — a bounded in-table
+`UPDATE` of the returned ids is the I5-permitted retention write. The test is:
+after recall, only retention columns changed on those rows, row count unchanged,
+no other column touched.
 
 ### Still open (tracked, not a bandaid)
 `all()` still parses the full store on every call, and mutations (`save`/`edit`/`delete`)
-still rewrite the whole file. That is inherent to a flat JSONL backend and is the actual
-subject of **`RM-07`** (SQLite + `sqlite-vec` + FTS5, design in
-[`proposed/0005`](proposed/0005-store-abstraction.md)). It is a *performance* limit now, not a
-correctness or data-loss one — the difference that matters. Current ceiling: comfortable to
-~10k memories, degrading after that.
+still rewrite the whole file. That is inherent to a flat JSONL backend. **`RM-07` slice 1**
+ships `SqliteStore` (`store-sqlite.js`, `node:sqlite`, BLOB + JS cosine, no sqlite-vec —
+see [`proposed/0010`](proposed/0010-sqlite-backend.md)) as the default backend (slice 4);
+`RESONANCE_STORE=jsonl` pins JSONL. Conformance + golden parity are green
+(`eval/run.js` sqlite default and `--store jsonl` both 27/31 case-for-case). JSONL's load wall
+(50k cannot `readFileSync`) is the reason it exists.
 
 ---
 
@@ -263,7 +268,7 @@ capability matrix distorts the roadmap it was written to justify.
 |---|---|---|
 | ~~`W-01`~~ | ~~`nextId()` collisions within a millisecond~~ | ✅ **dismissed** — `nextId()` returns `max + 1` when the clock hasn't advanced, so it is correct by construction and monotonic even if the clock jumps backwards. Verified by two tests (200 rapid saves, all distinct) |
 | `W-02` | Panel binds `127.0.0.1` with no CSRF token — any local process, or a malicious web page via DNS rebinding, could drive the API | Assess before `RM-12` exposes it as a documented API. Cheap mitigations: `Origin` check + a per-process token in the page |
-| `W-03` | `field.buildEdges()` is O(n²) per recall when the field is on | Profile at 10k memories; likely needs an ANN index alongside `RM-07` |
+| `W-03` | `field.buildEdges()` is O(n²) per recall when the field is on | ✅ **confirmed (S1)** — field-on `recall()` p95 **90.8 s at N=10k**, 724 ms at N=1k. ANN rides with `RM-07`. Curve in [`eval/RESULTS.md`](../eval/RESULTS.md) "S1". |
 | `W-04` | A concurrent panel + MCP server write could interleave (last-writer-wins) | Real risk once the panel gains write features; needs a lock or single-writer discipline. Phase 0.3's MCP request-ID dedup is **orthogonal**: it makes one JSON-RPC retry one mutation *inside a single process*, it does not serialize two writers. Last-writer-wins on the sidecar remains. |
 
 ---

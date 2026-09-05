@@ -20,9 +20,38 @@
  * store.js - the storage backend, behind the Store seam.
  *
  * Lives in its own module so it can be constructed and tested without starting
- * the MCP stdio loop, and so a second backend (SQLite; see docs/proposed/0005)
- * can be added alongside it without touching server.js. The MCP verbs never see
- * anything in here.
+ * the MCP stdio loop, and so a second backend (SQLite; see docs/proposed/0005
+ * and 0010) can sit alongside JsonlStore without touching memory-core.js. The
+ * MCP verbs never see anything in here.
+ *
+ * RM-07 slice 4: SqliteStore is the default. openStore() is the one
+ * construction path. Given MEMORY_FILE_PATH (still a *.jsonl path) and no
+ * explicit backend override:
+ *
+ *   1. RESONANCE_STORE=jsonl (or live-config `store: "jsonl"`) → JsonlStore.
+ *      The pin stays — a user can keep JSONL. RESONANCE_STORE=sqlite forces
+ *      sqlite (same walk as the default, never a dual-write "switch back").
+ *   2. <stem>.db exists and opens → SqliteStore. A leftover <stem>.jsonl
+ *      (2a crash-between-step-7-and-8) is renamed to .bak now (finish
+ *      step 8). The .db is live truth. Never dual-read.
+ *   3. No .db, but <stem>.jsonl exists → AUTO-MIGRATE via the 2a 10-step
+ *      protocol (call migrateJsonlToSqlite; do not reimplement it). Then
+ *      open the .db. Fail-open: if migration throws before the atomic
+ *      rename, keep the JSONL live, drop the temp, open JsonlStore.
+ *      A failed auto-migrate must never block the user from their
+ *      memories. Retry next open.
+ *   4. Neither exists (new user) → fresh SqliteStore (.db).
+ *
+ * RM-07 slice 5: a SqliteStore also ingests a leftover `<store>.edges.json`
+ * into the edges table on this same first-open (count-verify, sidecar →
+ * `.bak`, fail-open if missing). JsonlStore keeps the JSON sidecar.
+ *
+ * Empty .db beside a still-live JSONL is the slice-1 openStore() footgun,
+ * not live truth — drop the empty artifact and auto-migrate. Completing
+ * step 8 on that state would rename the real store away.
+ *
+ * openStore is async because the 2a protocol streams. Callers await it.
+ * Logs go to stderr (MCP stdio is stdout).
  */
 
 const fs = require("fs");
@@ -136,4 +165,125 @@ class JsonlStore {
   }
 }
 
-module.exports = { JsonlStore };
+/*
+ * Backend selectability (RM-07 slice 4). Default is sqlite. Live-config
+ * `store` wins over env RESONANCE_STORE, same pattern as the field toggle.
+ * `store: "jsonl"` / RESONANCE_STORE=jsonl is the pin that skips the
+ * filesystem walk. A backend change needs a process restart (you cannot
+ * hot-swap engines under an open file). There is no "switch back to JSONL
+ * and dual-write" env — after a store is .db, the JSONL at .bak is a
+ * recovery snapshot, not a two-way door.
+ */
+function resolveStoreBackend(config) {
+  if (config && (config.store === "sqlite" || config.store === "jsonl")) return config.store;
+  const raw = String(process.env.RESONANCE_STORE || "").toLowerCase();
+  if (raw === "jsonl") return "jsonl";
+  return "sqlite";
+}
+
+function sqlitePathFor(file) {
+  const s = String(file || "");
+  if (/\.db$/i.test(s)) return s;
+  if (/\.jsonl$/i.test(s)) return s.replace(/\.jsonl$/i, ".db");
+  return s + ".db";
+}
+
+function jsonlHasContent(p) {
+  try { return !!(p && fs.existsSync(p) && fs.statSync(p).size > 0); }
+  catch { return false; }
+}
+
+// MEMORY_FILE_PATH is still a *.jsonl path. A caller that already passed a
+// .db path has no JSONL sibling to bak — do not treat the .db as leftover JSONL.
+function jsonlLivePath(file, dbPath) {
+  const s = String(file || "");
+  if (!s || s === dbPath) return null;
+  if (/\.db$/i.test(s)) return null;
+  return s;
+}
+
+function defaultStoreLog(msg) {
+  // MCP stdio is stdout; store-selection / auto-migrate must never land there.
+  try { console.error(msg); } catch { /* */ }
+}
+
+async function openStore(file, opts) {
+  opts = opts || {};
+  const backend = opts.backend || resolveStoreBackend(opts.config);
+  const log = opts.log || defaultStoreLog;
+  const readOnly = !!(opts.readOnly);
+
+  if (backend === "jsonl") return new JsonlStore(file);
+
+  const { SqliteStore } = require("./store-sqlite.js");
+  const migrate = require("./migrate-sqlite.js");
+  const dbPath = sqlitePathFor(file);
+  const jsonlPath = jsonlLivePath(file, dbPath);
+  const leftoverJsonl = jsonlHasContent(jsonlPath);
+
+  function withEdges(s) {
+    if (readOnly) return s;
+    try {
+      const { migrateEdgesSidecarIntoDb } = require("./edges.js");
+      migrateEdgesSidecarIntoDb(s.db, { storePath: file, dbPath, log });
+    } catch (e) {
+      log("RESONANCE: edges sidecar migrate failed (" + String(e && e.message || e) +
+        "); memories stay reachable.");
+    }
+    return s;
+  }
+
+  const live = migrate.dbExistsAndOpens(dbPath);
+
+  // Empty .db beside a still-live JSONL is the slice-1 footgun, not a
+  // completed migrate. Dropping it and auto-migrating is the data-safe
+  // move; finishing step 8 would rename the real store away.
+  if (live.exists && live.opens && live.count === 0 && leftoverJsonl) {
+    if (readOnly) return new JsonlStore(jsonlPath);
+    log("RESONANCE: empty SQLite db at " + dbPath + " sits beside " + jsonlPath +
+      "; dropping the empty .db and auto-migrating the JSONL.");
+    migrate.removeSqliteTree(dbPath);
+  } else if (live.exists && live.opens) {
+    if (leftoverJsonl) migrate.finishStep8(jsonlPath, log);
+    return withEdges(new SqliteStore(dbPath, { readOnly }));
+  } else if (live.exists && !live.opens) {
+    if (leftoverJsonl) {
+      log("RESONANCE: " + dbPath + " exists but does not open" +
+        (live.error ? " (" + live.error.message + ")" : "") +
+        "; failing open to JSONL at " + jsonlPath);
+      return new JsonlStore(jsonlPath);
+    }
+    const err = new Error(
+      "SQLite store at " + dbPath + " exists but does not open" +
+      (live.error ? ": " + live.error.message : "")
+    );
+    err.code = "STORE_DB_UNREADABLE";
+    throw err;
+  }
+
+  if (leftoverJsonl) {
+    // Export is read-only and must not migrate. Panel / MCP first-open does.
+    if (readOnly) return new JsonlStore(jsonlPath);
+    try {
+      await migrate.migrateJsonlToSqlite(jsonlPath, Object.assign({
+        log,
+        dbPath,
+      }, opts.migrate || {}));
+      return withEdges(new SqliteStore(dbPath, { readOnly }));
+    } catch (e) {
+      // I3-spirit fail-open at the store level: a hiccup must not hide
+      // the user's memories. 2a already dropped the temp on throw-before-7.
+      log("RESONANCE: auto-migrate failed (" + String(e && e.message || e) +
+        "); opening JSONL so your memories stay reachable. Will retry next open.");
+      return new JsonlStore(jsonlPath);
+    }
+  }
+
+  return withEdges(new SqliteStore(dbPath, { readOnly }));
+}
+
+module.exports = { JsonlStore, openStore, resolveStoreBackend, sqlitePathFor };
+Object.defineProperty(module.exports, "SqliteStore", {
+  enumerable: true,
+  get() { return require("./store-sqlite.js").SqliteStore; },
+});

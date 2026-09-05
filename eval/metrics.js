@@ -151,6 +151,16 @@ function asIds(x) {
   return x.map((item) => String(item && typeof item === "object" ? item.id : item));
 }
 
+function firstRelevantRank(ranked, relevant) {
+  const rel = new Set(asIds(relevant));
+  if (!rel.size) return null;
+  const ids = asIds(ranked);
+  for (let i = 0; i < ids.length; i++) {
+    if (rel.has(ids[i])) return i + 1;
+  }
+  return null;
+}
+
 function recallAtKStats(results, corpus, opts) {
   const k = opts && opts.k != null ? Number(opts.k) : 5;
   const queries = asQueryList(results);
@@ -168,6 +178,49 @@ function recallAtKStats(results, corpus, opts) {
     k, n, hits,
     rate: n ? hits / n : 0,
     misses: scored.filter((s) => !s.hit).map((s) => s.id),
+  };
+}
+
+function medianOf(sorted) {
+  if (!sorted.length) return null;
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+function mrrStats(results, corpus, opts) {
+  // Truncated MRR: a relevant id missing from `ranked_ids` contributes 0
+  // (the list is a prefix of length k). Full-collection MRR is the same
+  // formula when the caller passes k = N so every record is ranked.
+  const queries = asQueryList(results);
+  const kCap = opts && opts.k != null ? Number(opts.k) : null;
+  const scored = [];
+  for (const q of queries) {
+    const relevant = q.relevant_ids || q.relevant;
+    if (!asIds(relevant).length) continue;
+    let ranked = q.ranked_ids || q.ranked;
+    if (kCap != null) ranked = asIds(ranked).slice(0, kCap);
+    const rank = firstRelevantRank(ranked, relevant);
+    scored.push({
+      id: q.id || q.query || null,
+      rank,
+      reciprocal: rank ? 1 / rank : 0,
+    });
+  }
+  const n = scored.length;
+  const found = scored.filter((s) => s.rank != null);
+  const ranks = found.map((s) => s.rank).sort((a, b) => a - b);
+  const mrr = n ? scored.reduce((s, x) => s + x.reciprocal, 0) / n : 0;
+  const meanRank = ranks.length
+    ? ranks.reduce((s, r) => s + r, 0) / ranks.length
+    : null;
+  return {
+    n, mrr,
+    n_found: found.length,
+    n_missed: n - found.length,
+    mean_rank: meanRank,
+    median_rank: medianOf(ranks),
+    misses: scored.filter((s) => s.rank == null).map((s) => s.id),
+    byQuery: scored,
   };
 }
 
@@ -196,6 +249,36 @@ register({
   description: "Fraction of labeled queries whose top-k ranked ids contain at least one relevant id (success@k).",
   compute(results, corpus, opts) { return recallAtKStats(results, corpus, opts).rate; },
   explain: recallAtKStats,
+});
+
+/*
+ * mrr — mean reciprocal rank of the first relevant id.
+ *
+ *     MRR = (1/Q) * Σ 1/rank_i
+ *
+ *   rank_i is the 1-based position of the first relevant id in
+ *   `ranked_ids`. A query whose relevant id is absent from the
+ *   list contributes 0 (truncated MRR@k). Unlabeled queries
+ *   (empty relevant_ids) are skipped, matching recall_at_k.
+ *
+ * Why this sits next to success@k: recall@5 is a cliff — rank 1
+ * and rank 5 score the same, rank 6 scores a miss. MRR keeps the
+ * slope, so a needle slipping 1 → 3 as the haystack grows shows
+ * up before it falls out of the top-5. S1 (eval/substrate) is
+ * the first consumer; measure.js emits it on every scenario.
+ *
+ * explain() also reports mean/median rank over the queries that
+ * found a relevant id, plus the miss list. Mean rank among all N
+ * needs a full ranking (k = N); with k = 5 those numbers are
+ * "mean rank given it made the window."
+ *
+ * results shape: same as recall_at_k.
+ */
+register({
+  name: "mrr",
+  description: "Mean reciprocal rank of the first relevant id (misses contribute 0).",
+  compute(results, corpus, opts) { return mrrStats(results, corpus, opts).mrr; },
+  explain: mrrStats,
 });
 
 function groupsFromWrites(writes) {
@@ -657,4 +740,5 @@ module.exports = {
   makeRecallAtK, groupsFromWrites, parsePrimaryHits,
   normFact, isCorrectStored, isSaveRefusal,
   COVER_MAX_WORDS, coverScore,
+  firstRelevantRank,
 };

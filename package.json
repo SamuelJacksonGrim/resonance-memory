@@ -8,7 +8,7 @@
   "type": "commonjs",
   "main": "entry.js",
   "bin": { "resonance-memory": "entry.js" },
-  "engines": { "node": ">=18" },
+  "engines": { "node": ">=22.5" },
   "scripts": {
     "test": "node test.js",
     "build": "node build-exe.js",
@@ -17,8 +17,11 @@
     "seed": "node build-demo-seed.js",
     "inspect": "node inspect_sidecar.js",
     "dedup-existing": "node entry.js --dedup-existing",
+    "migrate": "node entry.js --migrate",
+    "export": "node entry.js --export",
     "eval": "node eval/run.js",
-    "measure": "node eval/measure.js"
+    "measure": "node eval/measure.js",
+    "scale": "node eval/substrate/scale.js"
   },
   "repository": {
     "type": "git",
