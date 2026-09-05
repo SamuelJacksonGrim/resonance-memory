@@ -366,6 +366,15 @@ deletions, ever.
       Conformance green. Golden parity (slice 3): SqliteStore matches JSONL
       **27/31 case-for-case**. Slice 4 flipped the default after 2c (panel
       export) so migration did not open a lock-in window.
+- [x] Edges-in-db (slice 5). EdgeStore API unchanged; SQLite persistence
+      adapter shares the SqliteStore connection. `processed_ids` + weight
+      UPDATE are one txn (0.3 atomicity fix). I6: `effectiveHebbian`
+      computed-on-read, never stored. I3 crash-domain: an edges write
+      failure leaves memories recallable. Leftover `.edges.json` migrates
+      on first-open (count-verify, sidecar → `.bak`). Export reads edges
+      from the table. Phase 0.2–0.5 matrix green on both adapters. Golden
+      27/31 unmoved. One-file sovereignty is complete; `searchDense` is
+      only-if-250k+.
 
 **Acceptance:** 100k memories, recall p95 <100ms, no full-file rewrite; both backends
 byte-identical on the eval scorecard.

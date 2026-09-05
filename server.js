@@ -44,7 +44,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { EdgeStore, hebbianDecayType } = require("./edges.js");
+const { hebbianDecayType, openEdgeStore } = require("./edges.js");
 const { openStore } = require("./store.js");
 const { createCore, defaultGetEdges, readDedupThresholds } = require("./memory-core.js");
 const extract = require("./extract.js");
@@ -165,15 +165,16 @@ const EMBED_MODEL = process.env.EMBED_MODEL || "text-embedding-nomic-embed-text-
 
 fs.mkdirSync(path.dirname(STORE_PATH), { recursive: true });
 
-// Unified edge sidecar (Phase 0 / Slice C). Constructed on first use (field-on
+// Unified edge store (Phase 0 / Slice C). Constructed on first use (field-on
 // recall, save-time bind, or the startup pruneSweep) so the live toggle needs
-// no restart. Persists to <store>.edges.json — NEVER .assoc.json, so an old
-// shipped Ledger cannot open the new format and misparse it. A leftover
-// .assoc.json is migrated one-way on first load and left untouched
-// (legacy / read-only-for-migration).
+// no restart. Persistence follows the store backend (RM-07 slice 5):
+// SqliteStore → edges table in the same `.db` (one file); JsonlStore →
+// <store>.edges.json. NEVER .assoc.json, so an old shipped Ledger cannot
+// open the new format and misparse it. A leftover .assoc.json is migrated
+// one-way on first load and left untouched (legacy / read-only-for-migration).
 let _edges = null;
 function getEdgeStore() {
-  if (!_edges) _edges = new EdgeStore(STORE_PATH + ".edges.json");
+  if (!_edges) _edges = openEdgeStore({ store, storePath: STORE_PATH });
   return _edges;
 }
 

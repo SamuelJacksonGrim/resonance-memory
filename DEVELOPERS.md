@@ -11,12 +11,12 @@ an opaque `id`.
 |---|---|
 | `server.js` | The MCP server. Four verbs: `save_memory`, `recall_memory`, `edit_memory`, `delete_memory`. |
 | `record.js` | The shared record schema (incl. temporal fields and `embedding_version`), durable atomic writes, and the access sidecar. |
-| `store.js` | Store seam. `openStore()` default-switch (slice 4): SQLite default; JSONL auto-migrates on first open; fail-open to JSONL. `RESONANCE_STORE=jsonl` pins JSONL. |
+| `store.js` | Store seam. `openStore()` default-switch (slice 4): SQLite default; JSONL auto-migrates on first open; fail-open to JSONL. Slice 5 also ingests a leftover `.edges.json` into the same `.db`. `RESONANCE_STORE=jsonl` pins JSONL. |
 | `test.js` | Dependency-free test suite: `npm test`. |
 | `package.json` | No dependencies — scripts only (`test`, `build`, `panel`, `mcp`, `seed`, `inspect`, `dedup-existing`, `migrate`, `export`). Sole source of the version string; `server.js` reads it so `serverInfo` can't drift. |
 | `field.js` | Associative layer (Phase 2a): kNN semantic graph over stored vectors; neighborhood expansion. |
 | `ledger.js` | Retired Hebbian sidecar (Phase 2b). Off the live path; kept as the epoch-decay reference. |
-| `edges.js` | Unified persistent edge store (Phase 0): two-signal record + one-way `.assoc.json` → `.edges.json` migration. On the live recall path. Save-time semantic neighbors persist on `save()` (K=5, min cosine 0.25); recall still uses `field.js`. Hebbian decay is lazy wall-clock via `effectiveHebbian` (I6). Reinforce materializes the decayed weight before applying α; MCP request-ID dedup LRU lives in the sidecar (Phase 0.3). Soft prune (0.4 / I8) is an explicit `pruneSweep()` (not recall/save); reactivation is in-place on save/edit of an endpoint. |
+| `edges.js` | Unified persistent edge store (Phase 0): two-signal record + one-way `.assoc.json` → `.edges.json` migration. On the live recall path. Save-time semantic neighbors persist on `save()` (K=5, min cosine 0.25); recall still uses `field.js`. Hebbian decay is lazy wall-clock via `effectiveHebbian` (I6). Reinforce materializes the decayed weight before applying α; MCP request-ID dedup LRU (Phase 0.3). **RM-07 slice 5:** persistence adapter — SqliteStore shares the `.db`; JsonlStore keeps the sidecar. Soft prune (0.4 / I8) is an explicit `pruneSweep()` (not recall/save); reactivation is in-place on save/edit of an endpoint. |
 | `extract.js` | RM-01.c Tier 2: opt-in LLM extraction (prompt, parser, sanity, chat/sampling, capability detect). Off by default. |
 | `panel.js` | Local 127.0.0.1 control panel: field toggle, LLM-extraction toggle (surfaced when a capable model is detected), Connect/Disconnect, association graph view, **Export my memories** (slice 2c: confirm modal, POST `/api/export` shells `export-memory.js`, heartbeat pause + yield), heartbeat auto-shutdown. Not an MCP tool. |
 | `install.js` | Detect + wire into LM Studio / Claude Desktop MCP config (preserves other servers, leaves `.bak`). |
@@ -38,11 +38,13 @@ an opaque `id`.
   never dual-read); JSONL only → auto-migrate via the 2a protocol then sqlite;
   neither → fresh `.db`. A failed auto-migrate fail-opens to JSONL (store
   intact, retry next open). `RESONANCE_STORE=jsonl` / live-config `store: "jsonl"`
-  pins JSONL. Two sidecars beside the stem: `<store>.edges.json` (Hebbian source
-  of truth) and, for a live JsonlStore only, `<store>.access.json` (`BUG-002`).
-  A leftover `<store>.assoc.json` is legacy / read-only-for-migration. Sidecars
-  are regenerable: deleting them loses learned associations and access counts,
-  never a memory. `npm run eval` is the sqlite parity gate (27/31);
+  pins JSONL. **Slice 5:** a SqliteStore holds edges in the same `.db`
+  (one-file sovereignty). JsonlStore still has two sidecars beside the stem:
+  `<store>.edges.json` (Hebbian) and `<store>.access.json` (`BUG-002`). A
+  leftover `<store>.assoc.json` is legacy / read-only-for-migration. A leftover
+  `.edges.json` beside a `.db` migrates on first open (count-verify, → `.bak`).
+  Sidecars are regenerable: deleting them loses learned associations and access
+  counts, never a memory. config.json stays a sidecar (prefs ≠ memory). `npm run eval` is the sqlite parity gate (27/31);
   `--store jsonl` keeps the JSONL path testable. `--migrate` (`npm run migrate`)
   is the same 10-step protocol `openStore` calls (see
   [`proposed/0010`](docs/proposed/0010-sqlite-backend.md)). The `.bak` is a

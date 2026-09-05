@@ -9,6 +9,19 @@ stable; sophistication grows in the substrate, not in the API.
 ## [Unreleased]
 
 ### Added
+- **RM-07 slice 5 — edges-in-db (one-file sovereignty).** EdgeStore keeps its
+  API; persistence is now an adapter. SqliteStore shares the `DatabaseSync`
+  connection so memories, access counts, and learned associations live in
+  ONE `.db`. JsonlStore still uses the `<store>.edges.json` sidecar (unchanged
+  while JSONL is a live write path). `processed_ids` + the weight UPDATE
+  COMMIT in one transaction (the 0.3 atomicity fix the JSON envelope
+  flagged). `effectiveHebbian` stays computed-on-read, never a column (I6).
+  Edges mutations run in their own txn so a thrown edges write cannot poison
+  memories (crash-domain). First-open ingests a leftover `.edges.json` into
+  the table (count-verify, sidecar → `.bak`, fail-open if missing). Export
+  reads Hebbian data from the table when the backend is SQLite. config.json
+  stays a sidecar (prefs ≠ memory). Phase 0.2–0.5 edge matrix green on BOTH
+  adapters; RM-00 golden 27/31 unmoved (I9).
 - **RM-07 slice 4 — SQLite is the default.** New stores are `.db`. An existing
   JSONL auto-migrates on first open via the 2a 10-step protocol (stream,
   preserve ids, fold AccessLog once, count-verify, WAL checkpoint, atomic
@@ -71,7 +84,7 @@ stable; sophistication grows in the substrate, not in the API.
   in the row (`SqliteStore` never constructs `AccessLog`). Conformance suite proves
   JsonlStore ≡ SqliteStore on save/recall/edit/delete/vacuum. Product S1: **loads
   50k and 100k** (JSONL cannot); field-off recall p95 **49.6 ms @50k, 96.4 ms @100k**.
-  Export, default switch, edges-in-db, `searchDense` are later slices.
+  Export, default switch, edges-in-db (slice 5, shipped), `searchDense` are later slices.
 
 ### Changed
 - **I5 restated** to match ARCHITECTURE/ROADMAP: durable writes; no *unbounded* /

@@ -1,6 +1,6 @@
 # 0010 — SQLite backend behind the Store seam (RM-07)
 
-**Status:** slice 1 shipped (drop-in `SqliteStore`) · slice 2a shipped (streaming JSONL→SQLite migrator) · **slice 2b shipped** (sovereignty zip export) · **slice 2c shipped** (panel export button) · **slice 3 shipped** (RM-00 golden on SqliteStore = JSONL 27/31 case-for-case) · **slice 4 shipped** (SQLite is the default; auto-migrate on first open; fail-open to JSONL) · **Backlog:** `RM-07` · **Depends on:** `RM-00`, [`0005`](0005-store-abstraction.md)
+**Status:** slice 1 shipped (drop-in `SqliteStore`) · slice 2a shipped (streaming JSONL→SQLite migrator) · **slice 2b shipped** (sovereignty zip export) · **slice 2c shipped** (panel export button) · **slice 3 shipped** (RM-00 golden on SqliteStore = JSONL 27/31 case-for-case) · **slice 4 shipped** (SQLite is the default; auto-migrate on first open; fail-open to JSONL) · **slice 5 shipped** (edges-in-db: EdgeStore SQLite adapter, one-file sovereignty) · **Backlog:** `RM-07` · **Depends on:** `RM-00`, [`0005`](0005-store-abstraction.md)
 **Spike:** [`spike/rm-07-sqlite/`](../../spike/rm-07-sqlite/) — de-risked the driver and the vector path.
 **Product:** `store-sqlite.js` `SqliteStore`, same JsonlStore method surface, `memory-core.js` verbs unchanged.
 
@@ -221,7 +221,7 @@ to Mem0/Zep/a script. That is the anti-hoarding claim; see
 | I2 ranking = cosine only | Cache is a faster load of the same vectors. No durability/recency weight. |
 | I3 field fails open | Unchanged: field still `try/catch` around `field.js`. Backend is below that. |
 | I5 durable writes; no *unbounded* write on a read path | Restated (ARCHITECTURE / CLAUDE / AGENTS now agree): writes are atomic + durable; a read path must not perform an unbounded / full-corpus rewrite; retention metadata MAY be updated on recall if that update is bounded, atomic, and cannot truncate the store. **JSONL** = AccessLog sidecar (unchanged). **SQLite** = one `BEGIN`/`UPDATE`/`COMMIT` of the ~5 returned ids, `synchronous=FULL`. Vector backfill of vectorless rows stays the self-extinguishing I4/I5 exception. |
-| I6 reading never drives decay | Unchanged (edges sidecar, not the memory store). |
+| I6 reading never drives decay | Unchanged: `effectiveHebbian` is computed on read, never stored (a SELECT is not an UPDATE). Slice 5 did not add an `effective_hebbian` column. |
 | I9 field on/off primary byte-identical | Ranking still cosine over the same vectors. Backend cannot reorder. |
 | Four verbs | No new tool. Export/migrate are CLI. |
 | Zero runtime deps | `node:sqlite` is the runtime. No `package.json` `dependencies`. |
@@ -297,9 +297,10 @@ Landed. Selectable, not the default.
   are the CLI; the button shells the same function. Heartbeat pause lives
   with the panel (a sync 30–60s zip would otherwise starve `/api/ping` and
   `process.exit(0)` a truncated tmp).
-- Edges-in-db. Named fast-follow; EdgeStore API stays, persistence adapter
-  later. The zip already carries `edges.json` so the sovereignty artifact is
-  complete regardless.
+- Edges-in-db. **Slice 5, shipped.** EdgeStore API stays; persistence is an
+  adapter (JSON sidecar for JsonlStore, tables in the same `.db` for
+  SqliteStore). The zip still carries `edges.json` (sourced from the table
+  when the backend is SQLite).
 
 ## Slice 2a (shipped) — streaming JSONL→SQLite migrator
 
@@ -496,7 +497,8 @@ alive. Re-arms when done/failed.
 
 This clears the last UX gate before slice 4 (default switch: new stores
 → sqlite; existing JSONL auto-migrate first-open with the 10-step
-protocol). Then 5 edges-in-db, 6 `searchDense`, 7 smart-recall.
+protocol). Slice 5 (edges-in-db) shipped; 6 `searchDense` is only-if-250k+,
+7 smart-recall is the next track.
 
 ---
 
@@ -623,6 +625,49 @@ f32 quirk cannot rewrite the lock.
 
 ---
 
+## Slice 5 (shipped) — edges-in-db (one-file sovereignty)
+
+Landed. With SQLite the default, a user's memory was still `<store>.db` +
+`<store>.edges.json`. "Your memory is ONE file you carry" is true only once
+the learned associations live in the same `.db`. This slice is a
+**persistence adapter**, not a fold-into-`SqliteStore`. EdgeStore's API
+(`get` / `put` / `reinforce` / `reinforceRecall` / `pruneSweep` / `vacuum` /
+`acceptRequest` / `effectiveHebbian` / `incident` / …) is unchanged;
+`memory-core.js` consumers did not change.
+
+- **Adapter select.** SqliteStore → `edges` + `edge_processed_ids` tables
+  in the same `DatabaseSync` (one WAL, one file). JsonlStore → the
+  `.edges.json` sidecar, unchanged, for as long as JSONL is a live write
+  path. `openEdgeStore({ store, storePath })` is the construction path
+  `server.js` / `eval/pipeline.js` / the panel use.
+- **Schema.** Two-signal record (semantic `{value, src_versions}`, hebbian
+  `{weight, last_updated}`, provenance, created_at, prune fields).
+  `effectiveHebbian` is **never a column** (I6: decay is math on read).
+- **0.3 atomicity fix.** JSON sidecar: `processed_ids` + the weight change
+  were "durable each, not atomic as a pair" if split across files. SQLite:
+  the dedup-id claim and the weight UPDATE COMMIT together. A
+  throw-before-commit rolls back **both**.
+- **Crash-domain.** Edges mutations run in their own transaction. A thrown
+  edges write cannot poison the memories connection. Conformance: an edges
+  write failure leaves memories recallable.
+- **Migration.** On the same first-open as slice 4: leftover
+  `<store>.edges.json` + empty edges table → ingest, count-verify, rename
+  sidecar → `.bak`. Fail-open if missing/corrupt (I3). Do not merge a
+  leftover `.assoc.json` if `.edges.json` exists (existing authority rule).
+- **Export (2b).** When the backend is SQLite, `edges.json` in the zip is
+  sourced from the table (Hebbian data; `processed_ids` still omitted).
+  One `.db` copy carries everything; the bundle still separates facts
+  (jsonl) from associations (edges.json) as designed.
+- **config.json stays a sidecar.** Prefs ≠ memory.
+
+Phase 0.2–0.5 edge matrix is parameterized and green on **both** adapters.
+RM-00 golden 27/31 unmoved (I9: primary cosine is byte-identical; the
+persist swap is not a ranking change). `searchDense` (slice 6) is only-if
+250k+; smart-recall is the next track. RM-07's sovereignty promise is
+closed: one file, everything in it, yours to carry.
+
+---
+
 ## Open decisions (Samuel)
 
 These are product calls. The spike is evidence, not a substitute.
@@ -645,10 +690,13 @@ These are product calls. The spike is evidence, not a substitute.
    new stores; existing JSONL auto-migrates on first open with `.bak`.
    JSONL remains the pin, the fail-open backend, and the export
    interchange. Parity is proven (slice 3, 27/31 case-for-case).
+   Slice 5 closed the remaining `.edges.json` sidecar: one `.db` carries
+   memories + access + associations.
 5. **Move-between-devices story.** `.db` copy (after checkpoint) for RM↔RM;
    JSONL export for leaving RM / handing to a competitor. Recommend **both**,
    with JSONL as the documented sovereignty path (embeddings as JSON, no RM
-   needed to read them).
+   needed to read them). **Slice 5:** a checkpointed `.db` is now the whole
+   memory (facts + associations), not `.db` + `.edges.json`.
 6. **Access counts on recall.** **Settled this slice.** I5 restated (no
    letter-vs-spirit exception): JSONL keeps the AccessLog sidecar for as
    long as it is a live write path; SQLite does a bounded in-table `UPDATE`

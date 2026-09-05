@@ -41,7 +41,7 @@ const { exec, execFile } = require("child_process");
 const install = require("./install.js");
 const field = require("./field.js");
 const engine = require("./engine.js");
-const { EdgeStore } = require("./edges.js");
+const { openEdgeStore } = require("./edges.js");
 const { normalize, isCurrent, isVector } = require("./record.js");
 const { openStore } = require("./store.js");
 const extract = require("./extract.js");
@@ -108,35 +108,52 @@ async function memCount() {
 // Build the association graph for the view: nodes = memories, edges = kNN semantic links,
 // annotated with any learned Hebbian weight so the UI can highlight what use has reinforced.
 async function graphData(demo) {
-  const recs = (demo ? loadDemo() : await loadUserRecords(STORE_PATH)).filter((r) => isVector(r.embedding));
-  const byId = new Map(recs.map((r) => [String(r.id), r]));
+  let recs;
   let edges = null;
-  if (!demo && fieldOn()) { try { edges = new EdgeStore(STORE_PATH + ".edges.json"); } catch { } }
-  const bonus = edges ? (a, b) => edges.bonus(a, b) : () => 0;
-  const m = field.buildEdges(recs, { k: 3, minSim: 0.55, bonus });
-  const seen = new Map();
-  for (const [a, list] of m) {
-    for (const e of list) {
-      const key = [String(a), String(e.id)].sort().join(":");
-      if (seen.has(key)) continue;
-      const ra = byId.get(String(a)), rb = byId.get(String(e.id));
-      const base = field.cosine(ra.embedding, rb.embedding);
-      const heb = edges ? edges.weight(a, e.id) : 0;
-      seen.set(key, { a: String(a), b: String(e.id), w: Number(base.toFixed(4)), hebbian: Number(heb.toFixed(4)) });
+  let opened = null;
+  if (demo) {
+    recs = loadDemo().filter((r) => isVector(r.embedding));
+  } else {
+    try {
+      opened = await openStore(STORE_PATH, { config: readConfig() });
+      recs = opened.active().filter((r) => isVector(r.embedding));
+      if (fieldOn()) {
+        try { edges = openEdgeStore({ store: opened, storePath: STORE_PATH }); } catch { /* I3 */ }
+      }
+    } catch {
+      recs = [];
     }
   }
-  return {
-    nodes: recs.map((r) => ({
-      id: String(r.id),
-      text: r.text,
-      current: isCurrent(r),                       // superseded ones render dimmed
-      superseded_by: r.superseded_by != null ? String(r.superseded_by) : null,
-    })),
-    edges: [...seen.values()],
-    source: demo ? "demo" : "your memories",
-    field: !!edges,
-    current_count: recs.filter(isCurrent).length,
-  };
+  try {
+    const byId = new Map(recs.map((r) => [String(r.id), r]));
+    const bonus = edges ? (a, b) => edges.bonus(a, b) : () => 0;
+    const m = field.buildEdges(recs, { k: 3, minSim: 0.55, bonus });
+    const seen = new Map();
+    for (const [a, list] of m) {
+      for (const e of list) {
+        const key = [String(a), String(e.id)].sort().join(":");
+        if (seen.has(key)) continue;
+        const ra = byId.get(String(a)), rb = byId.get(String(e.id));
+        const base = field.cosine(ra.embedding, rb.embedding);
+        const heb = edges ? edges.weight(a, e.id) : 0;
+        seen.set(key, { a: String(a), b: String(e.id), w: Number(base.toFixed(4)), hebbian: Number(heb.toFixed(4)) });
+      }
+    }
+    return {
+      nodes: recs.map((r) => ({
+        id: String(r.id),
+        text: r.text,
+        current: isCurrent(r),                       // superseded ones render dimmed
+        superseded_by: r.superseded_by != null ? String(r.superseded_by) : null,
+      })),
+      edges: [...seen.values()],
+      source: demo ? "demo" : "your memories",
+      field: !!edges,
+      current_count: recs.filter(isCurrent).length,
+    };
+  } finally {
+    try { if (opened && typeof opened.close === "function") opened.close(); } catch { /* */ }
+  }
 }
 
 const PAGE = `<!doctype html>
@@ -301,7 +318,7 @@ const PAGE = `<!doctype html>
 
     <div class="foot">
       <div><b>For weaker models</b> that forget to save or recall: <a href="#" id="spBtn">copy a ready-made system prompt</a> and paste it into your app's system-prompt box. <span id="spMsg"></span></div>
-      <div style="margin-top:11px"><b>Removing it?</b> Click <b>Disconnect</b> next to each app above, then delete <code>resonance-memory.exe</code> &mdash; that's the whole app. Your memories live at <code id="storePath">&hellip;</code> and stay put unless you delete that file too &mdash; along with the small <code>.edges.json</code> / <code>.access.json</code> companions beside it (and a leftover <code>.assoc.json</code> if an older build wrote one).</div>
+      <div style="margin-top:11px"><b>Removing it?</b> Click <b>Disconnect</b> next to each app above, then delete <code>resonance-memory.exe</code> &mdash; that's the whole app. Your memories live at <code id="storePath">&hellip;</code> and stay put unless you delete that file too. SQLite is one <code>.db</code> (facts, access counts, and learned associations). A JSONL pin still has the small <code>.edges.json</code> / <code>.access.json</code> companions beside it (and a leftover <code>.assoc.json</code> if an older build wrote one).</div>
       <div style="margin-top:11px">The field and extraction switches apply instantly &mdash; no restart. This panel closes itself a few seconds after you close the tab.</div>
     </div>
   </div>

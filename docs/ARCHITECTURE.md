@@ -18,8 +18,8 @@ Context Protocol (MCP) over stdio and exposes exactly **four verbs** — `save_m
 (embeddings, cosine ranking, a temporal supersession model, a kNN associative graph, a
 Hebbian co-activation ledger) lives in the *substrate*, behind those four verbs. The model
 never sees an embedding, a timestamp, or a score — only the verbs and an opaque `id`. Nothing
-leaves the machine: there is no cloud, no account, no API key. Storage is a flat JSONL file
-in the user's home directory.
+leaves the machine: there is no cloud, no account, no API key. Storage is a local
+SQLite `.db` (default) or a JSONL file, in the user's home directory.
 
 The one design principle everything else serves: **a small model cannot misuse it.** The
 interface may get *simpler*, never more cognitively demanding.
@@ -155,7 +155,7 @@ same record the panel renders, the installer targets, `--dedup-existing` scans,
 | `export-memory.js` | RM-07 slice 2b sovereignty export. `--export` zip bundle; `--export-jsonl` raw primitive. Read-only. The 2c panel button shells `runExport()` / `previewExport()`. Not an MCP tool. | `zip`, `store`, `record`, `edges` |
 | `field.js` | Associative layer (Phase 2a): a kNN semantic graph over stored vectors, neighborhood expansion, and constraint rescue. No new embedding calls, no LLM extraction. | stdlib only |
 | `ledger.js` | Retired Hebbian sidecar (Phase 2b). Off the live path as of Slice C; kept so tests can compare EdgeStore bonuses against the shipped epoch-decay math. | `record` |
-| `edges.js` | Unified persistent edge store (Phase 0 / `RM-21`): one undirected record, two independent signals (`semantic` derived cache validated by version comparison, `hebbian` source of truth), typed provenance, one-way `.assoc.json` → `.edges.json` migration (`kind: "resonance-edges"`). **On the live recall path** — Hebbian bonus (via `effectiveHebbian`)/reinforce/save. Decay is lazy wall-clock (I6); `tick()` is retired. A reinforcing mutation materializes `effectiveHebbian` before applying α (0.3). MCP request-ID idempotency: a 256-entry LRU of processed JSON-RPC ids (`processed_ids`) lives in the sidecar envelope so one `writeFileDurable` commits the dedup record and the weight change together. Soft prune (0.4 / I8): `pruneSweep()` marks `pruned_at` only when *both* unreinforced and semantically weak (`SEMANTIC_PRUNE_GATE` 0.25); hard drop is `vacuum()`, explicit. Reactivation is in-place on save/edit/reinforce of an endpoint. `field.js` still builds the semantic kNN at recall. | `record` |
+| `edges.js` | Unified persistent edge store (Phase 0 / `RM-21`): one undirected record, two independent signals (`semantic` derived cache validated by version comparison, `hebbian` source of truth), typed provenance, one-way `.assoc.json` → `.edges.json` migration (`kind: "resonance-edges"`). **On the live recall path** — Hebbian bonus (via `effectiveHebbian`)/reinforce/save. Decay is lazy wall-clock (I6); `tick()` is retired. A reinforcing mutation materializes `effectiveHebbian` before applying α (0.3). MCP request-ID idempotency: a 256-entry LRU of processed JSON-RPC ids. **RM-07 slice 5:** persistence adapter — SqliteStore shares the `.db` (`processed_ids` + weight UPDATE are one txn); JsonlStore keeps the sidecar. `effectiveHebbian` is never stored. Soft prune (0.4 / I8): `pruneSweep()` marks `pruned_at` only when *both* unreinforced and semantically weak (`SEMANTIC_PRUNE_GATE` 0.25); hard drop is `vacuum()`, explicit. Reactivation is in-place on save/edit/reinforce of an endpoint. `field.js` still builds the semantic kNN at recall. | `record` |
 | `panel.js` | The `127.0.0.1` control panel (largest file): field toggle, LLM-extraction toggle (surfaced when a capable model is detected), Connect/Disconnect, the 3D association-graph view, demo graph, **Export my memories** (slice 2c: confirm modal, POST `/api/export` shells `export-memory.js`, heartbeat pause + yield so a long zip cannot starve `/api/ping`), heartbeat auto-shutdown. Not an MCP tool. | `install`, `field`, `engine`, `edges`, `record`, `extract`, `export-memory`, `embedded-assets` |
 | `install.js` | Detect + wire into LM Studio / Claude Desktop MCP config. Preserves other configured servers, leaves a `.bak`. | stdlib only |
 | `engine.js` | One-click embedder setup for the panel: drives LM Studio's bundled `lms` CLI to start the server, download the Nomic embedder, load it, and verify the endpoint answers. Pure convenience — the MCP server never needs it. | stdlib + `fetch` |
@@ -301,17 +301,19 @@ it out. Embeddings are kept until then.
 Everything lives beside `MEMORY_FILE_PATH` (default `~/.lmstudio/resonance-memory.jsonl`):
 
 ```
-resonance-memory.jsonl              the store — one JSON record per line
-resonance-memory.jsonl.access.json  access-count sidecar   (AccessLog, record.js)
-resonance-memory.jsonl.edges.json   unified edge table     (EdgeStore, edges.js)
-                                    Hebbian source of truth + semantic derived cache.
-                                    `kind: "resonance-edges"`. Soft-pruned rows stay
-                                    until an explicit `vacuum()`.
+resonance-memory.db                 SQLite default (slice 4+5): memories +
+                                    access counts + edges in ONE file.
+resonance-memory.jsonl              JsonlStore pin / fail-open / interchange
+resonance-memory.jsonl.access.json  access-count sidecar   (AccessLog; JsonlStore only)
+resonance-memory.jsonl.edges.json   unified edge table     (EdgeStore JSON adapter;
+                                    JsonlStore. SqliteStore holds the same record
+                                    in the `.db`. Leftover sidecar migrates on
+                                    first-open → `.bak`.)
 resonance-memory.jsonl.assoc.json   LEGACY Hebbian sidecar (Ledger, ledger.js).
                                     Read-only-for-migration: if `.edges.json` is
                                     missing, weights are copied in one-way and this
                                     file is left untouched (downgrade-safe).
-resonance-memory.config.json        live runtime state (the field toggle)
+resonance-memory.config.json        live runtime state (prefs ≠ memory; stays a sidecar)
 ```
 
 Two properties make this safe and swappable:
@@ -325,9 +327,9 @@ Two properties make this safe and swappable:
   metadata may move on recall when the update is bounded, atomic, and cannot truncate the
   store. JSONL keeps counts in the AccessLog sidecar (zero JSONL writes in steady state).
   SQLite updates `access_count` / `last_access` in-table on the returned ids, one
-  transaction, `synchronous=FULL`. Hebbian weights stay in the `.edges.json` sidecar on
-  both backends (edges-in-db is a later slice). Deleting a sidecar loses learned
-  associations or access counts, never a memory.
+  transaction, `synchronous=FULL`. Hebbian weights live in the same `.db` (slice 5
+  adapter; JSON sidecar remains for JsonlStore). Deleting a leftover sidecar loses
+  learned associations or access counts, never a memory.
 
 The **config file** is deliberately beside the *data*, not the exe, so the panel toggle and
 the MCP server read the same file — the field turns on/off with no client restart. `server.js`
@@ -354,7 +356,8 @@ The Store method surface — `all` / `active` / `current` / `get` / `add` / `upd
   (slice 2b) writes the ZIP64 zip bundle (Desktop, `--name` / `--out`);
   `--export-jsonl` is the raw primitive. The panel **Export my memories**
   button (slice 2c) shells the same engine (confirm modal, heartbeat pause).
-  Edges-in-db and `searchDense` are later slices.
+  Slice 5 put EdgeStore in the same `.db` (one-file sovereignty). `searchDense`
+  is a later slice.
 - **`JsonlStore`** (pin / fail-open / export interchange). Flat JSONL; mutations
   go through `writeFileDurable()`. Access counts live in the AccessLog sidecar.
   `all()` re-parses the file per call — this is the S1 load wall (50k with

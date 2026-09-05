@@ -32,8 +32,12 @@
  * moment of a reinforcing mutation, THEN applies α, so reinforcement cannot
  * bypass accumulated decay (the "ghost weight" of adding α to the undecayed
  * stored value after a long idle). MCP request-ID idempotency lives here too:
- * a bounded LRU of processed JSON-RPC ids is kept INSIDE this sidecar so one
- * writeFileDurable commits the dedup record and the weight change together.
+ * a bounded LRU of processed JSON-RPC ids is kept INSIDE the persist layer
+ * so one durable write commits the dedup record and the weight change
+ * together. JSON sidecar: one envelope via writeFileDurable (I5 = each write
+ * durable, not the pair atomic if they were two files). SQLite adapter
+ * (RM-07 slice 5): the id claim and the weight UPDATE COMMIT in ONE
+ * transaction — that closes the window the envelope comment flagged.
  * Phase 0.4 soft-prunes (I8): an explicit pruneSweep() — never recall/save —
  * marks an edge inactive only when it is BOTH unreinforced (effectiveHebbian
  * ~0) AND semantically weak (below SEMANTIC_PRUNE_GATE). A strong-semantic
@@ -58,6 +62,14 @@
  * Sidecar format is versioned (`kind: "resonance-edges"`) so an old
  * {recalls, edges:{key: number}} reader can refuse rather than treat
  * records as weights (which would NaN the ledger and, on save, wipe it).
+ *
+ * Persistence is an adapter (RM-07 slice 5), not a second EdgeStore.
+ * JsonlStore → `<store>.edges.json` (unchanged). SqliteStore → `edges` +
+ * `edge_processed_ids` tables in the SAME `.db` (one WAL, one file). The
+ * in-memory Map and every public method stay; only how a mutation hits
+ * disk changes. effectiveHebbian is still computed on read and is NEVER
+ * a column (I6). Edges mutations run in their own transaction so a
+ * thrown edges write cannot poison the memories connection (crash-domain).
  */
 
 const fs = require("fs");
@@ -492,6 +504,438 @@ function siblingAssocPath(edgesFile) {
   return edgesFile.slice(0, -".edges.json".length) + ".assoc.json";
 }
 
+/*
+ * Parse an on-disk envelope (native or legacy-assoc) into the in-memory
+ * snap EdgeStore.load() hydrates. Unknown/corrupt shapes return empty
+ * (I3 fail-open) — the caller does not throw.
+ */
+function snapFromJson(j, now) {
+  const empty = { edges: new Map(), recalls: 0, processedIds: [], migrated: false };
+  const kind = sidecarKind(j);
+  if (kind === SIDECAR_KIND) {
+    const bag = j.edges;
+    if (!bag || typeof bag !== "object" || Array.isArray(bag)) return empty;
+    const when = now || isoNow();
+    const edges = new Map();
+    for (const k of Object.keys(bag)) {
+      const rec = normalizeEdge(bag[k], when);
+      edges.set(edgeKey(rec.a, rec.b), rec);
+    }
+    return {
+      edges,
+      recalls: typeof j.recalls === "number" ? j.recalls : 0,
+      processedIds: Array.isArray(j.processed_ids) ? j.processed_ids.slice() : [],
+      migrated: false,
+    };
+  }
+  if (kind === "legacy-assoc") {
+    const parsed = readLegacyAssoc(j);
+    return {
+      edges: migrateAssoc(j, now),
+      recalls: parsed.recalls,
+      processedIds: [],
+      migrated: true,
+    };
+  }
+  return empty;
+}
+
+function emptySnap() {
+  return { edges: new Map(), recalls: 0, processedIds: [], migrated: false };
+}
+
+// -------------------------------------------------------------- persist adapters
+//
+// EdgeStore owns the Map and the verbs. These classes own the disk. JSON
+// sidecar is the JsonlStore companion (as long as JSONL is a live write
+// path). SqliteEdgePersist shares the SqliteStore DatabaseSync so
+// memories + edges + access live in ONE file (slice 5 / one-file
+// sovereignty). Config stays a sidecar: prefs ≠ memory.
+
+function isSqliteStore(store) {
+  // SqliteStore exposes DatabaseSync and MUST NOT construct AccessLog
+  // (BUG-007). JsonlStore has `access` and no `db`.
+  return !!(store && store.db && typeof store.db.prepare === "function" && store.access === undefined);
+}
+
+function edgesSidecarCandidates(storePath, dbPath) {
+  const out = [];
+  const add = (p) => { if (p && out.indexOf(p) < 0) out.push(p); };
+  if (storePath) add(String(storePath) + ".edges.json");
+  if (dbPath) {
+    add(String(dbPath) + ".edges.json");
+    if (/\.db$/i.test(dbPath)) add(String(dbPath).replace(/\.db$/i, ".jsonl") + ".edges.json");
+  }
+  if (storePath && /\.jsonl$/i.test(storePath)) {
+    add(String(storePath).replace(/\.jsonl$/i, ".db") + ".edges.json");
+  }
+  return out;
+}
+
+class JsonEdgePersist {
+  constructor(file, opts = {}) {
+    this.kind = "json";
+    this.file = file;
+    this.legacyFile = opts.legacyFile || null;
+    this.writes = 0;
+  }
+
+  load(now) {
+    try {
+      if (this.file && fs.existsSync(this.file)) {
+        return snapFromJson(JSON.parse(fs.readFileSync(this.file, "utf8")), now);
+      }
+      // Target missing: one-way lazy migrate from legacy .assoc.json if
+      // present. .assoc.json is read-only-for-migration — we never write it.
+      // A corrupt/missing .edges.json does NOT fall through to the sibling
+      // (the new file is the authority; fail-open means empty, not "try old").
+      const legacy = this.legacyFile || siblingAssocPath(this.file);
+      if (legacy && fs.existsSync(legacy)) {
+        return snapFromJson(JSON.parse(fs.readFileSync(legacy, "utf8")), now);
+      }
+    } catch {
+      return emptySnap();
+    }
+    return emptySnap();
+  }
+
+  save(state) {
+    writeFileDurable(this.file, JSON.stringify(envelope(
+      state.edges, state.recalls, state.processedIds
+    )));
+    this.writes++;
+  }
+}
+
+class SqliteEdgePersist {
+  constructor(db, opts = {}) {
+    this.kind = "sqlite";
+    this.db = db;
+    this.readOnly = !!opts.readOnly;
+    this.writes = 0;
+    // Test hook: throw AFTER the DML and BEFORE COMMIT so a crash in the
+    // window proves the id claim and the weight UPDATE roll back together.
+    this.throwBeforeCommit = opts.throwBeforeCommit || null;
+    if (!this.readOnly) this._initSchema();
+    this._prepare();
+  }
+
+  _initSchema() {
+    // Two-signal record, byte-identical fields to the JSON envelope.
+    // effectiveHebbian is NOT a column — I6: decay is math on read.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS edges (
+        a                     TEXT NOT NULL,
+        b                     TEXT NOT NULL,
+        semantic_value        REAL,
+        src_version_a         TEXT,
+        src_version_b         TEXT,
+        hebbian_weight        REAL NOT NULL DEFAULT 0,
+        hebbian_last_updated  TEXT NOT NULL,
+        provenance_origin     TEXT,
+        migrated_from         TEXT,
+        created_at            TEXT NOT NULL,
+        pruned_at             TEXT,
+        prune_count           INTEGER NOT NULL DEFAULT 0,
+        first_pruned_at       TEXT,
+        last_reactivated_at   TEXT,
+        PRIMARY KEY (a, b)
+      );
+      CREATE INDEX IF NOT EXISTS idx_edges_a ON edges(a);
+      CREATE INDEX IF NOT EXISTS idx_edges_b ON edges(b);
+      CREATE TABLE IF NOT EXISTS edge_processed_ids (
+        seq INTEGER PRIMARY KEY,
+        raw TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS edge_meta (
+        k TEXT PRIMARY KEY,
+        v TEXT
+      );
+    `);
+  }
+
+  _prepare() {
+    try {
+      this._selectAll = this.db.prepare("SELECT * FROM edges");
+      this._count = this.db.prepare("SELECT COUNT(*) AS n FROM edges");
+      this._upsert = this.db.prepare(
+        "INSERT INTO edges (a,b,semantic_value,src_version_a,src_version_b," +
+        "hebbian_weight,hebbian_last_updated,provenance_origin,migrated_from," +
+        "created_at,pruned_at,prune_count,first_pruned_at,last_reactivated_at) " +
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) " +
+        "ON CONFLICT(a,b) DO UPDATE SET " +
+        "semantic_value=excluded.semantic_value," +
+        "src_version_a=excluded.src_version_a," +
+        "src_version_b=excluded.src_version_b," +
+        "hebbian_weight=excluded.hebbian_weight," +
+        "hebbian_last_updated=excluded.hebbian_last_updated," +
+        "provenance_origin=excluded.provenance_origin," +
+        "migrated_from=excluded.migrated_from," +
+        "created_at=excluded.created_at," +
+        "pruned_at=excluded.pruned_at," +
+        "prune_count=excluded.prune_count," +
+        "first_pruned_at=excluded.first_pruned_at," +
+        "last_reactivated_at=excluded.last_reactivated_at"
+      );
+      this._delete = this.db.prepare("DELETE FROM edges WHERE a = ? AND b = ?");
+      this._deleteAll = this.db.prepare("DELETE FROM edges");
+      this._selProc = this.db.prepare("SELECT raw FROM edge_processed_ids ORDER BY seq");
+      this._delProc = this.db.prepare("DELETE FROM edge_processed_ids");
+      this._insProc = this.db.prepare("INSERT INTO edge_processed_ids (seq, raw) VALUES (?, ?)");
+      this._selMeta = this.db.prepare("SELECT v FROM edge_meta WHERE k = ?");
+      this._setMeta = this.db.prepare("INSERT INTO edge_meta (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v");
+    } catch {
+      // Schema missing on a read-only open of a pre-slice-5 db: load()
+      // fail-opens empty; export falls through to the sidecar.
+      this._selectAll = null;
+    }
+  }
+
+  edgeCount() {
+    if (!this._count) return 0;
+    try { return Number(this._count.get().n) || 0; } catch { return 0; }
+  }
+
+  _rowToEdge(row, now) {
+    let srcA = null, srcB = null;
+    try { if (row.src_version_a != null) srcA = JSON.parse(row.src_version_a); } catch { srcA = row.src_version_a; }
+    try { if (row.src_version_b != null) srcB = JSON.parse(row.src_version_b); } catch { srcB = row.src_version_b; }
+    return normalizeEdge({
+      a: row.a,
+      b: row.b,
+      semantic: {
+        value: row.semantic_value == null ? null : Number(row.semantic_value),
+        src_versions: { a: srcA, b: srcB },
+      },
+      hebbian: {
+        weight: typeof row.hebbian_weight === "number" ? row.hebbian_weight : Number(row.hebbian_weight) || 0,
+        last_updated: row.hebbian_last_updated,
+      },
+      provenance: {
+        origin: row.provenance_origin || null,
+        migrated_from: row.migrated_from || null,
+      },
+      created_at: row.created_at,
+      pruned_at: row.pruned_at || null,
+      prune_count: Number(row.prune_count) || 0,
+      first_pruned_at: row.first_pruned_at || null,
+      last_reactivated_at: row.last_reactivated_at || null,
+    }, now);
+  }
+
+  _bindEdge(rec) {
+    const src = rec.semantic && rec.semantic.src_versions || {};
+    return [
+      rec.a, rec.b,
+      rec.semantic && typeof rec.semantic.value === "number" ? rec.semantic.value : null,
+      src.a == null ? null : JSON.stringify(src.a),
+      src.b == null ? null : JSON.stringify(src.b),
+      rec.hebbian && typeof rec.hebbian.weight === "number" ? rec.hebbian.weight : 0,
+      rec.hebbian && rec.hebbian.last_updated || isoNow(),
+      rec.provenance && rec.provenance.origin || null,
+      rec.provenance && rec.provenance.migrated_from || null,
+      rec.created_at,
+      rec.pruned_at || null,
+      typeof rec.prune_count === "number" ? rec.prune_count : 0,
+      rec.first_pruned_at || null,
+      rec.last_reactivated_at || null,
+    ];
+  }
+
+  load(now) {
+    if (!this._selectAll) return emptySnap();
+    try {
+      const edges = new Map();
+      for (const row of this._selectAll.all()) {
+        const rec = this._rowToEdge(row, now);
+        edges.set(edgeKey(rec.a, rec.b), rec);
+      }
+      const processedIds = [];
+      for (const row of this._selProc.all()) {
+        try { processedIds.push(JSON.parse(row.raw)); } catch { /* skip a corrupt slot */ }
+      }
+      let recalls = 0;
+      const meta = this._selMeta.get("recalls");
+      if (meta && meta.v != null) {
+        const n = Number(meta.v);
+        if (Number.isFinite(n)) recalls = n;
+      }
+      return { edges, recalls, processedIds, migrated: false };
+    } catch {
+      return emptySnap();
+    }
+  }
+
+  _txn(fn) {
+    // Own transaction (crash-domain): a thrown edges write ROLLBACKs here
+    // and must not leave the shared DatabaseSync in an aborted state that
+    // would poison a later memories INSERT. We do NOT piggyback on an
+    // in-flight memories txn — BEGIN failing because one is open is a
+    // swallowed I3 miss, not a co-commit.
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const out = fn();
+      if (typeof this.throwBeforeCommit === "function") this.throwBeforeCommit();
+      this.db.exec("COMMIT");
+      this.writes++;
+      return out;
+    } catch (e) {
+      try { this.db.exec("ROLLBACK"); } catch { /* already aborted */ }
+      throw e;
+    }
+  }
+
+  _writeProcessed(processedIds) {
+    this._delProc.run();
+    const ids = Array.isArray(processedIds) ? processedIds : [];
+    for (let i = 0; i < ids.length; i++) {
+      this._insProc.run(i, JSON.stringify(ids[i]));
+    }
+  }
+
+  _upsertOne(rec) {
+    this._upsert.run(...this._bindEdge(rec));
+  }
+
+  save(state) {
+    if (this.readOnly) return;
+    const replaceAll = !!state.replaceAll;
+    const dirty = state.dirty;
+    const deleted = state.deleted;
+    const processedDirty = !!state.processedDirty || replaceAll;
+    const recallsDirty = !!state.recallsDirty || replaceAll;
+    const hasDirty = dirty && dirty.size > 0;
+    const hasDeleted = deleted && deleted.size > 0;
+    if (!replaceAll && !hasDirty && !hasDeleted && !processedDirty && !recallsDirty) return;
+    this._txn(() => {
+      if (replaceAll) {
+        this._deleteAll.run();
+        for (const rec of state.edges.values()) this._upsertOne(rec);
+      } else {
+        if (hasDirty) {
+          for (const k of dirty) {
+            const rec = state.edges.get(k);
+            if (rec) this._upsertOne(rec);
+          }
+        }
+        if (hasDeleted) {
+          for (const k of deleted) {
+            const [a, b] = splitKey(k);
+            this._delete.run(a, b);
+          }
+        }
+      }
+      if (processedDirty) this._writeProcessed(state.processedIds);
+      if (recallsDirty) this._setMeta.run("recalls", String(state.recalls || 0));
+    });
+  }
+}
+
+/*
+ * First-open ingest of a leftover `<store>.edges.json` into the edges
+ * table (slice 5). Non-destructive: count-verify every edge survives,
+ * then rename the sidecar → `.bak`. Fail-open if missing/corrupt (I3:
+ * learned weight is gone; memories are not). Does NOT merge a leftover
+ * `.assoc.json` if `.edges.json` exists (existing authority rule). If
+ * only `.assoc.json` is present, ingest it and leave it untouched
+ * (downgrade-safe, same as JsonEdgePersist).
+ *
+ * Always creates the edges schema so a fresh SqliteStore is one-file
+ * from the first open, even with zero associations.
+ */
+function migrateEdgesSidecarIntoDb(db, opts) {
+  opts = opts || {};
+  const log = opts.log || function () {};
+  const persist = new SqliteEdgePersist(db);
+  if (persist.edgeCount() > 0) {
+    return { migrated: false, reason: "table-has-rows", count: persist.edgeCount() };
+  }
+  const candidates = edgesSidecarCandidates(opts.storePath, opts.dbPath);
+  let sidecar = null;
+  for (const p of candidates) {
+    if (p && fs.existsSync(p)) { sidecar = p; break; }
+  }
+  const now = opts.now || isoNow();
+  if (sidecar) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(sidecar, "utf8"));
+      const kind = sidecarKind(raw);
+      if (kind !== SIDECAR_KIND && kind !== "legacy-assoc") {
+        log("RESONANCE: edges sidecar at " + sidecar + " is unreadable; leaving it, associations empty.");
+        return { migrated: false, reason: "unreadable", path: sidecar };
+      }
+      const snap = snapFromJson(raw, now);
+      const srcCount = snap.edges.size;
+      persist.save({
+        edges: snap.edges,
+        recalls: snap.recalls,
+        processedIds: snap.processedIds,
+        replaceAll: true,
+        processedDirty: true,
+        recallsDirty: true,
+      });
+      if (persist.edgeCount() !== srcCount) {
+        persist.save({
+          edges: new Map(), recalls: 0, processedIds: [],
+          replaceAll: true, processedDirty: true, recallsDirty: true,
+        });
+        throw new Error("edges count-verify failed: db=" + persist.edgeCount() + " sidecar=" + srcCount);
+      }
+      const bak = sidecar + ".bak";
+      try { fs.renameSync(sidecar, bak); } catch (e) {
+        log("RESONANCE: migrated " + srcCount + " edges into the db but sidecar rename failed (" +
+          String(e && e.message || e) + "); table is live truth.");
+      }
+      log("RESONANCE: migrated " + srcCount + " edges into the store db; original kept at " + bak);
+      return { migrated: true, count: srcCount, from: sidecar };
+    } catch (e) {
+      log("RESONANCE: edges sidecar migrate failed (" + String(e && e.message || e) +
+        "); associations empty, memories stay reachable.");
+      return { migrated: false, reason: "fail-open", error: e };
+    }
+  }
+  // No .edges.json. Sibling .assoc.json is the Phase 0 one-way ingest,
+  // only because the new file is missing. Leave .assoc.json untouched.
+  for (const p of candidates) {
+    const assoc = p && p.endsWith(".edges.json") ? p.slice(0, -".edges.json".length) + ".assoc.json" : null;
+    if (!assoc || !fs.existsSync(assoc)) continue;
+    try {
+      const raw = JSON.parse(fs.readFileSync(assoc, "utf8"));
+      const snap = snapFromJson(raw, now);
+      persist.save({
+        edges: snap.edges,
+        recalls: snap.recalls,
+        processedIds: snap.processedIds,
+        replaceAll: true,
+        processedDirty: true,
+        recallsDirty: true,
+      });
+      log("RESONANCE: ingested " + snap.edges.size + " edges from legacy " + assoc +
+        " into the store db; leftover sidecar left untouched.");
+      return { migrated: true, count: snap.edges.size, from: assoc };
+    } catch (e) {
+      log("RESONANCE: legacy assoc ingest failed (" + String(e && e.message || e) +
+        "); associations empty, memories stay reachable.");
+      return { migrated: false, reason: "fail-open", error: e };
+    }
+  }
+  return { migrated: false, reason: "missing", count: 0 };
+}
+
+function openEdgeStore(opts) {
+  opts = opts || {};
+  const store = opts.store;
+  if (isSqliteStore(store)) {
+    return new EdgeStore(null, {
+      persist: opts.persist || new SqliteEdgePersist(store.db, { readOnly: !!store.readOnly }),
+      now: opts.now,
+    });
+  }
+  const file = opts.file || opts.edgesPath ||
+    (opts.storePath ? String(opts.storePath) + ".edges.json" : null);
+  return new EdgeStore(file, { now: opts.now, legacyFile: opts.legacyFile });
+}
+
 // -------------------------------------------------------------- store
 
 /*
@@ -505,7 +949,6 @@ function siblingAssocPath(edgesFile) {
  */
 class EdgeStore {
   constructor(file, opts = {}) {
-    this.file = file;
     this.now = opts.now || isoNow;
     // Hebbian knobs MUST stay byte-identical to ledger.js. Moving storage
     // must not move the numbers (Slice C / I2 / I9).
@@ -519,17 +962,29 @@ class EdgeStore {
     // opts.halfLives; bonus/effectiveWeight read this table.
     this.halfLives = Object.assign({}, HALF_LIFE_SECONDS, opts.halfLives || {});
     this.legacyFile = opts.legacyFile || null;
+    if (opts.persist) {
+      this.persist = opts.persist;
+    } else if (opts.db) {
+      this.persist = new SqliteEdgePersist(opts.db, { readOnly: !!opts.readOnly });
+    } else {
+      this.persist = new JsonEdgePersist(file, { legacyFile: this.legacyFile });
+    }
+    this.file = this.persist.kind === "json" ? (file || this.persist.file) : null;
     this.edges = new Map();
     this.recalls = 0;
     this.processedIds = [];  // LRU, oldest first; raw JSON-RPC ids
     this.processedSet = new Set(); // canonRequestId keys, O(1) lookup
     this.migrated = false;   // true iff this load converted a legacy .assoc.json
+    this._dirty = new Set();
+    this._deleted = new Set();
+    this._processedDirty = false;
+    this._recallsDirty = false;
     this.load();
     // Lazy one-way persist: if we ingested a sibling .assoc.json because
     // <store>.edges.json did not exist, write the new file now. load() itself
     // never writes (I5). Never rewrite the legacy sidecar — a downgraded exe
     // still reads its own stale weights from it.
-    if (this.migrated && this.file && !fs.existsSync(this.file)) this.save();
+    if (this.migrated && this.persist.kind === "json" && this.file && !fs.existsSync(this.file)) this.save();
   }
 
   _reset() {
@@ -538,6 +993,15 @@ class EdgeStore {
     this.recalls = 0;
     this.processedIds = [];
     this.processedSet = new Set();
+    this._dirty = new Set();
+    this._deleted = new Set();
+    this._processedDirty = false;
+    this._recallsDirty = false;
+  }
+
+  _touch(k) {
+    this._dirty.add(k);
+    this._deleted.delete(k);
   }
 
   _remember(rawId) {
@@ -551,6 +1015,7 @@ class EdgeStore {
       const ek = canonRequestId(evicted);
       if (ek) this.processedSet.delete(ek);
     }
+    this._processedDirty = true;
   }
 
   _loadProcessedIds(raw) {
@@ -585,46 +1050,27 @@ class EdgeStore {
   }
 
   _ingest(j) {
-    const kind = sidecarKind(j);
-    if (kind === SIDECAR_KIND) {
-      const bag = j.edges;
-      // kind is right but the payload isn't a map — fail open, don't
-      // Object.keys an array of numbers into garbage records.
-      if (!bag || typeof bag !== "object" || Array.isArray(bag)) return;
-      const when = this.now();
-      for (const k of Object.keys(bag)) {
-        const rec = normalizeEdge(bag[k], when);
-        this.edges.set(edgeKey(rec.a, rec.b), rec);
-      }
-      this.recalls = typeof j.recalls === "number" ? j.recalls : 0;
-      this._loadProcessedIds(j.processed_ids);
-      return;
-    }
-    if (kind === "legacy-assoc") {
-      const parsed = readLegacyAssoc(j);
-      this.edges = migrateAssoc(j, this.now());
-      this.recalls = parsed.recalls;
-      this.migrated = true;
-      return;
-    }
-    // unknown shape: fail open (empty). Do not guess.
+    const snap = snapFromJson(j, this.now());
+    this.edges = snap.edges;
+    this.recalls = snap.recalls;
+    this._loadProcessedIds(snap.processedIds);
+    this.migrated = snap.migrated;
+    this._processedDirty = false;
+    this._recallsDirty = false;
+    this._dirty = new Set();
+    this._deleted = new Set();
   }
 
   load() {
     this._reset();
     try {
-      if (this.file && fs.existsSync(this.file)) {
-        this._ingest(JSON.parse(fs.readFileSync(this.file, "utf8")));
-        return;
-      }
-      // Target missing: one-way lazy migrate from legacy .assoc.json if
-      // present. .assoc.json is read-only-for-migration — we never write it.
-      // A corrupt/missing .edges.json does NOT fall through to the sibling
-      // (the new file is the authority; fail-open means empty, not "try old").
-      const legacy = this.legacyFile || siblingAssocPath(this.file);
-      if (legacy && fs.existsSync(legacy)) {
-        this._ingest(JSON.parse(fs.readFileSync(legacy, "utf8")));
-      }
+      const snap = this.persist.load(this.now());
+      this.edges = snap.edges || new Map();
+      this.recalls = snap.recalls || 0;
+      this._loadProcessedIds(snap.processedIds);
+      this.migrated = !!snap.migrated;
+      this._processedDirty = false;
+      this._recallsDirty = false;
     } catch {
       this._reset();
     }
@@ -632,7 +1078,19 @@ class EdgeStore {
 
   save() {
     try {
-      writeFileDurable(this.file, JSON.stringify(envelope(this.edges, this.recalls, this.processedIds)));
+      this.persist.save({
+        edges: this.edges,
+        recalls: this.recalls,
+        processedIds: this.processedIds,
+        dirty: this._dirty,
+        deleted: this._deleted,
+        processedDirty: this._processedDirty,
+        recallsDirty: this._recallsDirty,
+      });
+      this._dirty = new Set();
+      this._deleted = new Set();
+      this._processedDirty = false;
+      this._recallsDirty = false;
     } catch { /* non-fatal: the field must never break recall (I3) */ }
   }
 
@@ -642,7 +1100,9 @@ class EdgeStore {
 
   put(edge) {
     const rec = normalizeEdge(edge, this.now());
-    this.edges.set(edgeKey(rec.a, rec.b), rec);
+    const k = edgeKey(rec.a, rec.b);
+    this.edges.set(k, rec);
+    this._touch(k);
     return rec;
   }
 
@@ -690,6 +1150,7 @@ class EdgeStore {
       const type = typeof opts.typeFn === "function" ? opts.typeFn(e.a, e.b) : hebOpts.type;
       if (shouldPrune(e, now, Object.assign({}, hebOpts, { type }))) {
         markPruned(e, now);
+        this._touch(edgeKey(e.a, e.b));
         n++;
       }
     }
@@ -708,6 +1169,8 @@ class EdgeStore {
     for (const [k, e] of [...this.edges]) {
       if (e.pruned_at) {
         this.edges.delete(k);
+        this._deleted.add(k);
+        this._dirty.delete(k);
         dropped++;
       }
     }
@@ -728,6 +1191,7 @@ class EdgeStore {
       if (!e.pruned_at) continue;
       if (e.a === s || e.b === s) {
         reactivateEdge(e, when);
+        this._touch(edgeKey(e.a, e.b));
         n++;
       }
     }
@@ -796,6 +1260,7 @@ class EdgeStore {
         halfLives: opts.halfLives || this.halfLives,
       });
       setHebbian(existing, wEff + alpha, now);
+      this._touch(edgeKey(existing.a, existing.b));
       return;
     }
     this.put(makeEdge(a, b, {
@@ -831,6 +1296,7 @@ class EdgeStore {
   // can replay the old timescale. Do not mix with effectiveHebbian.
   tick() {
     this.recalls += 1;
+    this._recallsDirty = true;
     if (this.epoch > 0 && this.recalls % this.epoch === 0) this.decay();
   }
 
@@ -838,8 +1304,14 @@ class EdgeStore {
     for (const [k, e] of [...this.edges]) {
       const w = e.hebbian && typeof e.hebbian.weight === "number" ? e.hebbian.weight : 0;
       const nw = w * this.beta;
-      if (nw < this.floor) this.edges.delete(k);
-      else e.hebbian.weight = nw;   // in-place: do NOT stamp last_updated
+      if (nw < this.floor) {
+        this.edges.delete(k);
+        this._deleted.add(k);
+        this._dirty.delete(k);
+      } else {
+        e.hebbian.weight = nw;   // in-place: do NOT stamp last_updated
+        this._touch(k);
+      }
     }
   }
 }
@@ -877,4 +1349,12 @@ module.exports = {
   shouldPrune,
   markPruned,
   reactivateEdge,
+  JsonEdgePersist,
+  SqliteEdgePersist,
+  openEdgeStore,
+  migrateEdgesSidecarIntoDb,
+  isSqliteStore,
+  edgesSidecarCandidates,
+  snapFromJson,
+  envelope,
 };

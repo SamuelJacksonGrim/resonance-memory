@@ -951,6 +951,7 @@ const {
   IncompatibleEdgeFormatError,
   SIDECAR_KIND, SIDECAR_VERSION, EdgeStore,
   DEDUP_LRU_SIZE, canonRequestId,
+  SqliteEdgePersist, openEdgeStore, migrateEdgesSidecarIntoDb, isSqliteStore, envelope,
   effectiveHebbian, lambdaFromHalfLife, halfLifeFor, hebbianDecayType,
   elapsedSeconds, HALF_LIFE_SECONDS, DEFAULT_HALF_LIFE_TYPE, DAY, HOUR,
   SEMANTIC_PRUNE_GATE, HEBBIAN_PRUNE_FLOOR,
@@ -961,6 +962,52 @@ const { Ledger } = require("./ledger.js");
 const T0 = "2026-09-05T00:00:00.000Z";
 function plusIso(iso, seconds) {
   return new Date(Date.parse(iso) + seconds * 1000).toISOString();
+}
+
+// RM-07 slice 5: the Phase 0.2–0.5 edge matrix runs against BOTH persistence
+// adapters. JSON sidecar stays the JsonlStore companion; sqlite shares the
+// SqliteStore connection. Behaviour must be identical (the API did not move).
+function persistKinds() {
+  const kinds = ["json"];
+  if (typeof sqliteAvailable === "function" && sqliteAvailable()) kinds.push("sqlite");
+  return kinds;
+}
+
+function makeEdgeStore(kind, name, opts) {
+  opts = opts || {};
+  if (kind === "sqlite") {
+    const dir = tmp("edb-" + name);
+    fs.mkdirSync(dir, { recursive: true });
+    const store = new SqliteStore(path.join(dir, "mem.db"));
+    const persist = new SqliteEdgePersist(store.db);
+    const E = new EdgeStore(null, Object.assign({}, opts, { persist }));
+    E._ownedStore = store;
+    return E;
+  }
+  return new EdgeStore(tmp(name + ".edges.json"), opts);
+}
+
+function reopenEdgeStore(E, opts) {
+  opts = opts || {};
+  const now = opts.now || E.now;
+  if (E.persist && E.persist.kind === "sqlite") {
+    const file = E._ownedStore.file;
+    try { E._ownedStore.close(); } catch { /* reopening */ }
+    const store = new SqliteStore(file);
+    const E2 = new EdgeStore(null, Object.assign({}, opts, {
+      persist: new SqliteEdgePersist(store.db),
+      now,
+    }));
+    E2._ownedStore = store;
+    return E2;
+  }
+  return new EdgeStore(E.file, Object.assign({ now }, opts));
+}
+
+function ptest(name, fn) {
+  for (const kind of persistKinds()) {
+    test(name + " [" + kind + "]", () => fn(kind));
+  }
 }
 
 test("edgeKey is undirected: A↔B and B↔A are one edge", () => {
@@ -1146,9 +1193,8 @@ test("readLegacyAssoc still accepts a real .assoc.json", () => {
   assert.strictEqual(sidecarKind({ recalls: 7, edges: { "1:2": 0.4 } }), "legacy-assoc");
 });
 
-test("persistence round-trip: write → reload → identical records", () => {
-  const file = tmp("roundtrip.edges.json");
-  const a = new EdgeStore(file, { now: () => T0 });
+ptest("persistence round-trip: write → reload → identical records", (kind) => {
+  const a = makeEdgeStore(kind, "roundtrip", { now: () => T0 });
   const e1 = makeEdge(1, 2, {
     origin: "save-time-neighbor", now: T0,
     semantic: { value: 0.61, src_versions: { a: 1, b: 3 } },
@@ -1157,7 +1203,7 @@ test("persistence round-trip: write → reload → identical records", () => {
   a.put(e1);
   a.put(e2);
   a.save();
-  const b = new EdgeStore(file, { now: () => T0 });
+  const b = reopenEdgeStore(a, { now: () => T0 });
   assert.strictEqual(b.size, 2);
   assert.deepStrictEqual(b.get(2, 1), a.get(1, 2));
   assert.deepStrictEqual(b.get(4, 5), a.get(5, 4));
@@ -1207,8 +1253,8 @@ test("old Ledger.save stripping kind does not drop records (envelope recovery)",
   assert.throws(() => readLegacyAssoc(JSON.parse(fs.readFileSync(file, "utf8"))), IncompatibleEdgeFormatError);
 });
 
-test("incident() lists unpruned edges for an endpoint (Slice C absorption helper)", () => {
-  const store = new EdgeStore(tmp("incident.json"), { now: () => T0 });
+ptest("incident() lists unpruned edges for an endpoint (Slice C absorption helper)", (kind) => {
+  const store = makeEdgeStore(kind, "incident", { now: () => T0 });
   store.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 0.2 }));
   store.put(makeEdge(1, 3, { origin: "save-time-neighbor", now: T0 }));
   store.put(makeEdge(4, 5, { origin: "co-activation", now: T0 }));
@@ -1271,9 +1317,9 @@ test("corrupt .edges.json fails open and does NOT fall back to .assoc.json", () 
 });
 
 // --- Hebbian math: moving storage must not move the numbers -----------------
-test("EdgeStore.bonus matches shipped Ledger.bonus on the same weights (tanh bound)", () => {
-  const L = new Ledger(tmp("math-l.assoc.json"));
-  const E = new EdgeStore(tmp("math-e.edges.json"), { now: () => T0 });
+ptest("EdgeStore.bonus matches shipped Ledger.bonus on the same weights (tanh bound)", (kind) => {
+  const L = new Ledger(tmp("math-l-" + kind + ".assoc.json"));
+  const E = makeEdgeStore(kind, "math-e", { now: () => T0 });
   L.edges.set("1:2", 0.4);
   L.edges.set("1:3", 1.2);
   E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 0.4 }));
@@ -1285,9 +1331,9 @@ test("EdgeStore.bonus matches shipped Ledger.bonus on the same weights (tanh bou
   assert.strictEqual(E.bonus(9, 9), 0);
 });
 
-test("EdgeStore.reinforceRecall + tick match Ledger on the same event (alphaPP/PN/NN + epoch decay)", () => {
-  const L = new Ledger(tmp("reinf-l.assoc.json"));
-  const E = new EdgeStore(tmp("reinf-e.edges.json"), { now: () => T0 });
+ptest("EdgeStore.reinforceRecall + tick match Ledger on the same event (alphaPP/PN/NN + epoch decay)", (kind) => {
+  const L = new Ledger(tmp("reinf-l-" + kind + ".assoc.json"));
+  const E = makeEdgeStore(kind, "reinf-e", { now: () => T0 });
   L.reinforceRecall(["1", "2"], ["3", "4"]);
   E.reinforceRecall(["1", "2"], ["3", "4"]);
   assert.strictEqual(E.weight(1, 2), L.weight(1, 2), "primary<->primary alphaPP");
@@ -1317,10 +1363,10 @@ test("migrated .assoc.json produces the same Hebbian bonuses as shipped Ledger",
   assert.strictEqual(E.recalls, L.recalls, "epoch clock imported");
 });
 
-test("retired epoch decay does not stamp hebbian.last_updated (live clock is wall-clock)", () => {
+ptest("retired epoch decay does not stamp hebbian.last_updated (live clock is wall-clock)", (kind) => {
   // tick() is off the live path as of 0.2; this only proves the retired copy
   // still matches Ledger and does not mix clocks if someone replays it.
-  const E = new EdgeStore(tmp("decay-stamp.edges.json"), { now: () => T0 });
+  const E = makeEdgeStore(kind, "decay-stamp", { now: () => T0 });
   E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 1.0 }));
   for (let i = 0; i < 10; i++) E.tick();
   assert.ok(E.weight(1, 2) < 1.0, "decayed");
@@ -1353,9 +1399,9 @@ test("hebbianDecayType: a constraint endpoint gets the long half-life class", ()
   assert.strictEqual(hebbianDecayType(null, null), "fact");
 });
 
-test("I6 proof: 100 reads under a FROZEN clock leave stored weight + last_updated unmoved; then reinforce does change them", () => {
+ptest("I6 proof: 100 reads under a FROZEN clock leave stored weight + last_updated unmoved; then reinforce does change them", (kind) => {
   let now = T0;
-  const E = new EdgeStore(tmp("i6-frozen.edges.json"), { now: () => now });
+  const E = makeEdgeStore(kind, "i6-frozen", { now: () => now });
   const e0 = E.put(makeEdge(1, 2, {
     origin: "co-activation", now: T0, hebbianWeight: 1.0,
     semantic: { value: 0.72, src_versions: { a: 1, b: 1 } },
@@ -1372,6 +1418,7 @@ test("I6 proof: 100 reads under a FROZEN clock leave stored weight + last_update
   assert.deepStrictEqual(after.hebbian, hebSnap, "stored Hebbian bytes unmoved by reads (I6)");
   assert.deepStrictEqual(after.semantic, semSnap, "semantic unmoved by reads");
   assert.strictEqual(effectiveHebbian(after, now), 1.0, "frozen clock → effective == stored");
+  assert.strictEqual(E.persist.writes, 0, "a read must not persist (SELECT is not an UPDATE)");
   // Genuine reinforcement, after the clock has moved, MUST change both.
   now = plusIso(T0, 60);
   E.reinforceRecall(["1", "2"], []);
@@ -1414,9 +1461,9 @@ test("negative clock delta clamps to no decay (cannot amplify)", () => {
   assert.ok(effectiveHebbian(e, plusIso(T0, 1), { type: "fact" }) < 0.6, "forward still decays");
 });
 
-test("semantic does NOT decay while Hebbian does", () => {
+ptest("semantic does NOT decay while Hebbian does", (kind) => {
   let now = T0;
-  const E = new EdgeStore(tmp("sem-vs-heb.edges.json"), { now: () => now });
+  const E = makeEdgeStore(kind, "sem-vs-heb", { now: () => now });
   E.put(makeEdge(1, 2, {
     origin: "save-time-neighbor", now: T0, hebbianWeight: 1.0,
     semantic: { value: 0.81, src_versions: { a: 1, b: 1 } },
@@ -1429,9 +1476,9 @@ test("semantic does NOT decay while Hebbian does", () => {
   assert.strictEqual(E.get(1, 2).hebbian.last_updated, T0, "read must not stamp last_updated");
 });
 
-test("bonus uses effectiveHebbian, not the stored weight", () => {
+ptest("bonus uses effectiveHebbian, not the stored weight", (kind) => {
   let now = T0;
-  const E = new EdgeStore(tmp("bonus-eff.edges.json"), { now: () => now });
+  const E = makeEdgeStore(kind, "bonus-eff", { now: () => now });
   E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 1.0 }));
   assert.strictEqual(E.bonus(1, 2), 0.3 * Math.tanh(1.0), "Δt=0 → tanh(stored)");
   now = plusIso(T0, HALF_LIFE_SECONDS.fact);
@@ -1467,10 +1514,10 @@ test("canonRequestId: missing/null/empty are no-id; 0 is a real id; 1 and \"1\" 
   assert.strictEqual(canonRequestId("req-abc"), "s:req-abc");
 });
 
-test("reinforce after a long idle materializes decay first (no ghost weight)", () => {
+ptest("reinforce after a long idle materializes decay first (no ghost weight)", (kind) => {
   // Failure signature: stored becomes original+α instead of decayed+α.
   let now = T0;
-  const E = new EdgeStore(tmp("m-idle.edges.json"), { now: () => now });
+  const E = makeEdgeStore(kind, "m-idle", { now: () => now });
   const e0 = E.put(makeEdge(1, 2, {
     origin: "co-activation", now: T0, hebbianWeight: 1.0,
     semantic: { value: 0.77, src_versions: { a: 1, b: 1 } },
@@ -1495,21 +1542,21 @@ test("reinforce after a long idle materializes decay first (no ghost weight)", (
   assert.strictEqual(after.pruned_at, null, "already-active edge: reactivate is a no-op");
 });
 
-test("Δt=0 reinforce is byte-identical to the pre-0.3 stored+α rule (why the golden holds)", () => {
-  const E = new EdgeStore(tmp("m-dt0.edges.json"), { now: () => T0 });
+ptest("Δt=0 reinforce is byte-identical to the pre-0.3 stored+α rule (why the golden holds)", (kind) => {
+  const E = makeEdgeStore(kind, "m-dt0", { now: () => T0 });
   E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 1.0 }));
   E.reinforceRecall(["1", "2"], []);
   assert.strictEqual(E.weight(1, 2), 1.0 + E.alphaPP, "fresh edge: materialize is a no-op");
   assert.strictEqual(E.get(1, 2).hebbian.last_updated, T0);
   // Ledger parity at Δt=0: same number the retired path would have written.
-  const L = new Ledger(tmp("m-dt0.assoc.json"));
+  const L = new Ledger(tmp("m-dt0-" + kind + ".assoc.json"));
   L.edges.set("1:2", 1.0);
   L.reinforceRecall(["1", "2"], []);
   assert.strictEqual(E.weight(1, 2), L.weight(1, 2), "Δt=0 matches Ledger.reinforceRecall");
 });
 
-test("same request id retried applies exactly once", () => {
-  const E = new EdgeStore(tmp("m-once.edges.json"), { now: () => T0 });
+ptest("same request id retried applies exactly once", (kind) => {
+  const E = makeEdgeStore(kind, "m-once", { now: () => T0 });
   E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 0 }));
   const first = E.reinforceRecall(["1", "2"], [], "req-1");
   const w = E.weight(1, 2);
@@ -1521,16 +1568,16 @@ test("same request id retried applies exactly once", () => {
   assert.ok(E.hasProcessed("req-1"));
 });
 
-test("two distinct request ids reinforcing the same pair both apply", () => {
-  const E = new EdgeStore(tmp("m-two.edges.json"), { now: () => T0 });
+ptest("two distinct request ids reinforcing the same pair both apply", (kind) => {
+  const E = makeEdgeStore(kind, "m-two", { now: () => T0 });
   E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 0 }));
   assert.strictEqual(E.reinforceRecall(["1", "2"], [], "req-A"), true);
   assert.strictEqual(E.reinforceRecall(["1", "2"], [], "req-B"), true);
   assert.strictEqual(E.weight(1, 2), 2 * E.alphaPP);
 });
 
-test("no-id caller applies every time (eval / non-JSON-RPC must not dedup or crash)", () => {
-  const E = new EdgeStore(tmp("m-noid.edges.json"), { now: () => T0 });
+ptest("no-id caller applies every time (eval / non-JSON-RPC must not dedup or crash)", (kind) => {
+  const E = makeEdgeStore(kind, "m-noid", { now: () => T0 });
   E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 0 }));
   assert.strictEqual(E.reinforceRecall(["1", "2"], []), true);
   assert.strictEqual(E.reinforceRecall(["1", "2"], [], undefined), true);
@@ -1539,27 +1586,31 @@ test("no-id caller applies every time (eval / non-JSON-RPC must not dedup or cra
   assert.strictEqual(E.processedIds.length, 0, "no-id is never recorded");
 });
 
-test("dedup record and weight land in one durable sidecar write", () => {
-  const file = tmp("m-atomic.edges.json");
-  const E = new EdgeStore(file, { now: () => T0 });
+ptest("dedup record and weight land in one durable write", (kind) => {
+  const E = makeEdgeStore(kind, "m-atomic", { now: () => T0 });
   E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 0.4 }));
   E.reinforceRecall(["1", "2"], [], 42);
   E.save();
-  const j = JSON.parse(fs.readFileSync(file, "utf8"));
-  assert.strictEqual(j.kind, SIDECAR_KIND);
-  assert.deepStrictEqual(j.processed_ids, [42], "id is in the same envelope as the edges");
-  assert.strictEqual(j.edges["1:2"].hebbian.weight, 0.4 + E.alphaPP);
-  // Reload: both facts survive one parse, which is the pair I5 cannot
-  // otherwise make atomic if they were two files.
-  const E2 = new EdgeStore(file, { now: () => T0 });
+  if (kind === "json") {
+    const j = JSON.parse(fs.readFileSync(E.file, "utf8"));
+    assert.strictEqual(j.kind, SIDECAR_KIND);
+    assert.deepStrictEqual(j.processed_ids, [42], "id is in the same envelope as the edges");
+    assert.strictEqual(j.edges["1:2"].hebbian.weight, 0.4 + E.alphaPP);
+  } else {
+    const n = E.persist.db.prepare("SELECT COUNT(*) AS n FROM edge_processed_ids").get().n;
+    assert.strictEqual(Number(n), 1, "id claimed in the same db as the edges");
+    const row = E.persist.db.prepare("SELECT hebbian_weight FROM edges WHERE a='1' AND b='2'").get();
+    assert.strictEqual(row.hebbian_weight, 0.4 + E.alphaPP);
+  }
+  const E2 = reopenEdgeStore(E, { now: () => T0 });
   assert.ok(E2.hasProcessed(42));
   assert.strictEqual(E2.weight(1, 2), 0.4 + E.alphaPP);
   assert.strictEqual(E2.reinforceRecall(["1", "2"], [], 42), false, "survives process restart");
 });
 
-test("DEDUP_LRU_SIZE bound: the oldest id is evicted and can apply again", () => {
+ptest("DEDUP_LRU_SIZE bound: the oldest id is evicted and can apply again", (kind) => {
   assert.strictEqual(DEDUP_LRU_SIZE, 256, "bound is a named constant, not a magic number");
-  const E = new EdgeStore(tmp("m-lru.edges.json"), { now: () => T0 });
+  const E = makeEdgeStore(kind, "m-lru", { now: () => T0 });
   E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 0 }));
   for (let i = 0; i < DEDUP_LRU_SIZE; i++) {
     assert.strictEqual(E.reinforceRecall(["1", "2"], [], "id-" + i), true);
@@ -1576,9 +1627,9 @@ test("DEDUP_LRU_SIZE bound: the oldest id is evicted and can apply again", () =>
   assert.strictEqual(E.weight(1, 2), w + E.alphaPP);
 });
 
-test("materialize uses the caller-supplied half-life class (constraint vs working)", () => {
+ptest("materialize uses the caller-supplied half-life class (constraint vs working)", (kind) => {
   let now = T0;
-  const E = new EdgeStore(tmp("m-type.edges.json"), { now: () => now });
+  const E = makeEdgeStore(kind, "m-type", { now: () => now });
   E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 1.0 }));
   now = plusIso(T0, HOUR);
   E.reinforceRecall(["1", "2"], [], { type: "working" });
@@ -1586,17 +1637,17 @@ test("materialize uses the caller-supplied half-life class (constraint vs workin
     "working H=1h → one hour fades to half, then +α");
 });
 
-test("numeric 0 is a real request id (not treated as no-id)", () => {
-  const E = new EdgeStore(tmp("m-zero.edges.json"), { now: () => T0 });
+ptest("numeric 0 is a real request id (not treated as no-id)", (kind) => {
+  const E = makeEdgeStore(kind, "m-zero", { now: () => T0 });
   E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 0 }));
   assert.strictEqual(E.reinforceRecall(["1", "2"], [], 0), true);
   assert.strictEqual(E.reinforceRecall(["1", "2"], [], 0), false);
   assert.strictEqual(E.weight(1, 2), E.alphaPP);
 });
 
-test("decay-to-zero (computed) leaves the edge alive with semantic intact", () => {
+ptest("decay-to-zero (computed) leaves the edge alive with semantic intact", (kind) => {
   let now = T0;
-  const E = new EdgeStore(tmp("decay-zero.edges.json"), { now: () => now });
+  const E = makeEdgeStore(kind, "decay-zero", { now: () => now });
   E.put(makeEdge(1, 2, {
     origin: "save-time-neighbor", now: T0, hebbianWeight: 0.4,
     semantic: { value: 0.66, src_versions: { a: 1, b: 1 } },
@@ -1627,10 +1678,10 @@ function putCombo(store, a, b, heb, sem) {
   }));
 }
 
-test("pruneSweep fires only for unreinforced AND semantically weak (4 combinations)", () => {
+ptest("pruneSweep fires only for unreinforced AND semantically weak (4 combinations)", (kind) => {
   // Failure signature: a merged scalar prunes the strong-semantic rarely-recalled
   // pair and constraint rescue regresses (RESULTS field experiment #2).
-  const E = new EdgeStore(tmp("p-4combo.edges.json"), { now: () => T0 });
+  const E = makeEdgeStore(kind, "p-4combo", { now: () => T0 });
   putCombo(E, 1, 2, 1.0, 0.70);   // reinforced + strong
   putCombo(E, 3, 4, 1.0, 0.10);   // reinforced + weak
   putCombo(E, 5, 6, 0, 0.70);     // unreinforced + strong  ← must SURVIVE
@@ -1645,8 +1696,8 @@ test("pruneSweep fires only for unreinforced AND semantically weak (4 combinatio
   assert.strictEqual(E.get(7, 8).first_pruned_at, T0);
 });
 
-test("semantic exactly at the prune gate survives (same >= as save-time bind)", () => {
-  const E = new EdgeStore(tmp("p-gate.edges.json"), { now: () => T0 });
+ptest("semantic exactly at the prune gate survives (same >= as save-time bind)", (kind) => {
+  const E = makeEdgeStore(kind, "p-gate", { now: () => T0 });
   putCombo(E, 1, 2, 0, SEMANTIC_PRUNE_GATE);          // 0.25 on the gate
   putCombo(E, 3, 4, 0, SEMANTIC_PRUNE_GATE - 1e-9);    // just under
   E.pruneSweep();
@@ -1654,8 +1705,8 @@ test("semantic exactly at the prune gate survives (same >= as save-time bind)", 
   assert.ok(E.get(3, 4).pruned_at, "just under 0.25 prunes when unreinforced");
 });
 
-test("null/empty semantic is weak: unreinforced migrated edges prune", () => {
-  const E = new EdgeStore(tmp("p-nullsem.edges.json"), { now: () => T0 });
+ptest("null/empty semantic is weak: unreinforced migrated edges prune", (kind) => {
+  const E = makeEdgeStore(kind, "p-nullsem", { now: () => T0 });
   E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 0, migrated_from: "assoc.json" }));
   E.put(makeEdge(3, 4, { origin: "co-activation", now: T0, hebbianWeight: 0.8, migrated_from: "assoc.json" }));
   E.pruneSweep();
@@ -1663,9 +1714,9 @@ test("null/empty semantic is weak: unreinforced migrated edges prune", () => {
   assert.strictEqual(E.get(3, 4).pruned_at, null, "no semantic but still reinforced → keep");
 });
 
-test("decayed-to-~0 Hebbian counts as unreinforced (effective, not stored)", () => {
+ptest("decayed-to-~0 Hebbian counts as unreinforced (effective, not stored)", (kind) => {
   let now = T0;
-  const E = new EdgeStore(tmp("p-decayed.edges.json"), { now: () => now });
+  const E = makeEdgeStore(kind, "p-decayed", { now: () => now });
   putCombo(E, 1, 2, 0.4, 0.10);   // will be unreinforced+weak after idle
   putCombo(E, 3, 4, 0.4, 0.70);   // will be unreinforced+strong after idle
   now = plusIso(T0, 100 * HALF_LIFE_SECONDS.fact);
@@ -1680,11 +1731,11 @@ test("decayed-to-~0 Hebbian counts as unreinforced (effective, not stored)", () 
   assert.strictEqual(E.get(1, 2).hebbian.last_updated, T0, "prune does not stamp last_updated");
 });
 
-test("a semantically-strong unreinforced edge still serves constraint-rescue after a sweep", () => {
+ptest("a semantically-strong unreinforced edge still serves constraint-rescue after a sweep", (kind) => {
   // The live field.js walk rebuilds from embeddings (it does not yet read
   // this table), but the failure signature is about THIS record vanishing.
   // incident() is the retrieval surface a later rescue walk would use.
-  const E = new EdgeStore(tmp("p-rescue.edges.json"), { now: () => T0 });
+  const E = makeEdgeStore(kind, "p-rescue", { now: () => T0 });
   putCombo(E, "lemon", "diabetic", 0, 0.60);   // >= CONSTRAINT_GATE 0.45
   putCombo(E, "lemon", "noise", 0, 0.10);
   E.pruneSweep();
@@ -1695,9 +1746,8 @@ test("a semantically-strong unreinforced edge still serves constraint-rescue aft
   assert.ok(inc[0].semantic.value >= 0.45, "surviving bridge still clears the rescue gate");
 });
 
-test("I8: pruned edges are excluded from retrieval but the record persists and reloads", () => {
-  const file = tmp("p-i8.edges.json");
-  const E = new EdgeStore(file, { now: () => T0 });
+ptest("I8: pruned edges are excluded from retrieval but the record persists and reloads", (kind) => {
+  const E = makeEdgeStore(kind, "p-i8", { now: () => T0 });
   putCombo(E, 1, 2, 0, 0.10);
   putCombo(E, 1, 3, 0, 0.70);
   E.pruneSweep();
@@ -1708,25 +1758,24 @@ test("I8: pruned edges are excluded from retrieval but the record persists and r
   assert.strictEqual(E.weight(1, 2), 0, "weight() of a pruned edge is 0");
   assert.strictEqual(E.bonus(1, 2), 0, "bonus() of a pruned edge is 0");
   assert.ok(E.hasPruned());
-  // Reload: the marker survives, the row survives.
-  const E2 = new EdgeStore(file, { now: () => T0 });
+  const E2 = reopenEdgeStore(E, { now: () => T0 });
   assert.strictEqual(E2.size, 2);
   assert.ok(E2.get(1, 2).pruned_at);
   assert.strictEqual(E2.get(1, 2).prune_count, 1);
   assert.strictEqual(E2.incident(1).length, 1);
 });
 
-test("a second pruneSweep of an already-pruned edge is a no-op (prune_count stays 1)", () => {
-  const E = new EdgeStore(tmp("p-twice.edges.json"), { now: () => T0 });
+ptest("a second pruneSweep of an already-pruned edge is a no-op (prune_count stays 1)", (kind) => {
+  const E = makeEdgeStore(kind, "p-twice", { now: () => T0 });
   putCombo(E, 1, 2, 0, 0.10);
   assert.strictEqual(E.pruneSweep(), 1);
   assert.strictEqual(E.pruneSweep(), 0);
   assert.strictEqual(E.get(1, 2).prune_count, 1);
 });
 
-test("reactivate preserves created_at, prune_count, first_pruned_at, and the decayed weight", () => {
+ptest("reactivate preserves created_at, prune_count, first_pruned_at, and the decayed weight", (kind) => {
   let now = T0;
-  const E = new EdgeStore(tmp("p-re.edges.json"), { now: () => now });
+  const E = makeEdgeStore(kind, "p-re", { now: () => now });
   const created = T0;
   E.put(makeEdge(1, 2, {
     origin: "co-activation", now: created, hebbianWeight: 1.0,
@@ -1752,17 +1801,17 @@ test("reactivate preserves created_at, prune_count, first_pruned_at, and the dec
   assert.strictEqual(E.incident(1).length, 1, "back in retrieval");
 });
 
-test("reactivate of an already-active edge is a no-op (last_reactivated_at stays null)", () => {
-  const E = new EdgeStore(tmp("p-re-noop.edges.json"), { now: () => T0 });
+ptest("reactivate of an already-active edge is a no-op (last_reactivated_at stays null)", (kind) => {
+  const E = makeEdgeStore(kind, "p-re-noop", { now: () => T0 });
   putCombo(E, 1, 2, 0, 0.70);
   assert.strictEqual(E.reactivateIncident(1), 0);
   assert.strictEqual(E.get(1, 2).last_reactivated_at, null);
   assert.strictEqual(E.get(1, 2).pruned_at, null);
 });
 
-test("reinforce of a pruned edge reactivates then materializes+α (does not reset to original)", () => {
+ptest("reinforce of a pruned edge reactivates then materializes+α (does not reset to original)", (kind) => {
   let now = T0;
-  const E = new EdgeStore(tmp("p-re-bump.edges.json"), { now: () => now });
+  const E = makeEdgeStore(kind, "p-re-bump", { now: () => now });
   putCombo(E, 1, 2, 1.0, 0.10);
   now = plusIso(T0, HALF_LIFE_SECONDS.fact);   // effective = 0.5; still above floor, so force-mark
   markPruned(E.get(1, 2), now);
@@ -1774,9 +1823,8 @@ test("reinforce of a pruned edge reactivates then materializes+α (does not rese
   assert.strictEqual(after.created_at, T0);
 });
 
-test("hard vacuum drops pruned edges and is explicit (does not run from pruneSweep)", () => {
-  const file = tmp("p-vac.edges.json");
-  const E = new EdgeStore(file, { now: () => T0 });
+ptest("hard vacuum drops pruned edges and is explicit (does not run from pruneSweep)", (kind) => {
+  const E = makeEdgeStore(kind, "p-vac", { now: () => T0 });
   putCombo(E, 1, 2, 0, 0.10);
   putCombo(E, 3, 4, 0, 0.70);
   E.pruneSweep();
@@ -1784,21 +1832,18 @@ test("hard vacuum drops pruned edges and is explicit (does not run from pruneSwe
   assert.strictEqual(E.vacuum(), 1, "vacuum returns remaining count, like JsonlStore");
   assert.strictEqual(E.get(1, 2), undefined, "pruned row is gone");
   assert.ok(E.get(3, 4), "active row kept");
-  const E2 = new EdgeStore(file, { now: () => T0 });
+  const E2 = reopenEdgeStore(E, { now: () => T0 });
   assert.strictEqual(E2.size, 1);
   assert.strictEqual(E2.get(1, 2), undefined);
 });
 
-test("pruneSweep with nothing to prune does not rewrite the sidecar", () => {
-  const file = tmp("p-nowrite.edges.json");
-  const E = new EdgeStore(file, { now: () => T0 });
+ptest("pruneSweep with nothing to prune does not rewrite persistence", (kind) => {
+  const E = makeEdgeStore(kind, "p-nowrite", { now: () => T0 });
   putCombo(E, 1, 2, 1.0, 0.70);
   E.save();
-  const before = fs.readFileSync(file, "utf8");
-  const mtime = fs.statSync(file).mtimeMs;
+  const writes = E.persist.writes;
   assert.strictEqual(E.pruneSweep(), 0);
-  assert.strictEqual(fs.readFileSync(file, "utf8"), before);
-  assert.strictEqual(fs.statSync(file).mtimeMs, mtime);
+  assert.strictEqual(E.persist.writes, writes, "no-op sweep must not persist");
 });
 
 test("shouldPrune helpers: the two-signal conjunction is the whole predicate", () => {
@@ -1869,56 +1914,225 @@ test("transition: EdgeStore.save failure does not throw and does not empty the i
   assert.strictEqual(E.get(1, 2).hebbian.weight, 0.4);
 });
 
-test("transition: soft prune writes the sidecar; semantic + hebbian + created_at + last_updated unmoved", () => {
-  const file = tmp("p05-soft-cols.edges.json");
-  const E = new EdgeStore(file, { now: () => T0 });
+ptest("transition: soft prune writes; semantic + hebbian + created_at + last_updated unmoved", (kind) => {
+  const E = makeEdgeStore(kind, "p05-soft-cols", { now: () => T0 });
   const e0 = putCombo(E, 1, 2, 0, 0.10);
   const created = e0.created_at;
   const hebSnap = JSON.parse(JSON.stringify(e0.hebbian));
   const semSnap = JSON.parse(JSON.stringify(e0.semantic));
   E.save();
-  const before = fs.readFileSync(file, "utf8");
+  const writes = E.persist.writes;
   assert.strictEqual(E.pruneSweep(), 1);
   const after = E.get(1, 2);
-  assert.notStrictEqual(fs.readFileSync(file, "utf8"), before, "Writes? yes");
+  assert.ok(E.persist.writes > writes, "Writes? yes");
   assert.deepStrictEqual(after.semantic, semSnap, "semantic unchanged");
   assert.deepStrictEqual(after.hebbian, hebSnap, "stored Hebbian unchanged (keeps the decayed value)");
   assert.strictEqual(after.created_at, created);
   assert.strictEqual(after.pruned_at, T0);
   assert.strictEqual(after.prune_count, 1);
-  const disk = JSON.parse(fs.readFileSync(file, "utf8"));
-  assert.strictEqual(disk.edges["1:2"].pruned_at, T0);
+  const E2 = reopenEdgeStore(E, { now: () => T0 });
+  assert.strictEqual(E2.get(1, 2).pruned_at, T0);
 });
 
-test("transition: hard compaction writes the sidecar and drops both signals", () => {
-  const file = tmp("p05-vac-write.edges.json");
-  const E = new EdgeStore(file, { now: () => T0 });
+ptest("transition: hard compaction writes and drops both signals", (kind) => {
+  const E = makeEdgeStore(kind, "p05-vac-write", { now: () => T0 });
   putCombo(E, 1, 2, 0, 0.10);
   putCombo(E, 3, 4, 0.8, 0.70);
   E.pruneSweep();
-  const before = fs.readFileSync(file, "utf8");
-  assert.ok(JSON.parse(before).edges["1:2"], "soft-pruned row still on disk");
+  const writes = E.persist.writes;
+  assert.ok(E.get(1, 2), "soft-pruned row still in the table");
   assert.strictEqual(E.vacuum(), 1);
-  const after = fs.readFileSync(file, "utf8");
-  assert.notStrictEqual(after, before, "Writes? yes");
-  const j = JSON.parse(after);
-  assert.strictEqual(j.edges["1:2"], undefined, "pruned row dropped (both signals gone)");
-  assert.ok(j.edges["3:4"], "active row kept");
-  assert.strictEqual(j.edges["3:4"].hebbian.weight, 0.8);
-  assert.strictEqual(j.edges["3:4"].semantic.value, 0.70);
+  assert.ok(E.persist.writes > writes, "Writes? yes");
+  const E2 = reopenEdgeStore(E, { now: () => T0 });
+  assert.strictEqual(E2.get(1, 2), undefined, "pruned row dropped (both signals gone)");
+  assert.ok(E2.get(3, 4), "active row kept");
+  assert.strictEqual(E2.get(3, 4).hebbian.weight, 0.8);
+  assert.strictEqual(E2.get(3, 4).semantic.value, 0.70);
 });
 
-test("transition: vacuum of nothing does not rewrite the sidecar", () => {
-  const file = tmp("p05-vac-nowrite.edges.json");
-  const E = new EdgeStore(file, { now: () => T0 });
+ptest("transition: vacuum of nothing does not rewrite persistence", (kind) => {
+  const E = makeEdgeStore(kind, "p05-vac-nowrite", { now: () => T0 });
   putCombo(E, 1, 2, 1.0, 0.70);
   E.save();
-  const before = fs.readFileSync(file, "utf8");
-  const mtime = fs.statSync(file).mtimeMs;
+  const writes = E.persist.writes;
   assert.strictEqual(E.vacuum(), 1, "remaining count, nothing dropped");
-  assert.strictEqual(fs.readFileSync(file, "utf8"), before);
-  assert.strictEqual(fs.statSync(file).mtimeMs, mtime);
+  assert.strictEqual(E.persist.writes, writes);
 });
+
+// --- RM-07 slice 5: edges-in-db (persistence adapter, not a second EdgeStore)
+section("RM-07 slice 5 — EdgeStore SQLite adapter + one-file sovereignty");
+
+if (sqliteAvailable()) {
+
+test("openEdgeStore selects sqlite persist when the Store is SqliteStore", () => {
+  const s = freshSqlite("open-edge");
+  const E = openEdgeStore({ store: s, storePath: tmp("open-edge.jsonl") });
+  assert.strictEqual(E.persist.kind, "sqlite");
+  assert.ok(isSqliteStore(s));
+  s.close();
+});
+
+test("openEdgeStore keeps the JSON sidecar for JsonlStore", () => {
+  const file = tmp("open-jsonl.jsonl");
+  const s = new JsonlStore(file);
+  const E = openEdgeStore({ store: s, storePath: file });
+  assert.strictEqual(E.persist.kind, "json");
+  assert.ok(E.file.endsWith(".edges.json"));
+});
+
+test("edges-migration lossless: every sidecar edge survives into the table", () => {
+  const dir = tmp("mig-edges");
+  fs.mkdirSync(dir, { recursive: true });
+  const jsonl = path.join(dir, "store.jsonl");
+  const sidecar = jsonl + ".edges.json";
+  const s = new SqliteStore(path.join(dir, "store.db"));
+  s.add(normalize({ id: 1, text: "keep me", created: T0, embedding: [1, 0] }));
+  const src = new EdgeStore(sidecar, { now: () => T0 });
+  src.put(makeEdge(1, 2, {
+    origin: "co-activation", now: T0, hebbianWeight: 0.42,
+    semantic: { value: 0.61, src_versions: { a: 1, b: 3 } },
+  }));
+  src.put(makeEdge(3, 4, { origin: "save-time-neighbor", now: T0, hebbianWeight: 0 }));
+  src.processedIds = [42, "rpc-1"];
+  src.save();
+  const srcN = src.size;
+  const result = migrateEdgesSidecarIntoDb(s.db, { storePath: jsonl, dbPath: s.file, log() {} });
+  assert.strictEqual(result.migrated, true);
+  assert.strictEqual(result.count, srcN);
+  assert.ok(!fs.existsSync(sidecar), "sidecar renamed off the live path");
+  assert.ok(fs.existsSync(sidecar + ".bak"), "recovery snapshot kept");
+  const E = openEdgeStore({ store: s });
+  assert.strictEqual(E.size, srcN, "count-verify: every edge survived");
+  assert.strictEqual(E.get(1, 2).hebbian.weight, 0.42);
+  assert.strictEqual(E.get(1, 2).semantic.value, 0.61);
+  assert.deepStrictEqual(E.get(1, 2).semantic.src_versions, { a: 1, b: 3 });
+  assert.strictEqual(E.get(3, 4).hebbian.weight, 0);
+  assert.ok(E.hasProcessed(42));
+  assert.ok(E.hasProcessed("rpc-1"));
+  s.close();
+});
+
+test("edges-migration does not merge leftover .assoc.json when .edges.json exists", () => {
+  const dir = tmp("mig-auth");
+  fs.mkdirSync(dir, { recursive: true });
+  const jsonl = path.join(dir, "store.jsonl");
+  const sidecar = jsonl + ".edges.json";
+  const assoc = jsonl + ".assoc.json";
+  fs.writeFileSync(sidecar, JSON.stringify({
+    kind: SIDECAR_KIND, version: SIDECAR_VERSION, recalls: 0,
+    edges: { "8:9": makeEdge(8, 9, { origin: "co-activation", now: T0, hebbianWeight: 0.01 }) },
+  }));
+  fs.writeFileSync(assoc, JSON.stringify({ recalls: 40, edges: { "2:5": 1.2, "1:3": 0.4 } }));
+  const s = new SqliteStore(path.join(dir, "store.db"));
+  migrateEdgesSidecarIntoDb(s.db, { storePath: jsonl, dbPath: s.file, log() {} });
+  const E = openEdgeStore({ store: s });
+  assert.strictEqual(E.size, 1, "must not pull in the leftover .assoc.json");
+  assert.ok(E.get(8, 9));
+  assert.strictEqual(E.get(2, 5), undefined);
+  assert.ok(fs.existsSync(assoc), ".assoc.json left untouched");
+  s.close();
+});
+
+test("edges-migration fail-open: missing sidecar leaves memories reachable", () => {
+  const s = freshSqlite("mig-missing");
+  s.add(normalize({ id: 7, text: "still here", created: T0 }));
+  const result = migrateEdgesSidecarIntoDb(s.db, {
+    storePath: tmp("no-such-store.jsonl"), dbPath: s.file, log() {},
+  });
+  assert.strictEqual(result.migrated, false);
+  assert.strictEqual(s.get(7).text, "still here");
+  s.close();
+});
+
+test("0.3 atomicity fix: throw-before-commit rolls back BOTH the id claim and the weight", () => {
+  // Failure signature the JSON envelope flagged: durable-each, not atomic-as-a-pair.
+  // SQLite: one txn. Crash after the DML and before COMMIT must restore BOTH.
+  const E = makeEdgeStore("sqlite", "atomic-crash", { now: () => T0 });
+  E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 0.4 }));
+  E.save();
+  E.persist.throwBeforeCommit = () => { throw new Error("injected crash"); };
+  E.reinforceRecall(["1", "2"], [], 42);
+  const writes = E.persist.writes;
+  E.save(); // I3: swallowed
+  assert.strictEqual(E.persist.writes, writes, "COMMIT must not have landed");
+  // In-memory still has the mutation (I3: failed persist must not wipe the Map).
+  assert.strictEqual(E.weight(1, 2), 0.4 + E.alphaPP);
+  assert.ok(E.hasProcessed(42));
+  // Disk / reopen: neither fact committed.
+  const E2 = reopenEdgeStore(E, { now: () => T0 });
+  assert.strictEqual(E2.weight(1, 2), 0.4, "weight rolled back with the id");
+  assert.strictEqual(E2.hasProcessed(42), false, "id claim rolled back with the weight");
+  assert.strictEqual(E2.reinforceRecall(["1", "2"], [], 42), true, "retry applies once after the crash");
+});
+
+test("crash-domain: an edges write failure leaves memories recallable", () => {
+  const s = freshSqlite("crash-domain");
+  s.add(normalize({
+    id: 1, text: "do not lose me", created: T0, embedding: [1, 0],
+  }));
+  const E = openEdgeStore({ store: s });
+  E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 0.5 }));
+  E.save();
+  // Poison only the edges table. A subsequent edges save fails; memories
+  // INSERT/SELECT on the same connection must still work (own txn, I3).
+  s.db.exec("DROP TABLE edges");
+  E.put(makeEdge(3, 4, { origin: "co-activation", now: T0, hebbianWeight: 0.1 }));
+  assert.doesNotThrow(() => E.save(), "I3: edges persist must never throw into recall");
+  assert.strictEqual(s.get(1).text, "do not lose me", "memory survived the edges failure");
+  s.add(normalize({ id: 2, text: "new fact after edges boom", created: T0 }));
+  assert.strictEqual(s.get(2).text, "new fact after edges boom", "connection not poisoned");
+  assert.strictEqual(s.all().length, 2);
+  s.close();
+});
+
+test("one-file sovereignty: memories + edges + access live in the single .db", () => {
+  const s = freshSqlite("one-file");
+  s.add(normalize({
+    id: 1, text: "tea", created: T0, embedding: [1, 0],
+  }));
+  s.applyRecall([1], new Map());
+  const E = openEdgeStore({ store: s });
+  E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 0.3 }));
+  E.reinforceRecall(["1", "2"], [], "rpc-onefile");
+  E.save();
+  s.checkpoint();
+  assert.ok(!fs.existsSync(s.file + ".edges.json"), "no edges sidecar next to the db");
+  assert.ok(!fs.existsSync(s.file + ".access.json"), "no access sidecar next to the db");
+  assert.strictEqual(s.rowCount(), 1);
+  assert.strictEqual(s.get(1).access_count, 1, "access is in the row");
+  const nEdges = Number(s.db.prepare("SELECT COUNT(*) AS n FROM edges").get().n);
+  assert.strictEqual(nEdges, 1, "edges table in the same file");
+  const nProc = Number(s.db.prepare("SELECT COUNT(*) AS n FROM edge_processed_ids").get().n);
+  assert.strictEqual(nProc, 1, "dedup LRU in the same file");
+  const dbPath = s.file;
+  s.close();
+  assert.ok(fs.existsSync(dbPath));
+  assert.ok(!fs.existsSync(dbPath + "-wal") || fs.statSync(dbPath + "-wal").size === 0,
+    "checkpointed: the .db is the whole store");
+});
+
+test("I6 sqlite: 100 reads do not UPDATE hebbian_weight or last_updated on disk", () => {
+  const E = makeEdgeStore("sqlite", "i6-disk", { now: () => T0 });
+  E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 1.0 }));
+  E.save();
+  const rowBefore = E.persist.db.prepare(
+    "SELECT hebbian_weight AS w, hebbian_last_updated AS t FROM edges WHERE a='1' AND b='2'"
+  ).get();
+  const writes = E.persist.writes;
+  for (let i = 0; i < 100; i++) {
+    E.bonus(1, 2);
+    E.effectiveWeight(1, 2);
+    effectiveHebbian(E.get(1, 2), T0);
+  }
+  const rowAfter = E.persist.db.prepare(
+    "SELECT hebbian_weight AS w, hebbian_last_updated AS t FROM edges WHERE a='1' AND b='2'"
+  ).get();
+  assert.strictEqual(rowAfter.w, rowBefore.w);
+  assert.strictEqual(rowAfter.t, rowBefore.t);
+  assert.strictEqual(E.persist.writes, writes, "a SELECT is not an UPDATE");
+});
+
+} // sqliteAvailable
 
 // ------------------------------------------------- ROC/TBR field signals (RM-00)
 section("field signals: ROC / TBR (RM-00)");
@@ -3773,6 +3987,38 @@ async function asyncTests() {
         assert.strictEqual(rec.text, "sqlite tea");
         assert.ok(Array.isArray(rec.embedding));
         void walBefore;
+      });
+
+      await atest("sqlite export sources edges.json from the table (not a sidecar)", async () => {
+        const dir = tmp("export-sqlite-edges");
+        fs.mkdirSync(dir, { recursive: true });
+        const jsonl = path.join(dir, "mem.jsonl");
+        const dbPath = path.join(dir, "mem.db");
+        const s = new SqliteStore(dbPath);
+        s.add(normalize({
+          id: 1, text: "sqlite tea", created: "2026-04-01T00:00:00.000Z",
+          embedding: [1, 0, 0],
+        }));
+        const E = openEdgeStore({ store: s, storePath: jsonl });
+        E.put(makeEdge(1, 2, {
+          origin: "co-activation", now: "2026-04-01T00:00:00.000Z", hebbianWeight: 0.42,
+        }));
+        E.processedIds = ["rpc-should-not-export"];
+        E._processedDirty = true;
+        E.save();
+        s.checkpoint();
+        s.close();
+        const outDir = path.join(dir, "out");
+        fs.mkdirSync(outDir, { recursive: true });
+        const result = await exp.runExport({
+          mode: "zip", name: "sqe", outDir, storePath: jsonl,
+        });
+        const z = ZipReader.open(result.path);
+        const edges = JSON.parse(z.readStored("sqe/edges.json").toString("utf8"));
+        const ev = Object.values(edges.edges)[0];
+        assert.ok(ev && ev.hebbian && ev.hebbian.weight === 0.42, "Hebbian weight from the table");
+        assert.strictEqual("processed_ids" in edges, false, "runtime LRU stays out");
+        assert.ok(!fs.existsSync(jsonl + ".edges.json"), "no sidecar; the .db carried the edges");
       });
     }
   }

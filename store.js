@@ -42,6 +42,10 @@
  *      memories. Retry next open.
  *   4. Neither exists (new user) → fresh SqliteStore (.db).
  *
+ * RM-07 slice 5: a SqliteStore also ingests a leftover `<store>.edges.json`
+ * into the edges table on this same first-open (count-verify, sidecar →
+ * `.bak`, fail-open if missing). JsonlStore keeps the JSON sidecar.
+ *
  * Empty .db beside a still-live JSONL is the slice-1 openStore() footgun,
  * not live truth — drop the empty artifact and auto-migrate. Completing
  * step 8 on that state would rename the real store away.
@@ -217,6 +221,18 @@ async function openStore(file, opts) {
   const jsonlPath = jsonlLivePath(file, dbPath);
   const leftoverJsonl = jsonlHasContent(jsonlPath);
 
+  function withEdges(s) {
+    if (readOnly) return s;
+    try {
+      const { migrateEdgesSidecarIntoDb } = require("./edges.js");
+      migrateEdgesSidecarIntoDb(s.db, { storePath: file, dbPath, log });
+    } catch (e) {
+      log("RESONANCE: edges sidecar migrate failed (" + String(e && e.message || e) +
+        "); memories stay reachable.");
+    }
+    return s;
+  }
+
   const live = migrate.dbExistsAndOpens(dbPath);
 
   // Empty .db beside a still-live JSONL is the slice-1 footgun, not a
@@ -229,7 +245,7 @@ async function openStore(file, opts) {
     migrate.removeSqliteTree(dbPath);
   } else if (live.exists && live.opens) {
     if (leftoverJsonl) migrate.finishStep8(jsonlPath, log);
-    return new SqliteStore(dbPath, { readOnly });
+    return withEdges(new SqliteStore(dbPath, { readOnly }));
   } else if (live.exists && !live.opens) {
     if (leftoverJsonl) {
       log("RESONANCE: " + dbPath + " exists but does not open" +
@@ -253,7 +269,7 @@ async function openStore(file, opts) {
         log,
         dbPath,
       }, opts.migrate || {}));
-      return new SqliteStore(dbPath, { readOnly });
+      return withEdges(new SqliteStore(dbPath, { readOnly }));
     } catch (e) {
       // I3-spirit fail-open at the store level: a hiccup must not hide
       // the user's memories. 2a already dropped the temp on throw-before-7.
@@ -263,7 +279,7 @@ async function openStore(file, opts) {
     }
   }
 
-  return new SqliteStore(dbPath, { readOnly });
+  return withEdges(new SqliteStore(dbPath, { readOnly }));
 }
 
 module.exports = { JsonlStore, openStore, resolveStoreBackend, sqlitePathFor };

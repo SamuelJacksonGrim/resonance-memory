@@ -887,7 +887,8 @@ function createCore({
             out += "\n\nRelated:\n" + merged.map((e) => "- [id " + e.id + "] " + byId.get(String(e.id)).text).join("\n");
           }
           // Hebbian reinforcement on the returned payload, provenance-discounted.
-          // Writes the SIDECAR (.edges.json), never the JSONL store (I5 / BUG-002).
+          // Writes the EdgeStore persist (JSON sidecar or the sqlite edges
+          // table), never the memory rows (I5 / BUG-002).
           // Decay is NOT ticked here — I6: reading must not drive the decay clock.
           // reinforceRecall is retained (the differentiator); tick() is gone.
           // Materialize-on-mutation (0.3) happens inside _bump; typeFn picks

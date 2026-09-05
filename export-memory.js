@@ -38,7 +38,8 @@
  *   memories/YYYY/MM/DD/    one pretty JSON per memory, NO embeddings,
  *                           keyed on created UTC, always day-granular. STORE.
  *   catalog.txt             id · status · created · path · bytes · first-80
- *   edges.json              Hebbian sidecar (processed_ids/config OUT)
+ *   edges.json              Hebbian data (from the table when sqlite, else
+ *                           the sidecar; processed_ids/config OUT)
  *   manifest.json           counts, versions, layout: "memories/YYYY/MM/DD"
  *   README.txt              plain text; Windows double-clicks it
  *
@@ -55,6 +56,7 @@ const { JsonlStore, resolveStoreBackend, sqlitePathFor } = require("./store.js")
 const { normalize, isVector } = require("./record.js");
 const {
   SIDECAR_KIND, SIDECAR_VERSION, migrateAssoc, readLegacyAssoc, sidecarKind,
+  SqliteEdgePersist, isSqliteStore,
 } = require("./edges.js");
 
 const LAYOUT = "memories/YYYY/MM/DD";
@@ -325,8 +327,31 @@ function edgesPathCandidates(storePath, storeFile) {
   return out;
 }
 
-function loadEdgesEnvelope(storePath, storeFile) {
+function snapToExportEnvelope(snap) {
+  const bag = {};
+  if (snap && snap.edges) {
+    for (const [k, rec] of snap.edges) bag[k] = rec;
+  }
+  return {
+    kind: SIDECAR_KIND,
+    version: SIDECAR_VERSION,
+    recalls: snap && typeof snap.recalls === "number" ? snap.recalls : 0,
+    edges: bag,
+  };
+}
+
+function loadEdgesEnvelope(storePath, storeFile, store) {
   const empty = { kind: SIDECAR_KIND, version: SIDECAR_VERSION, recalls: 0, edges: {} };
+  // Slice 5: SQLite backend stores Hebbian data in the table. Read that
+  // first (export is read-only — do not migrate a leftover sidecar here).
+  // processed_ids stay OUT (runtime, not memory).
+  if (isSqliteStore(store)) {
+    try {
+      const persist = new SqliteEdgePersist(store.db, { readOnly: true });
+      const snap = persist.load();
+      if (snap.edges && snap.edges.size > 0) return snapToExportEnvelope(snap);
+    } catch { /* fall through to sidecar */ }
+  }
   const candidates = edgesPathCandidates(storePath, storeFile);
   for (const p of candidates) {
     if (!p || !fs.existsSync(p)) continue;
@@ -651,7 +676,7 @@ async function exportZipBundle(store, destZip, opts) {
 
     zip.addStored(root + "/catalog.txt", catalogRows.join(""));
 
-    const edges = loadEdgesEnvelope(opts.storePath, store.file);
+    const edges = loadEdgesEnvelope(opts.storePath, store.file, store);
     zip.addStored(root + "/edges.json", JSON.stringify(edges, null, 2) + "\n");
 
     const manifest = buildManifest({
