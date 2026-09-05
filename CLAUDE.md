@@ -45,7 +45,7 @@ roadmap, and per-repo backlog live in the companion repo
 | `store.js` | `JsonlStore` — the flat-JSONL storage backend behind the Store seam. Constructed and testable without the stdio loop; a SQLite/Lantern backend can replace it with the same method surface (see `docs/proposed/0005`). |
 | `field.js` | Associative layer (Phase 2a): a kNN semantic graph over stored vectors, neighborhood expansion, and constraint rescue. No new embedding calls, no LLM extraction — built from vectors already stored at save. |
 | `ledger.js` | Retired Hebbian sidecar (Phase 2b). Off the live recall/reinforce path as of Phase 0 Slice C; kept as the reference implementation of the epoch-decay math so tests can prove EdgeStore produces the same numbers. |
-| `edges.js` | Unified persistent edge store (Phase 0): one undirected record, two independent signals (`semantic` derived cache + `hebbian` source of truth), typed provenance, one-way `.assoc.json` → `.edges.json` migration. **On the live recall path** — Hebbian bonus/reinforce/tick/save read and write `hebbian.weight`; `field.js` still computes semantic kNN at recall (save-time binding is 0.1). |
+| `edges.js` | Unified persistent edge store (Phase 0): one undirected record, two independent signals (`semantic` derived cache + `hebbian` source of truth), typed provenance, one-way `.assoc.json` → `.edges.json` migration. **On the live recall path** — Hebbian bonus/reinforce/tick/save read and write `hebbian.weight`. Save-time semantic neighbors persist here (K=5, min cosine 0.25, Hebbian weight 0); `field.js` still computes semantic kNN at recall (minSim 0.55). |
 | `panel.js` | The local `127.0.0.1` control panel (largest file): field toggle, Connect/Disconnect, the 3D association-graph view, demo graph, heartbeat auto-shutdown. |
 | `install.js` | Detect + wire into LM Studio / Claude Desktop MCP config. Preserves other configured servers, leaves a `.bak`. |
 | `inspect_sidecar.js` | Dependency-free telemetry for the Hebbian ledger. |
@@ -99,7 +99,9 @@ commit the cache diff.
    `/v1/embeddings` endpoint, default LM Studio on `localhost:1234`,
    `text-embedding-nomic-embed-text-v1.5`, 768-dim) → normalize into a record → append to
    the JSONL store. If the embedder is down, the record is stored *without* a vector and
-   backfilled on a later recall.
+   backfilled on a later recall. A record that got a real vector also binds its top-5
+   semantic neighbors (cosine ≥ 0.25) into the EdgeStore; Hebbian weight starts at 0.
+   Recall does not read those edges yet.
 2. **Recall**: `recall_memory({ query })` → embed only the query → cosine-rank stored
    vectors → return the top-k, each prefixed with `[id N]`. Keyword-overlap fallback if the
    embedder is unreachable. With the field on, a `Related:` section is appended from the
@@ -113,11 +115,12 @@ commit the cache diff.
   **sidecars** beside it, both regenerable (deleting them loses learned associations /
   access counts, never a memory):
   - `<store>.edges.json` — unified edge table (`edges.js` EdgeStore). Hebbian weights are
-    the source of truth; semantic scores are a derived cache (still computed at recall
-    until 0.1). A leftover `<store>.assoc.json` from an older build is **legacy /
-    read-only-for-migration**: on first load, if `.edges.json` is missing, those weights
-    are copied in one-way and the old file is left untouched so a downgraded exe still
-    reads its own stale sidecar.
+    the source of truth; semantic scores are a derived cache, filled at save-time for
+    top-K neighbors (K=5, min cosine 0.25). Recall still rebuilds semantic kNN in
+    `field.js` (minSim 0.55) and does not read the cached semantic signal yet. A leftover
+    `<store>.assoc.json` from an older build is **legacy / read-only-for-migration**: on
+    first load, if `.edges.json` is missing, those weights are copied in one-way and the
+    old file is left untouched so a downgraded exe still reads its own stale sidecar.
   - `<store>.access.json` — access counts (`AccessLog` in `record.js`), kept out of the
     store so a recall never rewrites the store file (see `BUG-002`).
 - Live runtime state (the field toggle) lives in `resonance-memory.config.json` **beside

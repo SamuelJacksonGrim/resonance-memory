@@ -120,15 +120,63 @@ re-embed — which is why `BUG-008` was fixed in PRE-0 before this schema harden
       `<store>.edges.json` is missing, a leftover `<store>.assoc.json` is ingested and the
       old file is left untouched (downgrade-safe).
 - [x] Preserve `field.js` constraint-rescue + mutual-kNN through the move (measured — [[RESULTS]]
-      field experiment #2). Semantic kNN is still built at recall (save-time binding is 0.1).
+      field experiment #2). Semantic kNN is still built at recall; save-time edges are
+      persisted in 0.1 but recall does not read them yet.
 
 ### 0.1 — Edge timestamps & save-time edges
-- [ ] On `save()`, bind top-K semantic neighbors (start **K ≈ 5**) above a min cosine (**test
-      ~0.25**; note `field.js` uses 0.55 at *recall* — reconcile deliberately, don't diverge).
-- [ ] Save-time edges store measured `semantic.value` (+ `src_versions`) and `hebbian.weight = 0`
-      — **no seeded baseline** (an unreinforced edge's Hebbian signal is genuinely zero).
-- [ ] **Cost sweep:** record `save_latency` p50/p95/p99 at N = 100 / 1k / 10k / 50k / 100k;
+- [x] On `save()`, bind top-K semantic neighbors (start **K = 5**) above a min cosine (**0.25**;
+      `field.js` uses 0.55 at *recall* — two thresholds, two jobs, see Risk #2 below). Recall
+      still uses `field.js` for `Related:` — this slice persists the table, it does not switch
+      the read path. (`memory-core.js` `bindSaveTimeNeighbors`; constants `SAVE_TIME_K` /
+      `SAVE_TIME_MIN_COS`.)
+- [x] Save-time edges store measured `semantic.value` (+ `src_versions` tagged to the
+      **canonical** endpoints `edge.a`/`edge.b`, not save-argument order) and
+      `hebbian.weight = 0` — **no seeded baseline** (an unreinforced edge's Hebbian signal is
+      genuinely zero). `provenance.origin = "save-time-neighbor"`. No vector at save → bind
+      nothing, don't throw.
+- [x] **Cost sweep:** record `save_latency` p50/p95/p99 at N = 100 / 1k / 10k / 50k / 100k;
       **pre-declare** the p95 budget that triggers `RM-07` *before* running the sweep.
+      Script: `eval/save-time-cost.js`. Table + verdict below.
+
+#### Cost sweep (0.1) — pre-declared budget, measured table, RM-07 verdict
+
+**Pre-declared p95 budget: 250 ms.** Written in `eval/save-time-cost.js`'s header before any
+measurement ran. Reasoning: a `save_memory` tool call sits on the agent's turn; 250 ms is a
+conservative "this tool is hanging" threshold for the *new* in-process work (well above a
+768-d scan of a few thousand vectors, well below a one-second "did it crash?" beat). If
+save-time binding's p95 crosses 250 ms at a store size users will actually hit (≤ 10k, the
+BACKLOG JSONL ceiling), `RM-07` is mandatory, not scheduled.
+
+Isolates neighbor scan + `EdgeStore.save` of K edges. Embed and JSONL rewrite are excluded —
+JSONL `all()`-parse / full rewrite is a *known* `RM-07` driver; mixing it in would hide the
+question this sweep exists to answer. Vectors are 768-d JS Arrays (production shape).
+`K bound = 5` at every N (the trial vector is a mix of 5 existing records so the persist
+path actually fires).
+
+| N | trials | p50 (ms) | p95 (ms) | p99 (ms) | K bound | vs 250 ms |
+|---|--------|----------|----------|----------|---------|-----------|
+| 100 | 80 | 1.7 | 2.0 | 2.7 | 5 | UNDER |
+| 1 000 | 40 | 2.0 | 2.4 | 2.6 | 5 | UNDER |
+| 10 000 | 20 | 8.6 | 9.1 | 9.1 | 5 | UNDER |
+| 50 000 | 12 | 38.2 | 45.5 | 45.5 | 5 | UNDER |
+| 100 000 | 8 | 75.4 | 77.1 | 77.1 | 5 | UNDER |
+
+Footnote — mature sidecar rewrite (`EdgeStore.save` of an already-full table, no scan). A
+real store of N memories holds ~O(N) save-time edges rewritten on every bind; the N-sweep
+sidecar only held the trial's K edges.
+
+| edges | trials | p50 (ms) | p95 (ms) | p99 (ms) | bytes | vs 250 ms |
+|-------|--------|----------|----------|----------|-------|-----------|
+| 1 000 | 8 | 2.5 | 2.9 | 2.9 | 347 KB | UNDER |
+| 10 000 | 8 | 11.1 | 12.6 | 12.6 | 3.5 MB | UNDER |
+| 50 000 | 8 | 57.4 | 59.1 | 59.1 | 17.7 MB | UNDER |
+
+**RM-07 verdict: NO-GO on forcing `RM-07` from this slice.** Scan p95 stayed ≤ 250 ms through
+N=100k (77.1 ms). Combined with a 50k-edge sidecar rewrite (59.1 ms) still under budget at
+the 10k JSONL ceiling. `RM-07` remains scheduled on the JSONL-rewrite / `all()`-parse grounds
+already in BACKLOG. Caveat: a dense 100k-record graph (~250k unique K=5 edges) would
+extrapolate the sidecar rewrite toward/over 250 ms on its own — incremental sidecar writes
+travel with `RM-07` when it does land, but the *scan* did not force the date.
 
 ### 0.2 — Lazy wall-clock decay 🔀 *(replaces `ledger.js tick()/decay()`)*
 - [ ] Decay applies to **`hebbian.weight` only** (semantic is structural, does not fade).
@@ -238,7 +286,10 @@ batched through the `AccessLog` pattern. Telemetry does not get to violate an in
 - [ ] **Reading does not reinforce (I6):** read one edge 100× → weight + `last_updated` unchanged,
       *then* genuine reinforcement does change them.
 - [ ] Reactivation preserves history (`created_at` unmoved, `prune_count === 1`, weight carried).
-- [ ] Save-time edges (creation, threshold, fewer-than-K, weight starts 0, semantic cached).
+- [x] Save-time edges (creation, K=5, 0.25 threshold, fewer-than-K, weight starts 0,
+      semantic cached with canonical `src_versions`, origin `save-time-neighbor`;
+      embedder-down binds nothing; `edit()` bumps version so the incident edge reads
+      stale with no invalidation event).
 - [ ] Reinforcement after long inactivity materializes decay first.
 - [ ] Soft-pruned edges survive persistence; duplicate reinforcement / request-ID dedup.
 - [ ] Interrupted/failed persistence, atomic recovery.
@@ -262,9 +313,12 @@ retention, the hidden coupling that inverts behaviour under load.
 
 ## Risks
 
-1. **Save-time cost unmeasured** — the sweep decides whether `RM-07` becomes mandatory.
-2. **Two cosine thresholds disagree** — recall `minSim` 0.55 vs. save-time bind ~0.25; deliberate,
-   documented, not accidental.
+1. **Save-time cost measured (0.1).** Pre-declared p95 budget 250 ms. Scan p95 at N=100k is
+   77.1 ms → **NO-GO on forcing `RM-07` from this slice.** JSONL rewrite / `all()`-parse
+   remains the scheduled driver. See the 0.1 table.
+2. **Two cosine thresholds disagree, on purpose.** Recall `minSim` 0.55 (tight gate for what
+   *surfaces* in `Related:`) vs. save-time bind 0.25 (looser net for what's *worth persisting*).
+   Named constants `SAVE_TIME_MIN_COS` vs. `field.js` `minSim`; do not silently unify them.
 3. **`null`-through-`Object.assign` class** (`BUG-008` is one instance) — sweep every
    `store.update()` caller before 0.0 adds more.
 4. **Edge inheritance across supersession undecided** (Phase 7 — [[phase-7-reconsolidation]]) — the

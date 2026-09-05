@@ -18,13 +18,15 @@
 /*
  * edges.js - the unified persistent edge substrate (Phase 0 / RM-21).
  *
- * field.js holds semantic kNN edges (ephemeral, rebuilt every recall — save-time
- * binding is 0.1). ledger.js is the retired Hebbian sidecar (epoch-decayed
- * `.assoc.json`); this module absorbed it. One undirected edge record, two
- * independently stored signals. Slice C put this on the live recall path:
- * EdgeStore is the Hebbian source of truth (bonus / reinforce / tick / save);
- * field.js still computes the semantic kNN at recall. The golden gate is the
- * proof the move did not change numbers.
+ * field.js holds semantic kNN edges (ephemeral, rebuilt every recall).
+ * ledger.js is the retired Hebbian sidecar (epoch-decayed `.assoc.json`);
+ * this module absorbed it. One undirected edge record, two independently
+ * stored signals. Slice C put this on the live recall path: EdgeStore is
+ * the Hebbian source of truth (bonus / reinforce / tick / save). Phase 0.1
+ * persists save-time semantic neighbors here (K=5, min cosine 0.25, Hebbian
+ * weight 0); recall still computes the semantic kNN in field.js (minSim 0.55)
+ * and does not read the cached semantic signal yet. The golden gate is the
+ * proof that persist-on-save did not change recall numbers.
  *
  * The asymmetry is load-bearing (docs/phases/phase-0-edge-substrate.md):
  *

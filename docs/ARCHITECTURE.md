@@ -193,6 +193,16 @@ argument is always the smallest possible thing (`content`, `query`, or `id`).
    kept, never deleted. The cue is the precision gate; cosine only picks *which* memory the cue
    targets. Worst case: it retires nothing.
 5. **Append** the record to the JSONL store.
+6. **Save-time semantic bind (Phase 0.1).** If the record got a real vector, find its top-K=5
+   neighbors among existing stored vectors above cosine **0.25** and persist them on the
+   EdgeStore: measured `semantic.value` + `src_versions` tagged to the canonical endpoints,
+   `hebbian.weight = 0` (no seeded baseline), `provenance.origin = "save-time-neighbor"`.
+   No vector (embedder down) → bind nothing, don't throw. This is a sidecar write (I5
+   protects the JSONL store, not sidecars). **Recall does not read this table yet** —
+   `Related:` still comes from `field.js` at minSim **0.55**. The two thresholds are
+   different jobs: 0.55 is a tight gate for what *surfaces*; 0.25 is a looser net for
+   what's *worth persisting*. Do not unify them. (`SAVE_TIME_K` / `SAVE_TIME_MIN_COS` in
+   `memory-core.js`.)
 
 ### `recall_memory({ query })`
 
@@ -298,8 +308,11 @@ similarity floor (~0.45) that made a global threshold connect everything. Three 
 ### `edges.js` — the unified edge table (Phase 0; was `ledger.js`)
 
 "Fire together, wire together." One persistent sidecar (`<store>.edges.json`) holding both
-signals. Semantic kNN is still built at recall by `field.js` (save-time binding is 0.1);
-the learned Hebbian weight lives on the edge record and is the source of truth. Safety
+signals. Phase 0.1 persists save-time semantic neighbors here (K=5, min cosine 0.25,
+Hebbian weight 0); **recall still rebuilds semantic kNN in `field.js`** (minSim 0.55) and
+does not read the cached semantic signal yet. The two cosine thresholds are deliberate
+(Risk #2): recall's 0.55 is what the model *sees*, save's 0.25 is what is *worth writing*.
+The learned Hebbian weight lives on the edge record and is the source of truth. Safety
 properties, preserved byte-for-byte from the retired `Ledger`:
 
 - **Canonical undirected edge key** (ids sorted) so `a:b` and `b:a` are one edge.
@@ -422,9 +435,10 @@ recall path:
   recall, `ledger.js` Hebbian sidecar) merged into one **persistent edge store with two
   independent signals** — semantic (derived / recomputable from vectors) and learned
   (source-of-truth / irreplaceable). The record + sidecar live in `edges.js` and are on
-  the live recall path (Slice C). Semantic kNN is still computed at recall (save-time
-  binding is 0.1); I6 becomes true in 0.2. It is a **migration, not greenfield** — existing
-  `.assoc.json` sidecars are carried into `.edges.json` one-way (`RM-21`, design in
+  the live recall path (Slice C). Save-time semantic neighbors persist in 0.1; recall
+  still computes semantic kNN in `field.js` until a later gated switchover. I6 becomes
+  true in 0.2. It is a **migration, not greenfield** — existing `.assoc.json` sidecars
+  are carried into `.edges.json` one-way (`RM-21`, design in
   [`phases/phase-0`](phases/phase-0-edge-substrate.md)).
 - **New store backend** → implement the `JsonlStore` method surface (`RM-07`, SQLite).
 - **Write-path cleanup** (extraction, dedup) → in `save()` inside `memory-core.js`, before the

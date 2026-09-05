@@ -153,9 +153,10 @@ Design: [`proposed/0002`](proposed/0002-temporal-supersession.md).
       fails cleanly, never silently drops edges. `field.js` constraint-rescue + mutual-kNN
       preserved through the move. Live path is `EdgeStore` (`<store>.edges.json`); `Ledger` is
       retired from recall/reinforce.
-- [ ] **0.1** Save-time semantic edges (K≈5, cosine ~0.25, `hebbian.weight=0`) + edge timestamps.
-      **Cost sweep:** record `save_latency` p50/p95/p99 at N=100/1k/10k/50k/100k; **pre-declare**
-      the p95 budget that triggers `RM-07` *before* running it.
+- [x] **0.1** Save-time semantic edges (K=5, cosine 0.25, `hebbian.weight=0`) + edge timestamps.
+      **Cost sweep:** `eval/save-time-cost.js`; pre-declared p95 budget 250 ms; measured p95 at
+      N=100k is 77.1 ms → **NO-GO on forcing `RM-07` from this slice.** Table in
+      [`phases/phase-0`](phases/phase-0-edge-substrate.md). Recall still uses `field.js`.
 - [ ] **0.2** **Lazy wall-clock decay of the learned signal** (configurable half-life), replacing
       the recall-count clock (`ledger.tick`). `reinforceRecall` untouched — **this is where `I6`
       becomes true.** Not `RM-08` *importance* decay (different object, different law — see there).
@@ -267,7 +268,8 @@ deletions, ever.
 > *performance* half: `all()` still parses the whole store per call, and mutations still
 > rewrite the file. Comfortable ceiling is **estimated** at ~10k memories — that number comes
 > from reading the code, not from a measurement, and replacing it with a real one is a cheap
-> first task.
+> first task. Phase 0.1's save-time neighbor scan is **not** the thing that forces this:
+> scan p95 at N=100k is 77.1 ms vs. a pre-declared 250 ms budget (`eval/save-time-cost.js`).
 
 - [x] Extract the storage layer into its own module (`store.js`) so it can be constructed and
       tested without starting the MCP stdio loop.

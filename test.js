@@ -943,7 +943,10 @@ section("warm field (Phase 1)");
 const {
   WarmField, shouldSpread, vectorCount, emitWarmTrace,
 } = require("./warm.js");
-const { createCore, defaultGetEdges } = require("./memory-core.js");
+const {
+  createCore, defaultGetEdges, cosine: coreCosine,
+  bindSaveTimeNeighbors, SAVE_TIME_K, SAVE_TIME_MIN_COS,
+} = require("./memory-core.js");
 
 const LAMBDA_TURN = 0.357;
 const turnDecay = (e, turns) => e * Math.exp(-LAMBDA_TURN * turns);
@@ -1634,6 +1637,274 @@ async function asyncTests() {
     assert.strictEqual(fs.readFileSync(assoc, "utf8").includes("resonance-edges"), false,
       ".assoc.json must stay the old format (untouched)");
     void out;
+  });
+
+  // ------------------------------------------------ Phase 0.1: save-time semantic edges
+  // Persist-on-save, recall still uses field.js. These must fail without the
+  // bind in save() / the 0.25 threshold / canonical src_versions tagging.
+  section("Phase 0.1 save-time semantic edges");
+
+  // Unit vector at cosine `c` against [1,0,0].
+  function vecAtCos(c) {
+    return [c, Math.sqrt(Math.max(0, 1 - c * c)), 0];
+  }
+
+  function saveTimeCore(file, embedFn, opts = {}) {
+    const store = new JsonlStore(tmp(file));
+    const edgesPath = tmp(file + ".edges.json");
+    let _e = null;
+    const getEdgeStore = opts.getEdgeStore || (() => {
+      if (!_e) _e = new EdgeStore(edgesPath, { now: () => T0 });
+      return _e;
+    });
+    const core = createCore({
+      store,
+      embed: embedFn,
+      fieldEnabled: () => !!opts.fieldOn,
+      getEdgeStore,
+    });
+    return { store, core, edgesPath, edges: () => getEdgeStore() };
+  }
+
+  await atest("SAVE_TIME constants match the spec (K=5, minCos=0.25, distinct from recall 0.55)", async () => {
+    assert.strictEqual(SAVE_TIME_K, 5, "start K ≈ 5");
+    assert.strictEqual(SAVE_TIME_MIN_COS, 0.25, "save-time bind ~0.25");
+    assert.ok(SAVE_TIME_MIN_COS < 0.55, "must stay looser than field.js recall minSim 0.55 (Risk #2)");
+  });
+
+  await atest("save binds top-K neighbors above ~0.25; extras and below-threshold are dropped", async () => {
+    const vecs = {
+      hub: [1, 0, 0],
+      n90: vecAtCos(0.90),
+      n80: vecAtCos(0.80),
+      n70: vecAtCos(0.70),
+      n60: vecAtCos(0.60),
+      n50: vecAtCos(0.50),
+      n40: vecAtCos(0.40),   // above 0.25 but 6th — K=5 drops it
+      n30: vecAtCos(0.30),
+      n20: vecAtCos(0.20),   // below threshold
+      n10: vecAtCos(0.10),
+    };
+    const embed = async (texts) => texts.map((t) => vecs[t] || [0, 0, 1]);
+    const { store, core, edges } = saveTimeCore("st-k.jsonl", embed);
+    for (const name of ["n90", "n80", "n70", "n60", "n50", "n40", "n30", "n20", "n10"]) {
+      await core.save(name);
+    }
+    await core.save("hub");
+    const hubId = store.current().find((m) => m.text === "hub").id;
+    const incident = edges().incident(hubId);
+    assert.strictEqual(incident.length, SAVE_TIME_K, "exactly K neighbors, not every above-threshold pair");
+    const nbrIds = new Set();
+    for (const e of incident) nbrIds.add(e.a === String(hubId) ? e.b : e.a);
+    const byId = new Map(store.current().map((m) => [String(m.id), m]));
+    const nbrTexts = [...nbrIds].map((id) => byId.get(String(id)).text).sort();
+    assert.deepStrictEqual(nbrTexts, ["n50", "n60", "n70", "n80", "n90"],
+      "top-5 by cosine; n40 (6th) and n20 (below 0.25) must not bind");
+    for (const e of incident) {
+      assert.strictEqual(e.hebbian.weight, 0, "no seeded baseline");
+      assert.strictEqual(e.provenance.origin, "save-time-neighbor");
+      assert.ok(e.semantic.value >= SAVE_TIME_MIN_COS);
+    }
+  });
+
+  await atest("fewer-than-K neighbors that clear the threshold still bind (no padding)", async () => {
+    const vecs = { hub: [1, 0, 0], near: vecAtCos(0.80), mid: vecAtCos(0.40), far: vecAtCos(0.10) };
+    const embed = async (texts) => texts.map((t) => vecs[t] || [0, 0, 1]);
+    const { store, core, edges } = saveTimeCore("st-few.jsonl", embed);
+    await core.save("near");
+    await core.save("mid");
+    await core.save("far");
+    await core.save("hub");
+    const hubId = store.current().find((m) => m.text === "hub").id;
+    const incident = edges().incident(hubId);
+    assert.strictEqual(incident.length, 2, "only near+mid clear 0.25; do not pad to K");
+    const nbrIds = incident.map((e) => e.a === String(hubId) ? e.b : e.a);
+    const texts = nbrIds.map((id) => store.get(id).text).sort();
+    assert.deepStrictEqual(texts, ["mid", "near"]);
+  });
+
+  await atest("the ~0.25 threshold is a hard floor: 0.25 binds, 0.24 does not", async () => {
+    const vecs = { hub: [1, 0, 0], on: vecAtCos(0.25), off: vecAtCos(0.24) };
+    const embed = async (texts) => texts.map((t) => vecs[t] || [0, 0, 1]);
+    const { store, core, edges } = saveTimeCore("st-floor.jsonl", embed);
+    await core.save("on");
+    await core.save("off");
+    await core.save("hub");
+    const hubId = store.current().find((m) => m.text === "hub").id;
+    const onId = store.current().find((m) => m.text === "on").id;
+    const offId = store.current().find((m) => m.text === "off").id;
+    assert.ok(edges().get(hubId, onId), "cosine 0.25 is on the gate (>=)");
+    assert.strictEqual(edges().get(hubId, offId), undefined, "cosine 0.24 must not persist");
+    const e = edges().get(hubId, onId);
+    assert.ok(Math.abs(e.semantic.value - coreCosine(vecs.hub, vecs.on)) < 1e-12,
+      "cached semantic.value is the measured cosine");
+  });
+
+  await atest("src_versions follow canonical edge.a/edge.b, not save-argument order", async () => {
+    // Give the two endpoints DIFFERENT versions so a swapped tag is detectable.
+    // Save A, edit A (v2), save B (v1). B's save binds A↔B; makeEdge(B, A)
+    // sorts to a=min(A,B). Tagging by argument order would put B's v1 on
+    // src_versions.a whenever B was the save-side argument.
+    let vec = [1, 0, 0];
+    const embed = async (texts) => texts.map(() => vec.slice());
+    const { store, core, edges } = saveTimeCore("st-canon.jsonl", embed);
+    await core.save("alpha-endpoint");
+    const idA = store.all()[0].id;
+    vec = [0.8, 0.6, 0];
+    await core.edit(idA, "alpha-endpoint-edited");
+    assert.strictEqual(store.get(idA).embedding_version, 2);
+    vec = [0.8, 0.6, 0];
+    await core.save("beta-endpoint");
+    const idB = store.current().find((m) => m.text === "beta-endpoint").id;
+    const edge = edges().get(idA, idB);
+    assert.ok(edge, "save-time edge exists");
+    const recA = store.get(edge.a);
+    const recB = store.get(edge.b);
+    assert.deepStrictEqual(edge.semantic.src_versions, {
+      a: recA.embedding_version,
+      b: recB.embedding_version,
+    }, "src_versions.a is canonical endpoint a's version, not the save-argument's");
+    assert.strictEqual(semanticValid(edge, recA.embedding_version, recB.embedding_version), true);
+    assert.notStrictEqual(recA.embedding_version, recB.embedding_version,
+      "versions must differ or a swap would still pass");
+  });
+
+  await atest("edit() re-embed bumps embedding_version so the save-time edge reads stale (no invalidation event)", async () => {
+    let vec = [1, 0, 0];
+    const embed = async (texts) => texts.map(() => vec.slice());
+    const { store, core, edges, edgesPath } = saveTimeCore("st-stale.jsonl", embed);
+    await core.save("first");
+    await core.save("second");
+    const ids = store.current().map((m) => m.id);
+    const edgeBefore = edges().get(ids[0], ids[1]);
+    assert.ok(edgeBefore);
+    const srcSnap = JSON.parse(JSON.stringify(edgeBefore.semantic.src_versions));
+    const sidecarBefore = fs.readFileSync(edgesPath, "utf8");
+    const vBefore = store.get(ids[0]).embedding_version;
+    vec = [0, 1, 0];
+    await core.edit(ids[0], "first-edited");
+    assert.strictEqual(store.get(ids[0]).embedding_version, vBefore + 1);
+    assert.strictEqual(fs.readFileSync(edgesPath, "utf8"), sidecarBefore,
+      "edit must not write the edge store (transition table)");
+    const edgeAfter = edges().get(ids[0], ids[1]);
+    assert.deepStrictEqual(edgeAfter.semantic.src_versions, srcSnap,
+      "no invalidation event rewrote src_versions");
+    const recA = store.get(edgeAfter.a);
+    const recB = store.get(edgeAfter.b);
+    assert.strictEqual(
+      semanticValid(edgeAfter, recA.embedding_version, recB.embedding_version),
+      false,
+      "stale is structurally self-evident on the next read"
+    );
+  });
+
+  await atest("a save with the embedder down binds nothing and does not throw", async () => {
+    const ref = { live: true };
+    const vecs = { live: [1, 0, 0], also: vecAtCos(0.80) };
+    const embed = async (texts) => {
+      if (!ref.live) throw new Error("embedder unreachable");
+      return texts.map((t) => vecs[t] || [1, 0, 0]);
+    };
+    const { store, core, edges } = saveTimeCore("st-dead.jsonl", embed);
+    await core.save("live");
+    await core.save("also");
+    const sizeBefore = edges().size;
+    ref.live = false;
+    let msg;
+    await assert.doesNotReject(async () => { msg = await core.save("saved while down"); });
+    const dead = store.current().find((m) => m.text === "saved while down");
+    assert.ok(dead, "vectorless row still lands");
+    assert.strictEqual(dead.embedding, null);
+    assert.strictEqual(edges().size, sizeBefore, "no new edges against a null vector");
+    assert.ok(/Saved/.test(msg));
+  });
+
+  await atest("first save ever with a dead embedder does not throw and writes no sidecar", async () => {
+    const embed = async () => { throw new Error("embedder unreachable"); };
+    const { store, core, edgesPath } = saveTimeCore("st-dead-first.jsonl", embed);
+    let msg;
+    await assert.doesNotReject(async () => { msg = await core.save("nothing to compare"); });
+    assert.ok(/Saved/.test(msg));
+    assert.strictEqual(store.all()[0].embedding, null);
+    assert.strictEqual(fs.existsSync(edgesPath), false, "no vector → no bind → no sidecar write");
+  });
+
+  await atest("save-time bind throwing does not break save (I3)", async () => {
+    const store = new JsonlStore(tmp("st-throw.jsonl"));
+    const embed = async (texts) => texts.map(() => [1, 0, 0]);
+    const core = createCore({
+      store, embed,
+      getEdgeStore: () => { throw new Error("edges boom"); },
+    });
+    const msg = await core.save("still saved");
+    assert.ok(/Saved/.test(msg));
+    assert.strictEqual(store.all().length, 1);
+  });
+
+  await atest("existing co-activation Hebbian weight is preserved when save-time fills semantic", async () => {
+    const vecs = { a: [1, 0, 0], b: vecAtCos(0.70) };
+    const embed = async (texts) => texts.map((t) => vecs[t] || [0, 0, 1]);
+    const { store, core, edges } = saveTimeCore("st-keep-heb.jsonl", embed);
+    await core.save("a");
+    await core.save("b");
+    const idA = store.current().find((m) => m.text === "a").id;
+    const idB = store.current().find((m) => m.text === "b").id;
+    const existing = edges().get(idA, idB);
+    assert.ok(existing, "save of b bound the pair");
+    // Rewrite as a migrated co-activation edge: learned weight, empty semantic.
+    existing.provenance.origin = "co-activation";
+    existing.provenance.migrated_from = "assoc.json";
+    setHebbian(existing, 0.42, T0);
+    setSemantic(existing, null, { a: null, b: null });
+    const hebSnap = JSON.parse(JSON.stringify(existing.hebbian));
+    const recA = store.get(idA);
+    const recB = store.get(idB);
+    const result = bindSaveTimeNeighbors(recB, [recA], edges());
+    assert.ok(result.wrote, "empty semantic was filled");
+    const after = edges().get(idA, idB);
+    assert.deepStrictEqual(after.hebbian, hebSnap, "hebbian bytes unmoved");
+    assert.strictEqual(after.provenance.origin, "co-activation", "origin is how it came to exist, not rewritten");
+    assert.strictEqual(after.provenance.migrated_from, "assoc.json");
+    assert.ok(after.semantic.value > 0);
+    assert.strictEqual(semanticValid(after, recA.embedding_version, recB.embedding_version), true);
+  });
+
+  await atest("Related: still comes from field.js at 0.55, not from persisted 0.25 edges", async () => {
+    // Guard against accidentally wiring recall to the save-time table this
+    // slice. A pair at cos 0.30 is persisted (0.25 net) but must NOT surface
+    // in Related: (0.55 gate). A third orthogonal memory makes
+    // mems.length > ranked.length so the field block even runs.
+    const vecs = {
+      "alpha lives here": [1, 0, 0],
+      "barely related": vecAtCos(0.30),
+      "totally other": [0, 0, 1],
+      alpha: [1, 0, 0],
+    };
+    const embed = async (texts) => texts.map((t) => vecs[t] || [0, 1, 0]);
+    const { core, edges } = saveTimeCore("st-recall-guard.jsonl", embed, { fieldOn: true });
+    await core.save("alpha lives here");
+    await core.save("barely related");
+    await core.save("totally other");
+    assert.ok(edges().size >= 1, "the 0.30 pair was persisted at save");
+    const out = await core.recall("alpha", 1);
+    assert.ok(/alpha lives here/.test(out));
+    assert.strictEqual(out.includes("barely related"), false,
+      "cos 0.30 save-time edge must not leak into Related: (recall still uses field.js 0.55)");
+  });
+
+  await atest("save-time bind does not write the JSONL store (I5)", async () => {
+    const vecs = { a: [1, 0, 0], b: vecAtCos(0.80) };
+    const embed = async (texts) => texts.map((t) => vecs[t] || [0, 0, 1]);
+    const { store, core, edgesPath } = saveTimeCore("st-i5.jsonl", embed);
+    await core.save("a");
+    const jsonlAfterFirst = fs.readFileSync(store.file, "utf8");
+    await core.save("b");
+    const lines = fs.readFileSync(store.file, "utf8").trim().split("\n");
+    assert.strictEqual(lines.length, 2, "JSONL gained the new row only");
+    assert.ok(jsonlAfterFirst.trim() === lines[0], "first row is unmoved");
+    assert.ok(fs.existsSync(edgesPath), "sidecar write is allowed (I5 protects JSONL, not sidecars)");
+    const j = JSON.parse(fs.readFileSync(edgesPath, "utf8"));
+    assert.strictEqual(j.kind, SIDECAR_KIND);
   });
 }
 

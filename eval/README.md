@@ -60,6 +60,9 @@ eval/
   metrics.js             scoring (contains / excludes / current_only / per-turn)
   run.js                 the runner + regression gate
   golden.json            last accepted scorecard (written by --accept)
+  save-time-cost.js      Phase 0.1 cost sweep (neighbor-scan + EdgeStore.save p50/p95/p99
+                         at N=100/1k/10k/50k/100k). Pre-declares the p95 budget that
+                         triggers RM-07 *before* measuring. Not part of npm run eval.
 ```
 
 ## Case format

@@ -17,6 +17,14 @@ Beta-readiness pass:
   "revisit only if hosted resale looms" trigger the backlog pre-registered, now pulled.
 
 ### Added
+- **Save-time semantic edges (Phase 0.1).** On `save()` of a record with a real vector, persist
+  its top-5 neighbors above cosine 0.25 into the EdgeStore (`semantic.value` + canonical
+  `src_versions`, `hebbian.weight = 0`, origin `save-time-neighbor`). Embedder down → bind
+  nothing. Recall is unchanged: `Related:` still comes from `field.js` at minSim 0.55 — the
+  two thresholds serve different jobs and are not unified. Cost sweep
+  (`eval/save-time-cost.js`): pre-declared p95 budget 250 ms; measured p95 at N=100k is
+  77.1 ms → `RM-07` is **not** forced by the neighbor scan. See
+  [`docs/phases/phase-0-edge-substrate.md`](docs/phases/phase-0-edge-substrate.md).
 - **Unified edge store (`edges.js`, Phase 0.0).** One undirected edge record carrying two
   independent signals — `semantic` (derived cache, validated by `src_versions` vs each
   endpoint's `embedding_version`) and `hebbian` (source of truth; `last_updated` nests
@@ -25,8 +33,8 @@ Beta-readiness pass:
   sidecars migrate losslessly and one-way into `<store>.edges.json` (`kind: "resonance-edges"`;
   an old-format reader refuses rather than dropping edges). **On the live recall path:**
   Hebbian bonus/reinforce/tick/save go through EdgeStore; `ledger.js` is retired from
-  recall. Semantic kNN + constraint-rescue still run in `field.js` at recall (save-time
-  binding is 0.1). See
+  recall. Semantic kNN + constraint-rescue still run in `field.js` at recall; save-time
+  neighbor persist is the 0.1 entry above. See
   [`docs/phases/phase-0-edge-substrate.md`](docs/phases/phase-0-edge-substrate.md).
 - **`embedding_version` on every memory** (Phase 0.0 schema). `record.js` `normalize()`
   backfills it to `1` for legacy rows. A successful `edit()` re-embed increments it; an

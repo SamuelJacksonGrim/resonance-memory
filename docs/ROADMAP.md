@@ -159,7 +159,7 @@ The one phase in flight. Full spec + metrics + tests: [`phase-0`](phases/phase-0
 | Sub-phase | Purpose | Status |
 |---|---|---|
 | **0.0** | One edge store, two signals; `embedding_version` schema; migrate `.assoc.json` (one-way) | ✅ |
-| **0.1** | Save-time semantic edges + edge timestamps; save-latency cost sweep | ⬜ |
+| **0.1** | Save-time semantic edges + edge timestamps; save-latency cost sweep | ✅ |
 | **0.2** | Lazy wall-clock decay of the learned signal (**I6 becomes true**) | ⬜ 🔀 |
 | **0.3** | Materialize-on-mutation; MCP request-ID idempotency (atomic dedup) | ⬜ |
 | **0.4** | Soft pruning (mirror `vacuum()`); server-side reactivation | ⬜ |
@@ -239,7 +239,7 @@ PRE-0     ✅ BUG-008 fixed · ⬜ transition table ratified
   ↓
 Phase 0.0   one substrate, two signals · embedding_version · migrate .assoc.json
   ↓
-Phase 0.1   save-time semantic edges · edge timestamps · cost sweep
+Phase 0.1   save-time semantic edges · edge timestamps · cost sweep   ✅
   ↓
 Phase 0.2   lazy wall-clock decay of the learned signal   (I6 becomes true)
   ↓
@@ -263,8 +263,8 @@ Everything after Phase 1 is planned, not committed.
 Route-level only. The mechanism behind each lives in its owning doc (Phase 0 risks:
 [`phase-0`](phases/phase-0-edge-substrate.md)).
 
-1. **Save-time cost is unmeasured** — Phase 0.1's per-write scan may make `RM-07` mandatory. Sweep before deciding.
-2. **Two cosine thresholds serve different jobs** (recall gate 0.55 vs. save-time bind ~0.25) — deliberate and documented, not accidental.
+1. **Save-time cost is measured** — Phase 0.1 scan p95 at N=100k is 77.1 ms vs. a pre-declared 250 ms budget. **`RM-07` is not forced by the neighbor scan**; it stays scheduled on JSONL-rewrite grounds. Table in [`phase-0`](phases/phase-0-edge-substrate.md).
+2. **Two cosine thresholds serve different jobs** (recall gate 0.55 vs. save-time bind 0.25) — deliberate and documented, not accidental.
 3. **Consolidation (Phase 4) may not earn its place** — exit criterion is measurable retrieval gain; absent that, cut it.
 4. **Fusion may lose the Phase 2.2 gate** — valid and publishable; the flag stays off.
 5. **Edge inheritance across supersession is undecided** (Phase 7) — the quietest data-loss path.

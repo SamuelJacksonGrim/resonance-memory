@@ -29,9 +29,10 @@
  *   store         a JsonlStore (or any object with the same method surface)
  *   embed         async (texts[]) -> vectors[]   (network in prod, cached in eval)
  *   fieldEnabled  () -> boolean   (live config read in prod, a fixed flag in eval)
- *   getEdgeStore  () -> EdgeStore (lazy: the unified sidecar is only built on first
- *                                  field use, so the field toggle needs no restart.
- *                                  Duck-typed: bonus/reinforceRecall/tick/save.)
+ *   getEdgeStore  () -> EdgeStore (lazy: built on first field-on recall OR first
+ *                                  save-time bind. Field toggle needs no restart.
+ *                                  Duck-typed: bonus/reinforceRecall/tick/save;
+ *                                  save-time bind also needs get/put.)
  *   getLedger     () -> same surface as getEdgeStore; kept as a fallback alias so
  *                       a leftover injector still works. Live path uses getEdgeStore.
  *   warmEnabled   () -> boolean   (RESONANCE_WARM_FIELD; default off)
@@ -53,6 +54,7 @@ const {
 const {
   normalize, isHistoricalQuery, detectSupersession, supersedePatches,
 } = require("./record.js");
+const { makeEdge, setSemantic, semanticValid } = require("./edges.js");
 
 // Reciprocal-kNN edge construction (RM-00 field experiment, 2026-08-01). Directional
 // kNN let a one-sided "hub" node bleed into a seed's neighborhood as a false positive
@@ -73,6 +75,25 @@ const K_SEARCH = Number(process.env.RESONANCE_FIELD_KSEARCH) || 15;
 // the 0.55 edge gate misses, and on the corpus it cost zero tangent bleed. The gate only
 // governs whether a TYPED constraint finds a bridge, so it cannot loosen ordinary recall.
 const CONSTRAINT_GATE = process.env.RESONANCE_CONSTRAINT_GATE ? Number(process.env.RESONANCE_CONSTRAINT_GATE) : 0.45;
+
+/*
+ * Save-time semantic bind (Phase 0.1). K neighbors above SAVE_TIME_MIN_COS are
+ * persisted on the EdgeStore as a derived cache; Hebbian weight starts at 0
+ * (no seeded baseline — an unreinforced edge's learned signal is genuinely
+ * zero). Recall does NOT read these edges yet: Related: still comes from
+ * field.js at minSim 0.55. The two thresholds are deliberately different
+ * (phase-0 Risk #2):
+ *
+ *   0.55 at RECALL  — a tight gate for what surfaces in Related:
+ *   0.25 at SAVE    — a looser net for what's worth persisting as structure
+ *
+ * Unifying them would either drop persistable structure (raising this to 0.55)
+ * or flood Related: (lowering recall to 0.25). Do not silently collapse them.
+ * The cost of the O(N) scan this implies is measured by eval/save-time-cost.js;
+ * that sweep, not this comment, decides whether RM-07 is mandatory.
+ */
+const SAVE_TIME_K = 5;
+const SAVE_TIME_MIN_COS = 0.25;
 
 /*
  * Default edge source for warmth (and, later, a Phase 0 swap). ALWAYS returns a
@@ -96,6 +117,73 @@ function cosine(a, b) {
   let dot = 0, na = 0, nb = 0;
   for (let i = 0; i < a.length; i++) { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; }
   return na && nb ? dot / (Math.sqrt(na) * Math.sqrt(nb)) : 0;
+}
+
+/*
+ * Persist the new record's top-K semantic neighbors into the EdgeStore.
+ *
+ * Deliberately NOT field.buildEdges: that path is recall-time (k=2, minSim
+ * 0.55, mutual kNN, Hebbian bonus blended in). This is save-time structure
+ * (K=5, minCos 0.25, no bonus, not mutual). Recall still uses field.js;
+ * wiring Related: to this table is a later, gated slice.
+ *
+ * src_versions are tagged to the CANONICAL endpoints (edge.a / edge.b after
+ * sort), never to makeEdge's argument order — the Slice B gotcha. New edges
+ * get hebbian.weight = 0 and origin "save-time-neighbor". An existing edge
+ * (e.g. co-activation) has its semantic cache refreshed if stale; Hebbian
+ * bytes and origin are left alone. Sidecar write is one EdgeStore.save at
+ * the end, and only if something actually changed (transition table:
+ * "save where edge exists → write only if semantic recomputed").
+ *
+ * I5: this writes the SIDECAR, never the JSONL store.
+ */
+function bindSaveTimeNeighbors(rec, mems, edgeStore, opts = {}) {
+  if (!edgeStore || typeof edgeStore.get !== "function" || typeof edgeStore.put !== "function") {
+    return { bound: 0, wrote: false };
+  }
+  const vec = rec && rec.embedding;
+  if (!Array.isArray(vec) || vec.length === 0) return { bound: 0, wrote: false };
+
+  const k = opts.k != null ? opts.k : SAVE_TIME_K;
+  const minCos = opts.minCos != null ? opts.minCos : SAVE_TIME_MIN_COS;
+  const scores = [];
+  for (const m of mems || []) {
+    if (String(m.id) === String(rec.id)) continue;
+    if (!Array.isArray(m.embedding) || m.embedding.length === 0) continue;
+    const cos = cosine(vec, m.embedding);
+    if (cos >= minCos) scores.push({ m, cos });
+  }
+  scores.sort((a, b) => b.cos - a.cos);
+  const top = scores.slice(0, k);
+  if (!top.length) return { bound: 0, wrote: false };
+
+  const byId = new Map();
+  for (const m of mems || []) byId.set(String(m.id), m);
+  byId.set(String(rec.id), rec);
+
+  let wrote = false;
+  for (const { m, cos } of top) {
+    let edge = edgeStore.get(rec.id, m.id);
+    if (!edge) {
+      // makeEdge sorts endpoints; do NOT pass semantic here — src_versions
+      // would follow argument order, not canonical a/b (Slice B).
+      edge = edgeStore.put(makeEdge(rec.id, m.id, {
+        origin: "save-time-neighbor",
+        hebbianWeight: 0,
+      }));
+      wrote = true;
+    }
+    const recA = byId.get(String(edge.a));
+    const recB = byId.get(String(edge.b));
+    const verA = recA && typeof recA.embedding_version === "number" ? recA.embedding_version : 1;
+    const verB = recB && typeof recB.embedding_version === "number" ? recB.embedding_version : 1;
+    if (!semanticValid(edge, verA, verB)) {
+      setSemantic(edge, cos, { a: verA, b: verB });
+      wrote = true;
+    }
+  }
+  if (wrote && typeof edgeStore.save === "function") edgeStore.save();
+  return { bound: top.length, wrote };
 }
 
 // Fallback ranking when the embedder is unreachable at recall time. Deliberately
@@ -174,6 +262,18 @@ function createCore({
     } catch { /* warmth must never break save */ }
   }
 
+  // Save-time semantic bind. Sidecar write (I5 allows it — I5 protects the
+  // JSONL store). Wrapped so a missing/corrupt EdgeStore cannot fail save (I3).
+  // No vector → nothing to compare; bind later when a real vector exists.
+  function tryBindSaveTime(rec, mems) {
+    try {
+      if (!Array.isArray(rec && rec.embedding) || rec.embedding.length === 0) return;
+      const L = hebbianStore();
+      if (!L) return;
+      bindSaveTimeNeighbors(rec, mems, L);
+    } catch { /* save-time bind must never break save */ }
+  }
+
   async function save(content) {
     content = (content || "").trim();
     if (!content) return "Nothing to save: `content` was empty.";
@@ -182,7 +282,8 @@ function createCore({
     // Exact restatement of a memory that is still true: confirm it rather than
     // storing a second copy. Near-duplicate detection (cosine-banded) is RM-02;
     // this is only the free, unambiguous case.
-    const same = store.current().find((r) => r.text === content);
+    const mems = store.current();
+    const same = mems.find((r) => r.text === content);
     if (same) {
       store.update(same.id, { last_confirmed: now });
       tryPrimeSave(same.id);
@@ -201,17 +302,21 @@ function createCore({
     // correction cue ("moved", "now", "no longer"...) retires the single most-similar
     // current memory rather than piling a contradiction beside it. See docs/proposed
     // /0002 and eval/RESULTS.md for why the cue - not cosine - is the precision gate.
-    const superseded = detectSupersession(rec, store.current(), cosine);
+    const superseded = detectSupersession(rec, mems, cosine);
     if (superseded) {
       const p = supersedePatches(superseded, rec, now);
       Object.assign(rec, p.new);            // new memory carries supersedes/revision
       store.add(rec);                       // append the correction as current
       store.update(superseded.id, p.old);   // retire the old row (valid_to/superseded_by)
+      // Bind against still-current neighbors, not the row we just retired
+      // (edge inheritance across supersession is Phase 7, undecided).
+      tryBindSaveTime(rec, mems.filter((m) => String(m.id) !== String(superseded.id)));
       tryPrimeSave(rec.id);
       return "Saved — updated what I knew, retiring memory " + superseded.id +
              ". (" + store.current().length + " memories total.)";
     }
     store.add(rec);
+    tryBindSaveTime(rec, mems);
     tryPrimeSave(rec.id);
     return "Saved. (" + store.current().length + " memories total.)";
   }
@@ -359,4 +464,7 @@ function createCore({
   return { save, recall, edit, remove };
 }
 
-module.exports = { createCore, cosine, keywordScore, defaultGetEdges, asEdgeMap };
+module.exports = {
+  createCore, cosine, keywordScore, defaultGetEdges, asEdgeMap,
+  bindSaveTimeNeighbors, SAVE_TIME_K, SAVE_TIME_MIN_COS,
+};

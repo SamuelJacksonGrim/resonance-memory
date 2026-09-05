@@ -384,6 +384,32 @@ the ordinary nodes, so `noise-schedule` precision is not re-broken.
 
 ---
 
+## Phase 0.1 — save-time bind cost sweep (2026-09-05)
+
+Pre-declared p95 budget **250 ms** (written in `eval/save-time-cost.js` before any
+measurement ran). Isolates neighbor scan + `EdgeStore.save` of K=5 edges; embed and JSONL
+rewrite excluded. 768-d JS Arrays (production shape). Reproduce: `node eval/save-time-cost.js`.
+
+| N | trials | p50 (ms) | p95 (ms) | p99 (ms) | K bound | vs 250 ms |
+|---|--------|----------|----------|----------|---------|-----------|
+| 100 | 80 | 1.7 | 2.0 | 2.7 | 5 | UNDER |
+| 1 000 | 40 | 2.0 | 2.4 | 2.6 | 5 | UNDER |
+| 10 000 | 20 | 8.6 | 9.1 | 9.1 | 5 | UNDER |
+| 50 000 | 12 | 38.2 | 45.5 | 45.5 | 5 | UNDER |
+| 100 000 | 8 | 75.4 | 77.1 | 77.1 | 5 | UNDER |
+
+Sidecar rewrite footnote (mature `.edges.json`, no scan): 1k edges p95 2.9 ms · 10k 12.6 ms ·
+50k 59.1 ms.
+
+**RM-07 verdict: NO-GO on forcing `RM-07` from this slice.** Scan p95 at N=100k is 77.1 ms
+against a 250 ms budget. `RM-07` stays scheduled on the JSONL-rewrite / `all()`-parse
+grounds already in BACKLOG. Full write-up: [`phases/phase-0`](../docs/phases/phase-0-edge-substrate.md).
+
+Golden (`npm run eval`) after this slice: **No regressions vs golden.** Recall still uses
+`field.js`; the persist-on-save path is additive.
+
+---
+
 ## Related
 
 [[eval/README]] · [[0007-eval-harness]] · [[phase-0-edge-substrate]] · [[phase-2-retrieval-dynamics]] · [[BACKLOG]] · [[ARCHITECTURE]]
