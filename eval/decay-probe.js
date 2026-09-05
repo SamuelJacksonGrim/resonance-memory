@@ -10,22 +10,20 @@
 /*
  * eval/decay-probe.js - measures the Hebbian layer's two timescales directly.
  *
- * A fast end-to-end retrieval decay test is impossible with the shipped constants
- * (beta=0.95, decay every 10 recalls, prune at 0.05): dropping a reinforced edge
- * back below the 0.55 gate takes hundreds of recalls by design. So this probes the
- * ledger itself, for a sub-threshold-but-related pair:
+ * Live decay (Phase 0.2) is lazy wall-clock via effectiveHebbian, half-life
+ * ~7 days for facts — an instant probe cannot observe it. The FORGETTING loop
+ * below still drives the RETIRED epoch clock (EdgeStore.tick / beta=0.95 every
+ * 10) so the original timescale remains inspectable. Do not treat those
+ * "recalls to forget" as the live law; live forgetting is elapsed time.
  *
  *   LEARNING  - how many co-recalls lift  cosine + bonus  over the 0.55 edge gate
- *   FORGETTING- how many recalls of decay drop it back under the gate
- *
- * Those two numbers characterize the whole "learns through use / fades without it"
- * claim, at a timescale a test can actually observe.
+ *   FORGETTING- (retired epoch math) how many ticks drop it back under the gate
  */
 
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { Ledger } = require("../ledger.js");
+const { EdgeStore } = require("../edges.js");
 const { embed } = require("./embed-cache.js");
 
 const GATE = 0.55;   // field.js minSim
@@ -48,8 +46,8 @@ async function probe(label, ta, tb) {
   const [va, vb] = await embed([ta, tb]);
   const cos = cosine(va, vb);
 
-  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "rm-decay-")), "l.assoc.json");
-  const L = new Ledger(file);
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "rm-decay-")), "l.edges.json");
+  const L = new EdgeStore(file);
   const score = () => cos + L.bonus("A", "B");
 
   // LEARNING: co-recall A and B as primaries (alphaPP), until score crosses the gate.
@@ -60,7 +58,7 @@ async function probe(label, ta, tb) {
   }
   const peak = score(), peakW = L.weight("A", "B");
 
-  // FORGETTING: stop reinforcing; each recall ticks the epoch clock (decay every 10).
+  // FORGETTING: stop reinforcing; replay the retired epoch clock (not the live path).
   let forgetRecalls = null;
   if (learnTurn !== null) {
     for (let r = 1; r <= 5000 && forgetRecalls === null; r++) {
@@ -83,5 +81,5 @@ async function probe(label, ta, tb) {
   console.log("\nHEBBIAN TIMESCALES  (edge gate = " + GATE + ", bonus max = 0.30)\n");
   for (const [label, a, b] of PAIRS) await probe(label, a, b);
   console.log("\nlearn = co-recalls (alphaPP=0.1 each) to lift cosine+bonus over the gate");
-  console.log("forget = recalls of decay (beta=0.95 every 10) to fall back under it\n");
+  console.log("forget = retired epoch ticks (beta=0.95 every 10); live decay is wall-clock half-life\n");
 })().catch((e) => { console.error(String(e.message || e)); process.exit(1); });

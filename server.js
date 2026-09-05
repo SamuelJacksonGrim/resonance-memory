@@ -43,7 +43,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { Ledger } = require("./ledger.js");
+const { EdgeStore, hebbianDecayType } = require("./edges.js");
 const { JsonlStore } = require("./store.js");
 const { createCore, defaultGetEdges } = require("./memory-core.js");
 const { WarmField } = require("./warm.js");
@@ -89,10 +89,17 @@ const EMBED_MODEL = process.env.EMBED_MODEL || "text-embedding-nomic-embed-text-
 
 fs.mkdirSync(path.dirname(STORE_PATH), { recursive: true });
 
-// Hebbian sidecar (Phase 2b), constructed lazily on first field use so the live
-// toggle can turn it on without a restart.
-let _ledger = null;
-function getLedger() { if (!_ledger) _ledger = new Ledger(STORE_PATH + ".assoc.json"); return _ledger; }
+// Unified edge sidecar (Phase 0 / Slice C). Constructed on first use (field-on
+// recall, save-time bind, or the startup pruneSweep) so the live toggle needs
+// no restart. Persists to <store>.edges.json — NEVER .assoc.json, so an old
+// shipped Ledger cannot open the new format and misparse it. A leftover
+// .assoc.json is migrated one-way on first load and left untouched
+// (legacy / read-only-for-migration).
+let _edges = null;
+function getEdgeStore() {
+  if (!_edges) _edges = new EdgeStore(STORE_PATH + ".edges.json");
+  return _edges;
+}
 
 // Warm field (Phase 1). In-proc Map, never persisted (I7). Flags default off so
 // the 27/31 golden is untouched. RESONANCE_WARM_RANK is read here so the MCP
@@ -120,11 +127,11 @@ async function embed(texts) {
 const store = new JsonlStore(STORE_PATH);
 
 // The four verbs live in the shared engine (memory-core.js); server.js only wires
-// the environment into it - network embed, the live field toggle, the lazy ledger.
+// the environment into it - network embed, the live field toggle, the lazy EdgeStore.
 // eval/pipeline.js wires the SAME core to a cached embedder, so there is exactly one
 // implementation of save/recall and the RM-00 golden guards that they never diverge.
 const core = createCore({
-  store, embed, fieldEnabled, getLedger,
+  store, embed, fieldEnabled, getEdgeStore,
   warmEnabled, getWarm, getEdges: defaultGetEdges,
   saveSeed: () => true,          // production: a just-saved fact is warm without a recall
   warmTrace, warmEdgeCap,
@@ -173,12 +180,16 @@ const TOOLS = [
   },
 ];
 
-async function callTool(name, args) {
+async function callTool(name, args, requestId) {
   args = args || {};
-  if (name === "save_memory") return await core.save(args.content);
-  if (name === "recall_memory") return await core.recall(args.query);
-  if (name === "edit_memory") return await core.edit(args.id, args.content);
-  if (name === "delete_memory") return core.remove(args.id);
+  // JSON-RPC request id, extracted at this boundary (Phase 0.3). Threaded
+  // into every verb; EdgeStore only *uses* it on mutating ops (save-time
+  // bind, reinforceRecall). Missing/null id → no dedup (eval, panel, tests).
+  const opts = { requestId };
+  if (name === "save_memory") return await core.save(args.content, opts);
+  if (name === "recall_memory") return await core.recall(args.query, 5, opts);
+  if (name === "edit_memory") return await core.edit(args.id, args.content, opts);
+  if (name === "delete_memory") return core.remove(args.id, opts);
   throw new Error("unknown tool: " + name);
 }
 
@@ -199,7 +210,7 @@ async function handle(req) {
   }
   if (method === "tools/call") {
     try {
-      const text = await callTool(params.name, params.arguments || {});
+      const text = await callTool(params.name, params.arguments || {}, id);
       return { jsonrpc: "2.0", id, result: { content: [{ type: "text", text }] } };
     } catch (e) {
       return { jsonrpc: "2.0", id, result: { content: [{ type: "text", text: "Error: " + e.message }], isError: true } };
@@ -212,6 +223,17 @@ async function handle(req) {
 
 // Compact soft-deleted rows once at startup (keeps the file bounded; embeddings kept).
 try { if (store.hasDeleted()) store.vacuum(); } catch { /* non-fatal */ }
+// Soft-prune faded+weak edges (Phase 0.4 / I8). Explicit maintenance, same
+// class as vacuum() — startup or on demand, NEVER recall/save. That is the
+// golden guardrail: eval never starts the MCP server, so this sweep cannot
+// move RM-00. Hard drop of pruned edges is EdgeStore.vacuum(), on demand.
+try {
+  const E = getEdgeStore();
+  const byId = new Map(store.all().map((r) => [String(r.id), r]));
+  E.pruneSweep({
+    typeFn: (a, b) => hebbianDecayType(byId.get(String(a)), byId.get(String(b))),
+  });
+} catch { /* non-fatal: maintenance must never break startup */ }
 
 let buf = "";
 process.stdin.setEncoding("utf8");

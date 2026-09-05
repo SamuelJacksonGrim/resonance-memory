@@ -29,10 +29,11 @@
  *      graph slowly validating its own noise (bad)?
  *   4. (perf) Ledger size, so you can see whether the on-recall save could stutter.
  *
- * Reads the REAL sidecar shape: { recalls, edges: { "a:b": weight } }, and joins
- * ids back to the JSONL store. Standard library + local field.js only, no deps.
+ * Reads the live sidecar (`kind: "resonance-edges"`, hebbian.weight on each
+ * record) and the leftover `{ recalls, edges: { "a:b": weight } }` shape, and
+ * joins ids back to the JSONL store. Standard library + local field.js only, no deps.
  *
- *   node inspect_sidecar.js [path_to_.assoc.json]
+ *   node inspect_sidecar.js [path_to_.edges.json | path_to_.assoc.json]
  */
 
 const fs = require("fs");
@@ -49,7 +50,11 @@ function cosine(a, b) {
 
 const STORE_PATH = process.env.MEMORY_FILE_PATH ||
   path.join(process.env.USERPROFILE || process.env.HOME || ".", ".lmstudio", "resonance-memory.jsonl");
-const SIDECAR_PATH = process.argv[2] || STORE_PATH + ".assoc.json";
+const EDGES_PATH = STORE_PATH + ".edges.json";
+const ASSOC_PATH = STORE_PATH + ".assoc.json";
+// Prefer the live sidecar; fall back to a leftover .assoc.json so an upgraded
+// install that hasn't recalled-with-field-on yet is still inspectable.
+const SIDECAR_PATH = process.argv[2] || (fs.existsSync(EDGES_PATH) ? EDGES_PATH : ASSOC_PATH);
 
 function loadStore() {
   const byId = new Map();
@@ -83,7 +88,7 @@ function main() {
   console.log(`sidecar: ${SIDECAR_PATH}\n`);
 
   if (!fs.existsSync(SIDECAR_PATH)) {
-    console.log("No sidecar yet. The ledger is created on the first recall with the");
+    console.log("No sidecar yet. The edge store is created on the first recall with the");
     console.log("field ON (RESONANCE_MEMORY_FIELD=1 or config.json field:true). Nothing to");
     console.log("inspect until the field has actually been used. This is expected early on.");
     return;
@@ -98,7 +103,11 @@ function main() {
   const store = loadStore();
 
   const edges = Object.entries(edgesObj).map(([key, w]) => {
-    const weight = typeof w === "number" ? w : (w && w.weight) || 0;
+    // Legacy sidecar: number. Native EdgeStore record: hebbian.weight.
+    const weight = typeof w === "number" ? w
+      : (w && w.hebbian && typeof w.hebbian.weight === "number") ? w.hebbian.weight
+      : (w && typeof w.weight === "number") ? w.weight
+      : 0;
     const [a, b] = key.split(":");
     return { key, a, b, weight, baseCos: baseCosine(store, a, b) };
   }).sort((x, y) => y.weight - x.weight);
@@ -109,11 +118,12 @@ function main() {
   const nearFloor = edges.filter(e => e.weight < 0.1).length;       // about to be pruned
   const consolidated = edges.filter(e => e.weight >= 0.5).length;   // strongly learned
   console.log("### 1. Equilibrium & breathing");
-  console.log(`- recall counter (decay clock): ${recalls}  (decay fires every 10)`);
+  console.log(`- leftover epoch counter:       ${recalls}  (not the decay clock as of 0.2)`);
   console.log(`- total active edges:           ${total}`);
   console.log(`- near prune floor (<0.1):      ${nearFloor}`);
   console.log(`- consolidated (>=0.5):         ${consolidated}`);
-  console.log(`  watch: total should rise in a session, then fall as recalls tick.`);
+  console.log(`  decay is lazy wall-clock (effectiveHebbian); stored weights do not fade`);
+  console.log(`  until a mutation materializes them (0.3). Watch last_updated vs now.`);
   console.log(`  red flag: total climbs day over day and never falls -> hairball.\n`);
   if (total === 0) { console.log("Ledger is empty. Nothing more to report.\n"); return; }
 
@@ -148,8 +158,9 @@ function main() {
   const bytes = fs.statSync(SIDECAR_PATH).size;
   console.log("### 4. Distribution & size");
   console.log(`- max / avg / min weight: ${ws[0].toFixed(3)} / ${(sum / total).toFixed(3)} / ${ws[ws.length - 1].toFixed(3)}`);
-  console.log(`- sidecar file size:      ${bytes} bytes  (saved every 10th recall)`);
-  console.log(`  perf is only a concern if this grows large; decay is what keeps it small.\n`);
+  console.log(`- sidecar file size:      ${bytes} bytes  (rewritten on reinforce, not on a decay tick)`);
+  console.log(`  perf is only a concern if this grows large; wall-clock decay fades the`);
+  console.log(`  learned signal on read; pruneSweep (0.4) soft-prunes idle AND weak ones.\n`);
 }
 
 main();

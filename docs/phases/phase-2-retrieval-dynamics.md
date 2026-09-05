@@ -38,7 +38,12 @@ real gate rather than an argument.
        (rich-get-richer, hub formation). Competition + normalization are the damping; they exist
        **before** promotion.
 3. [ ] **`RM-16` landed** — promotion turns the edge store from discovery cache into answer-shaper;
-       the threat changes with it, so the defense ships with it.
+       the threat changes with it, so the defense ships with it. The threat itself is
+       [`0009`](../proposed/0009-edge-threat-model.md) (Phase 0.6): semantic is recomputable,
+       a poisoned reinforcement is a durable false memory, and the answers to "what mints /
+       raises / bridges / persists an edge" *change* once learned weight enters rank.
+       `0009` §7 is the requirement list this gate is checking. `RM-16` is not built in
+       Phase 0.
 4. [ ] **`DEVELOPERS.md` + `CLAUDE.md` amended in the same PR** with the measurement that earned it.
 
 A failed gate keeps the flag off and writes the negative result down. A measured "no" is a shipped result.
@@ -92,4 +97,4 @@ negative written down). Then [[phase-3-episodic-context]].
 
 ## Related
 
-[[ROADMAP]] · [[phase-1-transient-activation]] · [[phase-3-episodic-context]] · [[0003-hybrid-retrieval]] · [[0007-eval-harness]] · [[eval/README]] · [[RESULTS]] · [[BACKLOG]] · [[ARCHITECTURE]]
+[[ROADMAP]] · [[phase-0-edge-substrate]] · [[phase-1-transient-activation]] · [[phase-3-episodic-context]] · [[0003-hybrid-retrieval]] · [[0007-eval-harness]] · [[0009-edge-threat-model]] · [[eval/README]] · [[RESULTS]] · [[BACKLOG]] · [[ARCHITECTURE]]

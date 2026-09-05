@@ -18,6 +18,13 @@
 /*
  * ledger.js - the Hebbian sidecar for the associative field (Phase 2b).
  *
+ * RETIRED FROM THE LIVE PATH as of Phase 0 Slice C. Recall / reinforce /
+ * tick / save now go through edges.js EdgeStore (`<store>.edges.json`).
+ * This file is kept so the original epoch-decay math stays inspectable and
+ * so tests can compare EdgeStore bonuses against the shipped Ledger on the
+ * same fixture ("moving storage must not move the numbers"). Do not construct
+ * Ledger from server.js / memory-core.js / eval/pipeline.js.
+ *
  * Learned memory<->memory association weights, kept ENTIRELY separate from the
  * vector store. The cosine graph (field.js) is the static semantic floor; this
  * ledger is the dynamic layer that reshapes with use ("fire together, wire

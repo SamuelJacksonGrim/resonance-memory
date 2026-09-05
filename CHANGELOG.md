@@ -17,6 +17,81 @@ Beta-readiness pass:
   "revisit only if hosted resale looms" trigger the backlog pre-registered, now pulled.
 
 ### Added
+- **Phase 0.6 threat-model sketch (design only).** On-paper analysis of the
+  unified edge substrate: what can mint an edge, raise Hebbian weight, make a
+  memory a constraint-rescue bridge, or survive indefinitely. The load-bearing
+  property: semantic is a recomputable cache (version comparison against
+  `embedding_version`); a poisoned reinforcement is a durable *false memory*
+  nothing else encodes. Answers that change when learned weight enters rank
+  are carried into `RM-16` as requirements of the Phase 2.2 promotion gate.
+  `RM-16` is not implemented here. No code, no behaviour change; both gates
+  reconfirmed green. See
+  [`docs/proposed/0009-edge-threat-model.md`](docs/proposed/0009-edge-threat-model.md).
+  **Phase 0 exit is met** (golden green + reliable; I6 held; I8 held for
+  edges; migration lossless + one-way; signals stay separate).
+- **Phase 0.5 test contract.** `test.js` is now the Phase 0 contract: every
+  edge state-transition row (state change AND the `Writes?` column), every
+  pre-declared failure signature, and interrupted/failed persistence atomic
+  recovery. Section headers keyed to sub-phase / invariant. No behaviour
+  change; golden unmoved. See
+  [`docs/phases/phase-0-edge-substrate.md`](docs/phases/phase-0-edge-substrate.md).
+- **Soft pruning + server-side reactivation (Phase 0.4 / I8).** An explicit
+  `pruneSweep()` (MCP startup or on demand — never `recall`/`save`) marks an
+  edge `pruned_at` only when it is **both** unreinforced (`effectiveHebbian <
+  1e-6`) **and** semantically weak (`semantic.value < SEMANTIC_PRUNE_GATE`
+  0.25, the save-time bind floor). An idle but semantically-strong edge stays
+  so constraint-rescue cannot regress (RESULTS field experiment #2). The
+  record is kept; `incident()` skips it. Hard drop is `EdgeStore.vacuum()`,
+  also explicit. Reactivation is a consequence of `save`/`edit`/`reinforce`
+  touching an endpoint: in-place, `created_at` preserved, Hebbian weight
+  carried (not snapped to full), bounded `prune_count` history. No fifth
+  tool. Golden did not move (eval never calls the sweep). See
+  [`docs/phases/phase-0-edge-substrate.md`](docs/phases/phase-0-edge-substrate.md).
+- **Materialize-on-mutation + MCP request-ID idempotency (Phase 0.3).** A reinforcing
+  write first stores `effectiveHebbian(edge, now)` as `hebbian.weight`, then applies α,
+  then stamps `hebbian.last_updated` — reinforcement cannot bypass accumulated decay
+  (the "ghost weight" of adding α to an undecayed stored value after a long idle).
+  Provenance is preserved. One MCP JSON-RPC request id = one mutation transaction:
+  `server.js` extracts `req.id` and threads it into the four verbs; EdgeStore keeps a
+  256-entry LRU of processed ids **inside** the sidecar (`processed_ids`) so one
+  `writeFileDurable` commits the dedup record and the weight change together. No id
+  (eval, tests, panel) applies normally. Golden did not move (Δt≈0 materialize is a
+  no-op; eval carries no request ids). See
+  [`docs/phases/phase-0-edge-substrate.md`](docs/phases/phase-0-edge-substrate.md).
+- **Lazy wall-clock Hebbian decay (Phase 0.2 / I6).** Decay applies to `hebbian.weight` only
+  (semantic never fades) and is **computed on read** via `effectiveHebbian(edge, now)` —
+  `w · 2^(−Δt/H)`, `λ = ln(2)/H`, `Δt = max(0, now − last_updated)` in seconds. It is not
+  written back (materialization-on-mutation is 0.3). The recall-epoch `tick()` is gone from
+  the live path: reading no longer drives the decay clock. `reinforceRecall` is retained.
+  Starting half-lives (parameters, not constants): constraint ~30 days, fact ~7 days,
+  working ~1 hour. Per-type/namespace override via `opts.halfLives` / `hebbianDecayType`.
+  Golden did not move (eval cases are single-recall on a fresh store; epoch ticks never
+  fired, and Δt≈0 in an instant eval). See
+  [`docs/phases/phase-0-edge-substrate.md`](docs/phases/phase-0-edge-substrate.md).
+- **Save-time semantic edges (Phase 0.1).** On `save()` of a record with a real vector, persist
+  its top-5 neighbors above cosine 0.25 into the EdgeStore (`semantic.value` + canonical
+  `src_versions`, `hebbian.weight = 0`, origin `save-time-neighbor`). Embedder down → bind
+  nothing. Recall is unchanged: `Related:` still comes from `field.js` at minSim 0.55 — the
+  two thresholds serve different jobs and are not unified. Cost sweep
+  (`eval/save-time-cost.js`): pre-declared p95 budget 250 ms; measured p95 at N=100k is
+  77.1 ms → `RM-07` is **not** forced by the neighbor scan. See
+  [`docs/phases/phase-0-edge-substrate.md`](docs/phases/phase-0-edge-substrate.md).
+- **Unified edge store (`edges.js`, Phase 0.0).** One undirected edge record carrying two
+  independent signals — `semantic` (derived cache, validated by `src_versions` vs each
+  endpoint's `embedding_version`) and `hebbian` (source of truth; `last_updated` nests
+  here because that's the only thing it clocks). Typed provenance (`origin` is how the
+  edge came to exist; `migrated_from` is a separate fact). Existing `.assoc.json`
+  sidecars migrate losslessly and one-way into `<store>.edges.json` (`kind: "resonance-edges"`;
+  an old-format reader refuses rather than dropping edges). **On the live recall path:**
+  Hebbian bonus/reinforce/save go through EdgeStore (`tick()` retired in 0.2); `ledger.js`
+  is retired from recall. Semantic kNN + constraint-rescue still run in `field.js` at recall; save-time
+  neighbor persist is the 0.1 entry above. See
+  [`docs/phases/phase-0-edge-substrate.md`](docs/phases/phase-0-edge-substrate.md).
+- **`embedding_version` on every memory** (Phase 0.0 schema). `record.js` `normalize()`
+  backfills it to `1` for legacy rows. A successful `edit()` re-embed increments it; an
+  embedder failure does not — the version moves in lockstep with the vector so a
+  text-drifted-from-vector record stays distinguishable from a genuine re-embed
+  (`BUG-008` class). See [`docs/phases/phase-0-edge-substrate.md`](docs/phases/phase-0-edge-substrate.md).
 - **Association graph view** in the panel — a live 3D force-directed constellation of your
   memories; hover a dot to read it, line thickness = similarity, reinforced-by-use edges
   highlighted. Refreshes as the graph learns.

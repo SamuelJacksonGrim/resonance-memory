@@ -86,10 +86,13 @@ pair     cosine   learning              forgetting
 gluten   0.530    1 co-recall to cross  80 recalls to decay back
 budget   0.466    3 co-recalls          10 recalls
 ```
-Co-activation lifts a sub-threshold edge over the 0.55 gate in **1–3 activations**; decay
-removes it in **10–80 recalls** (scaled by margin over the gate). "Learns through use, fades
-without it" is real — at the ledger level. Its *retrieval* impact is bottlenecked by the same
-misaligned topology above: a fast learner on a bad map still arrives in the wrong place.
+Co-activation lifts a sub-threshold edge over the 0.55 gate in **1–3 activations**; the
+retired epoch clock removed it in **10–80 recalls** (scaled by margin over the gate). As of
+Phase 0.2 the live law is wall-clock half-life (`effectiveHebbian`, facts ~7 days), so an
+instant eval no longer fades anything — the probe's forget column is the old timescale,
+kept inspectable via `tick()`. "Learns through use, fades without it" is real. Its
+*retrieval* impact is bottlenecked by the same misaligned topology above: a fast learner
+on a bad map still arrives in the wrong place.
 
 ### 4. Documented gaps (not regressions — improvements when closed)
 - **Contradiction detection (`contra-job`, `contra-city`): fails.** Nothing wires supersession
@@ -381,6 +384,32 @@ model), give typed constraints a lower edge gate (~0.45) + exemption from mutual
 1-hop restricted to them, and decouple the internal search radius (k_search≈15) from the returned k (5)
 so a rank-7 bridge like "lemon bars" becomes a seed. The typing keeps the aggressive reach settings off
 the ordinary nodes, so `noise-schedule` precision is not re-broken.
+
+---
+
+## Phase 0.1 — save-time bind cost sweep (2026-09-05)
+
+Pre-declared p95 budget **250 ms** (written in `eval/save-time-cost.js` before any
+measurement ran). Isolates neighbor scan + `EdgeStore.save` of K=5 edges; embed and JSONL
+rewrite excluded. 768-d JS Arrays (production shape). Reproduce: `node eval/save-time-cost.js`.
+
+| N | trials | p50 (ms) | p95 (ms) | p99 (ms) | K bound | vs 250 ms |
+|---|--------|----------|----------|----------|---------|-----------|
+| 100 | 80 | 1.7 | 2.0 | 2.7 | 5 | UNDER |
+| 1 000 | 40 | 2.0 | 2.4 | 2.6 | 5 | UNDER |
+| 10 000 | 20 | 8.6 | 9.1 | 9.1 | 5 | UNDER |
+| 50 000 | 12 | 38.2 | 45.5 | 45.5 | 5 | UNDER |
+| 100 000 | 8 | 75.4 | 77.1 | 77.1 | 5 | UNDER |
+
+Sidecar rewrite footnote (mature `.edges.json`, no scan): 1k edges p95 2.9 ms · 10k 12.6 ms ·
+50k 59.1 ms.
+
+**RM-07 verdict: NO-GO on forcing `RM-07` from this slice.** Scan p95 at N=100k is 77.1 ms
+against a 250 ms budget. `RM-07` stays scheduled on the JSONL-rewrite / `all()`-parse
+grounds already in BACKLOG. Full write-up: [`phases/phase-0`](../docs/phases/phase-0-edge-substrate.md).
+
+Golden (`npm run eval`) after this slice: **No regressions vs golden.** Recall still uses
+`field.js`; the persist-on-save path is additive.
 
 ---
 

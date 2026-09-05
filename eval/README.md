@@ -55,11 +55,14 @@ eval/
   corpora/*.jsonl        committed fixtures (tracked despite the repo's *.jsonl ignore)
   embeddings.cache.json  committed real embeddings -> offline + deterministic
   embed-cache.js         the cached embedder (refresh ritual above)
-  pipeline.js            the real substrate (store/field/ledger/record) composed into
+  pipeline.js            the real substrate (store/field/edges/record) composed into
                          an injectable save/recall, mirroring server.js
   metrics.js             scoring (contains / excludes / current_only / per-turn)
   run.js                 the runner + regression gate
   golden.json            last accepted scorecard (written by --accept)
+  save-time-cost.js      Phase 0.1 cost sweep (neighbor-scan + EdgeStore.save p50/p95/p99
+                         at N=100/1k/10k/50k/100k). Pre-declares the p95 budget that
+                         triggers RM-07 *before* measuring. Not part of npm run eval.
 ```
 
 ## Case format

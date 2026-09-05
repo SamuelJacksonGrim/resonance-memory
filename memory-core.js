@@ -29,10 +29,16 @@
  *   store         a JsonlStore (or any object with the same method surface)
  *   embed         async (texts[]) -> vectors[]   (network in prod, cached in eval)
  *   fieldEnabled  () -> boolean   (live config read in prod, a fixed flag in eval)
- *   getLedger     () -> Ledger    (lazy: the Hebbian sidecar is only built on first
- *                                  field use, so the field toggle needs no restart)
+ *   getEdgeStore  () -> EdgeStore (lazy: built on first field-on recall OR first
+ *                                  save-time bind. Field toggle needs no restart.
+ *                                  Duck-typed: bonus/reinforceRecall/save;
+ *                                  save-time bind also needs get/put.
+ *                                  acceptRequest is optional (Phase 0.3 dedup).
+ *                                  tick() is retired — I6, Phase 0.2.)
+ *   getLedger     () -> same surface as getEdgeStore; kept as a fallback alias so
+ *                       a leftover injector still works. Live path uses getEdgeStore.
  *   warmEnabled   () -> boolean   (RESONANCE_WARM_FIELD; default off)
- *   getWarm       () -> WarmField (lazy, like getLedger; in-proc Map, never persisted)
+ *   getWarm       () -> WarmField (lazy, like getEdgeStore; in-proc Map, never persisted)
  *   getEdges      (mems, L) -> Map  ALWAYS a Map, never null. Cap is at spread().
  *   saveSeed      () -> boolean   (production may pass true; eval MUST pass false)
  *   warmTrace     () -> boolean   (RESONANCE_WARM_TRACE; default off, zero-cost)
@@ -50,6 +56,7 @@ const {
 const {
   normalize, isHistoricalQuery, detectSupersession, supersedePatches,
 } = require("./record.js");
+const { makeEdge, setSemantic, semanticValid, hebbianDecayType, reactivateEdge } = require("./edges.js");
 
 // Reciprocal-kNN edge construction (RM-00 field experiment, 2026-08-01). Directional
 // kNN let a one-sided "hub" node bleed into a seed's neighborhood as a false positive
@@ -72,14 +79,40 @@ const K_SEARCH = Number(process.env.RESONANCE_FIELD_KSEARCH) || 15;
 const CONSTRAINT_GATE = process.env.RESONANCE_CONSTRAINT_GATE ? Number(process.env.RESONANCE_CONSTRAINT_GATE) : 0.45;
 
 /*
+ * Save-time semantic bind (Phase 0.1). K neighbors above SAVE_TIME_MIN_COS are
+ * persisted on the EdgeStore as a derived cache; Hebbian weight starts at 0
+ * (no seeded baseline — an unreinforced edge's learned signal is genuinely
+ * zero). Recall does NOT read these edges yet: Related: still comes from
+ * field.js at minSim 0.55. The two thresholds are deliberately different
+ * (phase-0 Risk #2):
+ *
+ *   0.55 at RECALL  — a tight gate for what surfaces in Related:
+ *   0.25 at SAVE    — a looser net for what's worth persisting as structure
+ *                     (Phase 0.4 SEMANTIC_PRUNE_GATE matches this: below it
+ *                     an edge wouldn't even be created today, so it is the
+ *                     prune floor. Do not raise prune to 0.55.)
+ *
+ * Unifying them would either drop persistable structure (raising this to 0.55)
+ * or flood Related: (lowering recall to 0.25). Do not silently collapse them.
+ * The cost of the O(N) scan this implies is measured by eval/save-time-cost.js;
+ * that sweep, not this comment, decides whether RM-07 is mandatory.
+ */
+const SAVE_TIME_K = 5;
+const SAVE_TIME_MIN_COS = 0.25;
+
+/*
  * Default edge source for warmth (and, later, a Phase 0 swap). ALWAYS returns a
  * Map (possibly empty). NEVER null — null-as-sentinel would disable field
  * neighborhood on large stores (WARM_EDGE_CAP gates spread(), not Related:).
  */
 function defaultGetEdges(mems, L) {
-  return field.buildEdges(mems || [], {
+  const list = mems || [];
+  const byId = new Map(list.map((m) => [String(m.id), m]));
+  return field.buildEdges(list, {
     k: 2, minSim: 0.55,
-    bonus: L ? (a, b) => L.bonus(a, b) : () => 0,
+    bonus: L ? (a, b) => L.bonus(a, b, {
+      type: hebbianDecayType(byId.get(String(a)), byId.get(String(b))),
+    }) : () => 0,
     mutual: FIELD_MUTUAL,
   });
 }
@@ -93,6 +126,80 @@ function cosine(a, b) {
   let dot = 0, na = 0, nb = 0;
   for (let i = 0; i < a.length; i++) { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; }
   return na && nb ? dot / (Math.sqrt(na) * Math.sqrt(nb)) : 0;
+}
+
+/*
+ * Persist the new record's top-K semantic neighbors into the EdgeStore.
+ *
+ * Deliberately NOT field.buildEdges: that path is recall-time (k=2, minSim
+ * 0.55, mutual kNN, Hebbian bonus blended in). This is save-time structure
+ * (K=5, minCos 0.25, no bonus, not mutual). Recall still uses field.js;
+ * wiring Related: to this table is a later, gated slice.
+ *
+ * src_versions are tagged to the CANONICAL endpoints (edge.a / edge.b after
+ * sort), never to makeEdge's argument order — the Slice B gotcha. New edges
+ * get hebbian.weight = 0 and origin "save-time-neighbor". An existing edge
+ * (e.g. co-activation) has its semantic cache refreshed if stale; Hebbian
+ * bytes and origin are left alone. Sidecar write is one EdgeStore.save at
+ * the end, and only if something actually changed (transition table:
+ * "save where edge exists → write only if semantic recomputed").
+ *
+ * I5: this writes the SIDECAR, never the JSONL store.
+ */
+function bindSaveTimeNeighbors(rec, mems, edgeStore, opts = {}) {
+  if (!edgeStore || typeof edgeStore.get !== "function" || typeof edgeStore.put !== "function") {
+    return { bound: 0, wrote: false };
+  }
+  const vec = rec && rec.embedding;
+  if (!Array.isArray(vec) || vec.length === 0) return { bound: 0, wrote: false };
+
+  const k = opts.k != null ? opts.k : SAVE_TIME_K;
+  const minCos = opts.minCos != null ? opts.minCos : SAVE_TIME_MIN_COS;
+  const scores = [];
+  for (const m of mems || []) {
+    if (String(m.id) === String(rec.id)) continue;
+    if (!Array.isArray(m.embedding) || m.embedding.length === 0) continue;
+    const cos = cosine(vec, m.embedding);
+    if (cos >= minCos) scores.push({ m, cos });
+  }
+  scores.sort((a, b) => b.cos - a.cos);
+  const top = scores.slice(0, k);
+  if (!top.length) return { bound: 0, wrote: false };
+
+  const byId = new Map();
+  for (const m of mems || []) byId.set(String(m.id), m);
+  byId.set(String(rec.id), rec);
+
+  let wrote = false;
+  const now = typeof edgeStore.now === "function" ? edgeStore.now() : undefined;
+  for (const { m, cos } of top) {
+    let edge = edgeStore.get(rec.id, m.id);
+    if (!edge) {
+      // makeEdge sorts endpoints; do NOT pass semantic here — src_versions
+      // would follow argument order, not canonical a/b (Slice B).
+      edge = edgeStore.put(makeEdge(rec.id, m.id, {
+        origin: "save-time-neighbor",
+        hebbianWeight: 0,
+      }));
+      wrote = true;
+    } else if (edge.pruned_at) {
+      // save() touching an endpoint of a pruned edge revives it in place
+      // (Phase 0.4 / I1: reactivation is a consequence of an existing
+      // mutation, never a fifth tool). created_at and hebbian stay put.
+      reactivateEdge(edge, now);
+      wrote = true;
+    }
+    const recA = byId.get(String(edge.a));
+    const recB = byId.get(String(edge.b));
+    const verA = recA && typeof recA.embedding_version === "number" ? recA.embedding_version : 1;
+    const verB = recB && typeof recB.embedding_version === "number" ? recB.embedding_version : 1;
+    if (!semanticValid(edge, verA, verB)) {
+      setSemantic(edge, cos, { a: verA, b: verB });
+      wrote = true;
+    }
+  }
+  if (wrote && typeof edgeStore.save === "function") edgeStore.save();
+  return { bound: top.length, wrote };
 }
 
 // Fallback ranking when the embedder is unreachable at recall time. Deliberately
@@ -118,6 +225,7 @@ function keywordScore(query, text) {
 function createCore({
   store, embed,
   fieldEnabled = () => false,
+  getEdgeStore,
   getLedger,
   warmEnabled = () => false,
   saveSeed = () => false,
@@ -136,8 +244,19 @@ function createCore({
     return _warm;
   }
 
+  // Hebbian sidecar. EdgeStore is the live implementation (Slice C); getLedger
+  // remains a duck-typed fallback. Returning null skips the additive field
+  // (same as the old getLedger() throw → catch), so a test that never injects
+  // a sidecar still gets plain cosine. A present-but-empty/corrupt store still
+  // runs semantic kNN with bonus 0 (I3 fail-open).
+  function hebbianStore() {
+    if (typeof getEdgeStore === "function") return getEdgeStore();
+    if (typeof getLedger === "function") return getLedger();
+    return null;
+  }
+
   function edgesFor(mems) {
-    const L = getLedger ? getLedger() : null;
+    const L = hebbianStore();
     return asEdgeMap((getEdges || defaultGetEdges)(mems, L));
   }
 
@@ -159,7 +278,36 @@ function createCore({
     } catch { /* warmth must never break save */ }
   }
 
-  async function save(content) {
+  // Server-side reactivation (Phase 0.4 / I1). A save/edit that touches an
+  // endpoint revives that id's pruned incident edges in place. Not a tool.
+  // Wrapped so a missing EdgeStore cannot fail the verb (I3).
+  function tryReactivateIncident(id) {
+    try {
+      if (id == null) return;
+      const L = hebbianStore();
+      if (!L || typeof L.reactivateIncident !== "function") return;
+      const n = L.reactivateIncident(id);
+      if (n && typeof L.save === "function") L.save();
+    } catch { /* reactivation must never break save/edit */ }
+  }
+
+  // Save-time semantic bind. Sidecar write (I5 allows it — I5 protects the
+  // JSONL store). Wrapped so a missing/corrupt EdgeStore cannot fail save (I3).
+  // No vector → nothing to compare; bind later when a real vector exists.
+  // requestId: same MCP request retried must not re-bind (0.3). No id
+  // (eval / tests) applies normally.
+  function tryBindSaveTime(rec, mems, requestId) {
+    try {
+      if (!Array.isArray(rec && rec.embedding) || rec.embedding.length === 0) return;
+      const L = hebbianStore();
+      if (!L) return;
+      if (typeof L.acceptRequest === "function" && !L.acceptRequest(requestId)) return;
+      bindSaveTimeNeighbors(rec, mems, L);
+    } catch { /* save-time bind must never break save */ }
+  }
+
+  async function save(content, opts) {
+    const requestId = opts && opts.requestId;
     content = (content || "").trim();
     if (!content) return "Nothing to save: `content` was empty.";
     const now = new Date().toISOString();
@@ -167,9 +315,11 @@ function createCore({
     // Exact restatement of a memory that is still true: confirm it rather than
     // storing a second copy. Near-duplicate detection (cosine-banded) is RM-02;
     // this is only the free, unambiguous case.
-    const same = store.current().find((r) => r.text === content);
+    const mems = store.current();
+    const same = mems.find((r) => r.text === content);
     if (same) {
       store.update(same.id, { last_confirmed: now });
+      tryReactivateIncident(same.id);  // save touching an existing endpoint (0.4)
       tryPrimeSave(same.id);
       return "Already remembered — confirmed it's still current. (" + store.current().length + " memories total.)";
     }
@@ -179,28 +329,36 @@ function createCore({
     const rec = normalize({
       id: store.nextId(), created: now, modified: now, text: content,
       embedding, valid_from: now, valid_to: null, last_confirmed: now,
+      embedding_version: 1,   // first generation, even if this save's embed failed
     });
 
     // RM-03: does this correct a fact we already hold? A save carrying an explicit
     // correction cue ("moved", "now", "no longer"...) retires the single most-similar
     // current memory rather than piling a contradiction beside it. See docs/proposed
     // /0002 and eval/RESULTS.md for why the cue - not cosine - is the precision gate.
-    const superseded = detectSupersession(rec, store.current(), cosine);
+    const superseded = detectSupersession(rec, mems, cosine);
     if (superseded) {
       const p = supersedePatches(superseded, rec, now);
       Object.assign(rec, p.new);            // new memory carries supersedes/revision
       store.add(rec);                       // append the correction as current
       store.update(superseded.id, p.old);   // retire the old row (valid_to/superseded_by)
+      // Bind against still-current neighbors, not the row we just retired
+      // (edge inheritance across supersession is Phase 7, undecided).
+      tryBindSaveTime(rec, mems.filter((m) => String(m.id) !== String(superseded.id)), requestId);
       tryPrimeSave(rec.id);
       return "Saved — updated what I knew, retiring memory " + superseded.id +
              ". (" + store.current().length + " memories total.)";
     }
     store.add(rec);
+    tryBindSaveTime(rec, mems, requestId);
     tryPrimeSave(rec.id);
     return "Saved. (" + store.current().length + " memories total.)";
   }
 
-  async function recall(query, k = 5) {
+  async function recall(query, k = 5, opts) {
+    // recall(query, { requestId }) — k omitted. Eval/tests pass (query) or (query, k).
+    if (k != null && typeof k === "object") { opts = k; k = 5; }
+    const requestId = opts && opts.requestId;
     query = (query || "").trim();
     if (!query) return "Provide a `query` string to recall.";
     // Answer from what is currently true. Superseded memories surface only when the
@@ -248,31 +406,52 @@ function createCore({
     ).join("\n");
     if (fieldEnabled() && mems.length > ranked.length) {
       try {
-        const L = getLedger();
-        const bonus = (a, b) => L.bonus(a, b);
-        const edges = field.buildEdges(mems, { k: 2, minSim: 0.55, bonus, mutual: FIELD_MUTUAL });
-        // General neighborhood: forward one hop from the RETURNED seeds (unchanged).
-        const rel = field.neighborhood(edges, ranked.map((m) => m.id), { hops: 1, max: 4 });
-        // Constraint rescue: apex rules reachable from the WIDER seed pool. Restricted
-        // to typed constraints so the expanded radius can't re-drag non-constraint hubs.
-        const cres = field.reachableConstraints(mems, seedPool, { gate: CONSTRAINT_GATE, k: 2, max: 4, exclude: ranked.map((m) => m.id) });
-        // Merge (constraints first), drop anything already returned or duplicated.
-        const seen = new Set(ranked.map((m) => String(m.id)));
-        const merged = [];
-        for (const e of [...cres, ...rel]) {
-          const key = String(e.id);
-          if (seen.has(key)) continue;
-          seen.add(key);
-          merged.push(e);
-        }
-        if (merged.length) {
+        const L = hebbianStore();
+        if (L) {
           const byId = new Map(mems.map((m) => [String(m.id), m]));
-          out += "\n\nRelated:\n" + merged.map((e) => "- [id " + e.id + "] " + byId.get(String(e.id)).text).join("\n");
+          // Discovery bonus uses the wall-clock-decayed weight (effectiveHebbian),
+          // never the stored one. Type picks the half-life (constraint ~30d /
+          // fact ~7d). Computed on read — no write (I6).
+          const bonus = (a, b) => L.bonus(a, b, {
+            type: hebbianDecayType(byId.get(String(a)), byId.get(String(b))),
+          });
+          const edges = field.buildEdges(mems, { k: 2, minSim: 0.55, bonus, mutual: FIELD_MUTUAL });
+          // General neighborhood: forward one hop from the RETURNED seeds (unchanged).
+          const rel = field.neighborhood(edges, ranked.map((m) => m.id), { hops: 1, max: 4 });
+          // Constraint rescue: apex rules reachable from the WIDER seed pool. Restricted
+          // to typed constraints so the expanded radius can't re-drag non-constraint hubs.
+          const cres = field.reachableConstraints(mems, seedPool, { gate: CONSTRAINT_GATE, k: 2, max: 4, exclude: ranked.map((m) => m.id) });
+          // Merge (constraints first), drop anything already returned or duplicated.
+          const seen = new Set(ranked.map((m) => String(m.id)));
+          const merged = [];
+          for (const e of [...cres, ...rel]) {
+            const key = String(e.id);
+            if (seen.has(key)) continue;
+            seen.add(key);
+            merged.push(e);
+          }
+          if (merged.length) {
+            out += "\n\nRelated:\n" + merged.map((e) => "- [id " + e.id + "] " + byId.get(String(e.id)).text).join("\n");
+          }
+          // Hebbian reinforcement on the returned payload, provenance-discounted.
+          // Writes the SIDECAR (.edges.json), never the JSONL store (I5 / BUG-002).
+          // Decay is NOT ticked here — I6: reading must not drive the decay clock.
+          // reinforceRecall is retained (the differentiator); tick() is gone.
+          // Materialize-on-mutation (0.3) happens inside _bump; typeFn picks
+          // the same half-life class bonus() used on this turn. requestId
+          // makes a retried MCP tools/call apply once; no id → apply (eval).
+          const applied = L.reinforceRecall(
+            ranked.map((m) => m.id),
+            merged.map((e) => e.id),
+            {
+              requestId,
+              typeFn: (a, b) => hebbianDecayType(byId.get(String(a)), byId.get(String(b))),
+            }
+          );
+          // Skip the sidecar rewrite on a duplicate request (no new bytes).
+          // A duck-typed mock that returns undefined still saves (`!== false`).
+          if (applied !== false) L.save();
         }
-        // Hebbian reinforcement on the returned payload, provenance-discounted.
-        L.reinforceRecall(ranked.map((m) => m.id), merged.map((e) => e.id));
-        L.tick();
-        L.save();
       } catch { /* the field is additive; never let it break recall */ }
     }
 
@@ -297,28 +476,44 @@ function createCore({
     return out;
   }
 
-  async function edit(id, content) {
+  // opts.requestId is accepted (server threads it into every verb) but
+  // unused for dedup: the transition table forbids a dedup-record stamp
+  // on edit. Phase 0.4 reactivation is the one edge write edit is allowed
+  // — and only when a pruned incident edge actually exists. No pruned
+  // edges → sidecar bytes unchanged (the 0.3 tests).
+  async function edit(id, content, _opts) {
     if (id === undefined || id === null || id === "") return "Provide the `id` shown in a recall listing.";
     content = (content || "").trim();
     if (!content) return "Provide the new `content`.";
     // A failed re-embed must never reach store.update(): it Object.assigns the
     // patch, so a null here would overwrite a good vector. Keep the old one - a
     // stale vector still ranks, and the next successful edit repairs it.
+    // embedding_version moves in lockstep with the vector. Bumping it on a
+    // failed embed would make text-drifted-from-vector look like a genuine
+    // re-embed, and every incident edge would falsely self-invalidate
+    // (Phase 0 validity-by-comparison; BUG-008 class). Omit both fields.
     let embedding = null;
     try { embedding = (await embed([content]))[0]; } catch { embedding = null; }
     const embedded = Array.isArray(embedding) && embedding.length > 0;
     const now = new Date().toISOString();
     // An edit is a correction in place: the fact is current again as of now.
     const patch = { text: content, modified: now, last_confirmed: now };
-    if (embedded) patch.embedding = embedding;   // omitted entirely on failure
+    if (embedded) {
+      patch.embedding = embedding;   // omitted entirely on failure
+      const current = store.get(id);
+      if (!current) return "No memory with id " + id + ".";
+      const prev = typeof current.embedding_version === "number" ? current.embedding_version : 1;
+      patch.embedding_version = prev + 1;
+    }
     const ok = store.update(id, patch);
     if (!ok) return "No memory with id " + id + ".";
+    tryReactivateIncident(id);
     return embedded
       ? "Edited memory " + id + "."
       : "Edited memory " + id + ", but re-embedding failed - it will match on keywords only until edited again.";
   }
 
-  function remove(id) {
+  function remove(id, _opts) {
     if (id === undefined || id === null || id === "") return "Provide the `id` shown in a recall listing.";
     const ok = store.update(id, { deleted: true, modified: new Date().toISOString() });
     if (ok) {
@@ -330,4 +525,7 @@ function createCore({
   return { save, recall, edit, remove };
 }
 
-module.exports = { createCore, cosine, keywordScore, defaultGetEdges, asEdgeMap };
+module.exports = {
+  createCore, cosine, keywordScore, defaultGetEdges, asEdgeMap,
+  bindSaveTimeNeighbors, SAVE_TIME_K, SAVE_TIME_MIN_COS,
+};

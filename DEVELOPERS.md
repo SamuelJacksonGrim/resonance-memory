@@ -10,12 +10,13 @@ an opaque `id`.
 | File | What it is |
 |---|---|
 | `server.js` | The MCP server. Four verbs: `save_memory`, `recall_memory`, `edit_memory`, `delete_memory`. |
-| `record.js` | The shared record schema (incl. temporal fields), durable atomic writes, and the access sidecar. |
+| `record.js` | The shared record schema (incl. temporal fields and `embedding_version`), durable atomic writes, and the access sidecar. |
 | `store.js` | `JsonlStore` — the storage backend behind the Store seam. Separate module so it's testable without the stdio loop. |
 | `test.js` | Dependency-free test suite: `npm test`. |
 | `package.json` | No dependencies — scripts only (`test`, `build`, `panel`, `mcp`, `seed`, `inspect`). Sole source of the version string; `server.js` reads it so `serverInfo` can't drift. |
 | `field.js` | Associative layer (Phase 2a): kNN semantic graph over stored vectors; neighborhood expansion. |
-| `ledger.js` | Hebbian sidecar (Phase 2b): co-activation reinforcement, bounded `cosine + 0.3·tanh(w)`, decay + prune. |
+| `ledger.js` | Retired Hebbian sidecar (Phase 2b). Off the live path; kept as the epoch-decay reference. |
+| `edges.js` | Unified persistent edge store (Phase 0): two-signal record + one-way `.assoc.json` → `.edges.json` migration. On the live recall path. Save-time semantic neighbors persist on `save()` (K=5, min cosine 0.25); recall still uses `field.js`. Hebbian decay is lazy wall-clock via `effectiveHebbian` (I6). Reinforce materializes the decayed weight before applying α; MCP request-ID dedup LRU lives in the sidecar (Phase 0.3). Soft prune (0.4 / I8) is an explicit `pruneSweep()` (not recall/save); reactivation is in-place on save/edit of an endpoint. |
 | `panel.js` | Local 127.0.0.1 control panel: field toggle, Connect/Disconnect, association graph view, heartbeat auto-shutdown. |
 | `install.js` | Detect + wire into LM Studio / Claude Desktop MCP config (preserves other servers, leaves `.bak`). |
 | `entry.js` | Bundle dispatch: `--mcp` → server, `--install`/`--uninstall` → installer, else → panel. |
@@ -27,10 +28,11 @@ an opaque `id`.
 ## Store & embeddings
 
 - Flat JSONL at `MEMORY_FILE_PATH` (default `~/.lmstudio/resonance-memory.jsonl`), plus two
-  sidecars beside it: `<store>.assoc.json` (Hebbian weights) and `<store>.access.json`
-  (access counts — kept out of the store so recall never rewrites it, see `BUG-002`).
-  Both are regenerable: deleting them loses learned associations and access counts, never
-  a memory.
+  sidecars beside it: `<store>.edges.json` (unified edge table — Hebbian source of truth)
+  and `<store>.access.json` (access counts — kept out of the store so recall never
+  rewrites it, see `BUG-002`). A leftover `<store>.assoc.json` is legacy /
+  read-only-for-migration. Both live sidecars are regenerable: deleting them loses
+  learned associations and access counts, never a memory.
 - Embeddings via an OpenAI-compatible `/v1/embeddings` endpoint (default LM Studio on
   `localhost:1234`, `text-embedding-nomic-embed-text-v1.5`, 768-dim). Keyword-overlap fallback
   if the endpoint is down. The embedder is **not bundled** — the user downloads it via LM Studio;

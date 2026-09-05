@@ -42,7 +42,10 @@ function cosine(a, b) {
  * Build kNN association edges.
  *   records: [{ id, text, embedding }]  (embedding may be null -> node has no edges)
  *   opts.k: neighbors per node (default 3)
- *   opts.minSim: floor to drop weak/generic links (default 0.55)
+ *   opts.minSim: floor to drop weak/generic links (default 0.55). This is the
+ *               RECALL gate for what surfaces in Related:. Save-time persist uses
+ *               a looser 0.25 (SAVE_TIME_MIN_COS in memory-core.js) — two jobs,
+ *               two numbers, do not unify them (phase-0 Risk #2).
  *   opts.bonus: (idA, idB) => number, a bounded Hebbian bonus added to cosine
  *               before gating/ranking (default: none). Lets a learned association
  *               lift a weak-cosine edge over the gate without erasing semantics.

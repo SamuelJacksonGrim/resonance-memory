@@ -11,8 +11,9 @@ echo.
 echo   Your saved memories were NOT deleted. They live here:
 echo     "%USERPROFILE%\.lmstudio\resonance-memory.jsonl"
 echo   Delete that file yourself if you also want to erase your memories.
-echo   (Two small companion files sit beside it - resonance-memory.jsonl.assoc.json
-echo    and .access.json. Delete those too for a clean sweep.)
+echo   (Companion files sit beside it - resonance-memory.jsonl.edges.json
+echo    and .access.json, plus a leftover .assoc.json if an older build wrote one.
+echo    Delete those too for a clean sweep.)
 echo.
 echo   You can now delete this folder to remove the program entirely.
 echo.
