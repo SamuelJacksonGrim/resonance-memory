@@ -37,6 +37,10 @@ Real things, not buzzwords:
   it still finds it.
 - **It connects the dots you didn't.** Turn on the associative field and it starts noticing which
   of your memories belong together — surfacing related things you didn't think to ask for.
+- **They're yours to take anywhere.** Your whole memory lives in a single file you own, and one
+  click exports a copy you can carry — to another machine, into a backup, or over to a completely
+  different tool. Nothing is locked to this app or tied to an account. It's *your* memory; you're
+  never trapped in it.
 
 ## Get started (about 60 seconds)
 
@@ -100,8 +104,16 @@ memory.
   local server is on. Memory still works without it — it just matches literally instead of by
   meaning. **Claude Desktop users:** Claude Desktop has no meaning engine of its own, so keep LM
   Studio running in the background for meaning-based recall.
+- **Does it slow down when I have a lot of memories?** No. Everything sits in a fast local
+  database, so recall stays quick whether you've saved a hundred things or a hundred thousand.
+  (Older versions kept a plain text file; if you have one, the app upgrades it for you the first
+  time it opens — safely, keeping a backup of the original.)
 - **How do I turn the extra smarts off?** The **associative field** has a switch in the app.
   Off by default; flip it whenever. The memory itself works either way.
+- **What's the "LLM extraction" switch?** If you happen to run a capable *chat* model (not just
+  the small meaning engine), the app may offer to let it tidy what you save into cleaner facts.
+  It's **off by default** and completely optional — memory works fully without it, and turning it
+  on never slows down or blocks a save.
 - **How do I remove it?** In the app, click **Disconnect** next to each connected app — that
   unhooks it cleanly (leaving a backup of each config). Then just delete `resonance-memory.exe`.
   That's the whole app; there's nothing else installed. Your memories live in a separate file
