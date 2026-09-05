@@ -1140,7 +1140,7 @@ Mini-SEA smoke: `node:sqlite` runs inside a Node 24.18.0 SEA
 ### S1 follow-up — RM-07 slice 1 product Store (2026-09-05)
 
 Not the spike. `SqliteStore` in `store-sqlite.js`, same JsonlStore surface,
-`memory-core.recall` unchanged. Direct INSERT (migrator is a later slice).
+`memory-core.recall` unchanged. Direct INSERT (the migrator is slice 2a, below).
 Reproduce: `node eval/substrate/scale.js --store sqlite --n 50000,100000 --no-field --latency-only --offline`.
 
 | N | JSONL S1 | spike cached p95 | **product SqliteStore p95** | load | db |
@@ -1151,6 +1151,36 @@ Reproduce: `node eval/substrate/scale.js --store sqlite --n 50000,100000 --no-fi
 Warm (hydrate-once) 544 ms @50k / 1.3 s @100k; then the cached scan. Insert
 830 ms / 1.7 s. Pre-declared 250 ms @50k bar: **held**. The 0005 100k <100 ms
 bar: **held on the JsonlStore surface**, without `searchDense`.
+
+### S1 follow-up — RM-07 slice 2a streaming migrator (2026-09-05)
+
+The product Store can load 50k. Existing users have JSONL (some too big for
+JSONL to even load). Slice 2a is the non-destructive streaming migrator —
+opt-in CLI (`node entry.js --migrate`), not auto-run, JSONL stays default
+so the golden is unmoved.
+
+Reproduce: `node eval/substrate/migrate-proof.js` (S1 generator, 50k × 768-d
+synthetic vectors, access sidecar, a vectorless row, a 2019 `created`, a
+superseded pair, a deleted row). Stream-write the JSONL, stream-migrate,
+stream-compare against `sqlite.all()`. Never `readFileSync` the JSONL.
+
+| | |
+|---|---|
+| N / dim | 50,000 / 768 |
+| JSONL | **785.3 MB** (823,425,829 bytes) |
+| `readFileSync` (the old wall) | **FAILED** — `Cannot create a string longer than 0x1fffffe8 characters` |
+| stream-migrate | **2.456 s** → 50,000 rows |
+| `.db` | **196.3 MB** |
+| lossless | **yes** — 50k/50k field-equal, embeddings within 1e-5 |
+| ids | preserved (not AUTOINCREMENT-renumbered) |
+| `created` | preserved (2019-06-01 survived; the export folder tree keys on it) |
+| access fold | in-row 2 + sidecar 3 = **5** (doubled would be 8) |
+| vectorless | stayed vectorless (no invented blob) |
+
+The stream is what beats the wall. Kill-9 before the `.db` rename is a unit
+test: JSONL stays at its path, no half `.db` at `MEMORY_FILE_PATH`, re-run
+completes (no resume-from-partial). `.bak` is a recovery snapshot, not the
+sovereignty export (slice 2b).
 
 ---
 

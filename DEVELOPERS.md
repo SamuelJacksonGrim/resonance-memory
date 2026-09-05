@@ -13,15 +13,16 @@ an opaque `id`.
 | `record.js` | The shared record schema (incl. temporal fields and `embedding_version`), durable atomic writes, and the access sidecar. |
 | `store.js` | Store seam (`JsonlStore` default; `openStore()` selects `SqliteStore` in `store-sqlite.js`). |
 | `test.js` | Dependency-free test suite: `npm test`. |
-| `package.json` | No dependencies — scripts only (`test`, `build`, `panel`, `mcp`, `seed`, `inspect`, `dedup-existing`). Sole source of the version string; `server.js` reads it so `serverInfo` can't drift. |
+| `package.json` | No dependencies — scripts only (`test`, `build`, `panel`, `mcp`, `seed`, `inspect`, `dedup-existing`, `migrate`). Sole source of the version string; `server.js` reads it so `serverInfo` can't drift. |
 | `field.js` | Associative layer (Phase 2a): kNN semantic graph over stored vectors; neighborhood expansion. |
 | `ledger.js` | Retired Hebbian sidecar (Phase 2b). Off the live path; kept as the epoch-decay reference. |
 | `edges.js` | Unified persistent edge store (Phase 0): two-signal record + one-way `.assoc.json` → `.edges.json` migration. On the live recall path. Save-time semantic neighbors persist on `save()` (K=5, min cosine 0.25); recall still uses `field.js`. Hebbian decay is lazy wall-clock via `effectiveHebbian` (I6). Reinforce materializes the decayed weight before applying α; MCP request-ID dedup LRU lives in the sidecar (Phase 0.3). Soft prune (0.4 / I8) is an explicit `pruneSweep()` (not recall/save); reactivation is in-place on save/edit of an endpoint. |
 | `extract.js` | RM-01.c Tier 2: opt-in LLM extraction (prompt, parser, sanity, chat/sampling, capability detect). Off by default. |
 | `panel.js` | Local 127.0.0.1 control panel: field toggle, LLM-extraction toggle (surfaced when a capable model is detected), Connect/Disconnect, association graph view, heartbeat auto-shutdown. |
 | `install.js` | Detect + wire into LM Studio / Claude Desktop MCP config (preserves other servers, leaves `.bak`). |
-| `entry.js` | Bundle dispatch: `--mcp` → server, `--install`/`--uninstall` → installer, `--dedup-existing` → RM-02.c backfill (dry-run default), else → panel. |
+| `entry.js` | Bundle dispatch: `--mcp` → server, `--install`/`--uninstall` → installer, `--dedup-existing` → RM-02.c backfill (dry-run default), `--migrate` → RM-07 slice 2a JSONL→SQLite, else → panel. |
 | `dedup-existing.js` | RM-02.c CLI. Reports (or `--apply`s) cosine-banded restatements/merges on a store written before 02.b. Calls `dedupExisting()` in `memory-core.js` — same bands as `save()`, no second decision. |
+| `migrate-sqlite.js` | RM-07 slice 2a. Streaming JSONL→SQLite (10-step protocol). Opt-in; not auto-run on startup. `.bak` is a recovery snapshot, not the sovereignty export. |
 | `build-exe.js` | Embed runtime assets → esbuild → Node SEA blob → postject → flip PE subsystem to GUI → stage `dist/`. |
 | `embedded-assets.js` | **Generated** each build (gitignored): `demo-seed.jsonl` + `system-prompt.md` baked in as strings so the shipped exe is one self-contained file. |
 | `inspect_sidecar.js` | Dependency-free telemetry for the Hebbian ledger. |
@@ -34,7 +35,13 @@ an opaque `id`.
   and `<store>.access.json` (access counts — kept out of the store so recall never
   rewrites it, see `BUG-002`). A leftover `<store>.assoc.json` is legacy /
   read-only-for-migration. Both live sidecars are regenerable: deleting them loses
-  learned associations and access counts, never a memory.
+  learned associations and access counts, never a memory. SQLite is selectable
+  (`RESONANCE_STORE=sqlite`); JSONL stays default. `--migrate` (`npm run migrate`)
+  streams an existing JSONL into the sibling `.db` (10-step protocol in
+  [`proposed/0010`](docs/proposed/0010-sqlite-backend.md)): temp `.db.migrating`,
+  line-at-a-time INSERT, count-verify, WAL checkpoint, atomic rename, **then**
+  JSONL → `.jsonl.bak`. The `.bak` is a recovery snapshot, not the sovereignty
+  export. Not auto-run on startup this slice.
 - Embeddings via an OpenAI-compatible `/v1/embeddings` endpoint (default LM Studio on
   `localhost:1234`, `text-embedding-nomic-embed-text-v1.5`, 768-dim). Keyword-overlap fallback
   if the endpoint is down. The embedder is **not bundled** — the user downloads it via LM Studio;
@@ -51,6 +58,12 @@ an opaque `id`.
   rewrite. File-order, each record vs earlier survivors — the same
   `detectNearDuplicate` decision as `save()`. Vectorless rows skip if the
   embedder is down. Second `--apply` is a no-op.
+- **`--migrate`** (RM-07 slice 2a) streams a JSONL store into the sibling
+  `.db`. Opt-in (`npm run migrate`); not auto-run on startup. 10-step
+  protocol: temp `.db.migrating`, line-at-a-time INSERT, preserve ids,
+  fold AccessLog once, count-verify, WAL checkpoint, atomic rename, **then**
+  JSONL → `.jsonl.bak`. The `.bak` is a recovery snapshot, not the
+  sovereignty export. Failure before the `.db` rename leaves the JSONL live.
 
 ## Build
 

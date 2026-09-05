@@ -36,8 +36,9 @@
  *
  * Access counts live IN THE ROW. This class must NEVER construct AccessLog
  * (BUG-007): a leftover .access.json next to a .db with access columns is
- * the doubling bug in a new costume. Migrating a sidecar is a later slice;
- * this store just has the columns and updates them in-table.
+ * the doubling bug in a new costume. Folding a JSONL sidecar happens ONCE,
+ * at ingest, in migrate-sqlite.js (RM-07 slice 2a). This constructor
+ * refuses to touch a sibling sidecar.
  *
  * I5 restated: writes are atomic + durable; a read path must not perform
  * an UNBOUNDED / full-corpus rewrite; retention metadata MAY be updated
@@ -139,8 +140,8 @@ class SqliteStore {
     // BUG-007: access counts live in the row. Do not construct AccessLog,
     // do not read a sibling .access.json, do not fold a leftover sidecar.
     // A live .access.json next to a .db with access columns is the
-    // doubling bug in a new costume. Migration of that sidecar is a
-    // later slice; this constructor just refuses to touch it.
+    // doubling bug in a new costume. Folding that sidecar happens ONCE,
+    // at ingest, in migrate-sqlite.js. This constructor refuses to touch it.
     this.file = file;
     this.access = undefined;
     if (file && file !== ":memory:") {
@@ -292,8 +293,9 @@ class SqliteStore {
 
   /*
    * Extra (not on the JsonlStore surface): batched INSERT in one
-   * transaction. Scale populate / a later migrator use this so 100k
-   * rows are not 100k autocommit writes. Mutations invalidate the cache.
+   * transaction. Scale populate uses this so 100k rows are not 100k
+   * autocommit writes. The JSONL→SQLite migrator prefers ingestAsync()
+   * so it never materializes the whole file as a string (S1 834 MB wall).
    */
   addMany(recs) {
     if (!recs || !recs.length) return 0;
@@ -302,6 +304,42 @@ class SqliteStore {
     });
     this._invalidate();
     return recs.length;
+  }
+
+  /*
+   * Stream-ingest an async iterable of records in ONE transaction.
+   * Used by migrate-sqlite.js: readline yields a record, we INSERT,
+   * never readFileSync the JSONL. Caller owns fold/normalize.
+   */
+  async ingestAsync(asyncIterable) {
+    let n = 0;
+    this.db.exec("BEGIN");
+    try {
+      for await (const rec of asyncIterable) {
+        this._insert.run(...this._bind(rec));
+        n++;
+      }
+      this.db.exec("COMMIT");
+    } catch (e) {
+      try { this.db.exec("ROLLBACK"); } catch { /* already aborted */ }
+      throw e;
+    }
+    this._invalidate();
+    return n;
+  }
+
+  rowCount() {
+    return Number(this._count.get().n) || 0;
+  }
+
+  embeddingRowCount() {
+    return Number(this.db.prepare(
+      "SELECT COUNT(*) AS n FROM memories WHERE embedding IS NOT NULL"
+    ).get().n) || 0;
+  }
+
+  checkpoint() {
+    try { this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch { /* :memory: */ }
   }
 
   update(id, patch) {

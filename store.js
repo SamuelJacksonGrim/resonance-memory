@@ -27,6 +27,13 @@
  * RM-07 slice 1: SqliteStore is SELECTABLE (RESONANCE_STORE=sqlite or live-config
  * `store: "sqlite"`). Default stays JsonlStore until conformance + golden parity
  * land the default switch. openStore() is the one construction path.
+ *
+ * RM-07 slice 2a: JSONL→SQLite is a separate streaming migrator
+ * (`migrate-sqlite.js`, `node entry.js --migrate`). openStore() does NOT
+ * auto-run it (first-open hook is the default-switch slice 4). If sqlite
+ * is selected, a sibling JSONL exists, and the .db is missing, we warn —
+ * constructing SqliteStore would create an empty .db and the next
+ * --migrate would ignore the JSONL (protocol step 1).
  */
 
 const fs = require("fs");
@@ -164,7 +171,18 @@ function openStore(file, opts) {
   const backend = (opts && opts.backend) || resolveStoreBackend(opts && opts.config);
   if (backend === "sqlite") {
     const { SqliteStore } = require("./store-sqlite.js");
-    return new SqliteStore(sqlitePathFor(file));
+    const dbPath = sqlitePathFor(file);
+    // Not an auto-migrate. Protocol step 1: a live .db makes leftover JSONL
+    // invisible. Creating an empty .db beside an existing JSONL is how a
+    // user loses the store without --migrate. Warn so the footgun is loud.
+    if (file && !fs.existsSync(dbPath) && fs.existsSync(file)) {
+      console.warn(
+        "RESONANCE: JSONL store exists at " + file + " but the SQLite backend " +
+        "is selected and " + dbPath + " is missing. The JSONL will NOT be read. " +
+        "Run: node entry.js --migrate"
+      );
+    }
+    return new SqliteStore(dbPath);
   }
   return new JsonlStore(file);
 }

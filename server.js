@@ -203,6 +203,9 @@ async function embed(texts) {
 let _bootConfig = {};
 try { _bootConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8")); } catch { /* no config yet */ }
 const STORE_BACKEND = resolveStoreBackend(_bootConfig);
+// RM-07 slice 2a: JSONL→SQLite is `node entry.js --migrate`. Do NOT
+// auto-run on startup this slice (first-open hook is the default-switch
+// slice 4). JSONL stays the default backend; golden stays on JSONL.
 const store = openStore(STORE_PATH, { backend: STORE_BACKEND });
 
 // The four verbs live in the shared engine (memory-core.js); server.js only wires

@@ -34,7 +34,9 @@
  *   node eval/substrate/scale.js --quality-only
  *   node eval/substrate/scale.js --latency-only
  *   node eval/substrate/scale.js --store sqlite --n 50000,100000 --no-field
- *        # RM-07 product Store; direct INSERT (migrator is a later slice)
+ *        # RM-07 product Store; direct INSERT
+ *   node eval/substrate/migrate-proof.js
+ *        # RM-07 slice 2a: 50k JSONL → SQLite lossless migrate
  */
 
 "use strict";

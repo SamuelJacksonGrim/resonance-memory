@@ -1,6 +1,6 @@
 # 0010 — SQLite backend behind the Store seam (RM-07)
 
-**Status:** slice 1 shipped (drop-in `SqliteStore`, selectable, JSONL still default) · **Backlog:** `RM-07` · **Depends on:** `RM-00`, [`0005`](0005-store-abstraction.md)
+**Status:** slice 1 shipped (drop-in `SqliteStore`) · slice 2a shipped (streaming JSONL→SQLite migrator, opt-in CLI) · JSONL still default · **Backlog:** `RM-07` · **Depends on:** `RM-00`, [`0005`](0005-store-abstraction.md)
 **Spike:** [`spike/rm-07-sqlite/`](../../spike/rm-07-sqlite/) — de-risked the driver and the vector path.
 **Product:** `store-sqlite.js` `SqliteStore`, same JsonlStore method surface, `memory-core.js` verbs unchanged.
 
@@ -192,9 +192,17 @@ SQLite is the working copy. JSONL is the interchange format RM already uses.
 
 | Direction | How | Guarantee |
 |---|---|---|
-| JSONL → SQLite | stream line-at-a-time (`readline` + batched INSERT in one transaction). `.bak` of the JSONL first. Count-verify. | The 834 MB file that cannot `readFileSync` still migrates. |
-| SQLite → JSONL | `SELECT *`, reconstruct `normalize()`-shape records, `writeFileDurable`. Embeddings as JSON arrays (the format a competitor's importer can read without RM). | Every column round-trips (spike: 25/25 lossless). |
+| JSONL → SQLite | Stream line-at-a-time (`readline` + batched INSERT in one transaction) into a temp `.db.migrating`. Count-verify. WAL checkpoint. Atomic rename to `.db`. **Then** rename JSONL → `.jsonl.bak`. See [the 10-step protocol](#the-10-step-commit-protocol). | The 834 MB file that cannot `readFileSync` still migrates. 50k/768-d proof: **lossless in 2.5 s**. |
+| SQLite → JSONL | `SELECT *`, reconstruct `normalize()`-shape records, `writeFileDurable`. Embeddings as JSON arrays (the format a competitor's importer can read without RM). **Slice 2b** (`--export-jsonl` / zip bundle). | Every column round-trips (spike: 25/25 lossless). |
 | RM → RM, same/other device | copy the `.db` **after** `PRAGMA wal_checkpoint(TRUNCATE)` so `-wal`/`-shm` do not have to travel. SQLite files are cross-platform. | Convenience, not the sovereignty path. |
+
+**`.bak` is a recovery snapshot, not the sovereignty export.** The retained JSONL is a
+*pre-migration* copy: it goes stale on the next save to the `.db`. A downgraded exe
+must not serve it, which is why it is renamed *off* `MEMORY_FILE_PATH`. The live
+sovereignty artifact is slice 2b's `--export-jsonl` / zip bundle of the `.db` as it
+stands now. Two artifacts, two jobs. Do not `copyFile` to `.bak` *and* keep the
+original — that is two full copies of an 834 MB file; one retained original (the
+rename) is enough.
 
 Export is a **maintenance CLI** (like `--dedup-existing`), not a fifth MCP verb.
 The four-verb surface does not grow. Panel can later grow a "Export JSONL…"
@@ -280,11 +288,81 @@ Landed. Selectable, not the default.
   Store. `searchDense` is a later shave (packed cosine was 48 ms at 100k
   in the spike); the product cache already cleared 100 ms.
 - Adding npm dependencies.
-- Auto-migrating user stores on upgrade. Migration is explicit (CLI / first-run
-  prompt), reversible, `.bak` always. **Next slice: migrator + export.**
-- Export/zip/folder tree (rounds 2–3). Not this slice's docs.
+- Auto-migrating user stores on upgrade / first open. Slice 2a is the
+  **opt-in CLI** (`--migrate`). The first-open hook is the default-switch
+  slice 4 — do not wire it yet (keeps the RM-00 golden on JSONL).
+- Export/zip/folder tree (slice 2b). The `.bak` from `--migrate` is a
+  recovery snapshot, not that export.
 - Edges-in-db. Named fast-follow; EdgeStore API stays, persistence adapter
   later.
+
+## Slice 2a (shipped) — streaming JSONL→SQLite migrator
+
+Landed. Opt-in CLI, not the default, not auto-run on server startup.
+
+Product: `migrate-sqlite.js`, `node entry.js --migrate` / `npm run migrate`.
+`memory-core.js` unchanged. JSONL stays the default backend so `node eval/run.js`
+stays green trivially.
+
+### The 10-step commit protocol
+
+Settled across the design rounds. This is the data-safety spine — implement
+exactly, do not "improve" the order:
+
+1. If `<store>.db` exists and opens → it is live; a leftover `<store>.jsonl`
+   is **IGNORED** (log it). Never dual-read.
+2. If only `<store>.jsonl` exists → create `<store>.db.migrating` (temp).
+   **STREAM** the JSONL line-at-a-time (`readline` over a read stream —
+   **NEVER** `readFileSync`; that IS the S1 834 MB wall). Batched INSERT
+   inside one transaction.
+3. **Preserve ids** exactly — the opaque id, `superseded_by`, all provenance.
+   NO AUTOINCREMENT renumber (edges + the ids the model already saw depend
+   on it).
+4. Fold the `<store>.access.json` (AccessLog) counts into the row columns
+   **ONCE, at ingest** (BUG-007). `SqliteStore` never constructs AccessLog.
+5. Count-verify: migrated row count === source line count (minus blanks);
+   embeddings-present-iff-source-had-them (don't silently drop or invent
+   vectors). A mismatch = abort, keep the JSONL, delete the temp.
+6. WAL checkpoint (`wal_checkpoint(TRUNCATE)`) on the temp db so it's a
+   clean single file at rest.
+7. Atomic rename `<store>.db.migrating` → `<store>.db`.
+8. **THEN** rename `<store>.jsonl` → `<store>.jsonl.bak` and
+   `<store>.access.json` → `.bak`. Recovery snapshots — NOT the sovereignty
+   export. Rename OFF `MEMORY_FILE_PATH` so a downgraded exe can't serve
+   the stale JSONL.
+9. Failure BEFORE step 7 → JSONL is still live at its path, delete the
+   temp `.db`, retry next run. **NO resume-from-partial.**
+10. Log: `migrated N memories; original kept at <path>.bak`.
+
+Do **not**: `copyFile` to `.bak` AND rename to `.migrated` (two full copies
+of an 834 MB file); dual-write JSONL after migration; add a "switch back
+to JSONL" env (footgun). `JsonlStore` stays for tests / conformance / export.
+
+An empty `.db` sitting beside a still-live JSONL is the `openStore()`-created
+footgun, not a completed migrate (a completed migrate would have renamed
+JSONL off the path). `--migrate` refuses that state rather than ignore the
+JSONL. `openStore({backend: sqlite})` warns when a sibling JSONL exists and
+the `.db` is missing — it still does not auto-migrate this slice.
+
+Kill-9 before step 7: JSONL stays at its path, no half `.db` sits at
+`MEMORY_FILE_PATH`, leftover `.db.migrating` is dropped on the next run
+(no resume-from-partial), re-run completes.
+
+### 50k lossless proof (2026-09-05)
+
+S1 generator, 50k records, 768-d synthetic vectors, access sidecar fold,
+a vectorless row, a 2019 `created`, a superseded pair, a deleted row.
+`node eval/substrate/migrate-proof.js`.
+
+| | |
+|---|---|
+| JSONL size | **785.3 MB** (823,425,829 bytes) |
+| `readFileSync` | **FAILED** — `Cannot create a string longer than 0x1fffffe8 characters` (the S1 wall) |
+| stream-migrate | **2.456 s** → 50,000 rows, 196.3 MB `.db` |
+| lossless | **yes** — 50k/50k field-equal, embeddings within 1e-5, ids preserved, `created` preserved, access 2+3=5 (not doubled to 8), vectorless stayed vectorless |
+
+The stream is the thing that beats the wall. Holding 50k parsed objects is
+fine on this box; materializing the JSONL as one UTF-8 string is not.
 
 ---
 
@@ -331,8 +409,9 @@ These are product calls. The spike is evidence, not a substitute.
 1. `SqliteStore` in `store.js` (or `store-sqlite.js`) with the JsonlStore
    surface, WAL, BLOB embeddings, in-process cache. Flag / env to select
    backend. `memory-core.js` unchanged.
-2. Streaming migrator JSONL→SQLite + export SQLite→JSONL. CLI
-   `--export-jsonl` / `--migrate-sqlite`. `.bak` + count check.
+2. Streaming migrator JSONL→SQLite (**slice 2a, shipped** — `--migrate`) +
+   export SQLite→JSONL (**slice 2b** — `--export-jsonl` / zip bundle). `.bak`
+   is the recovery snapshot from 2a, not the export.
 3. Conformance suite both backends (0005 step 4). Encode BUG-001/002.
 4. `normalize()` typed-array trap test.
 5. RM-00 golden on SqliteStore — must match JSONL scorecard.

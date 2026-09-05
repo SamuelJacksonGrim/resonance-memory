@@ -2826,6 +2826,318 @@ test("emitWarmTrace is callable and does not throw (hot path is `if (warmTrace()
 // createCore already required above (warm-field section)
 
 async function asyncTests() {
+  // ------------------------------------------------- RM-07 slice 2a migrator
+  section("JSONL→SQLite migrator (RM-07 slice 2a, 10-step protocol)");
+
+  if (!sqliteAvailable()) {
+    await atest("JSONL→SQLite migrator SKIPPED (node:sqlite not in this Node)", async () => {
+      assert.ok(true);
+    });
+  } else {
+    const { migrateJsonlToSqlite } = require("./migrate-sqlite.js");
+
+    function writeJsonlFixture(file, recs, extra) {
+      extra = extra || {};
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      const lines = recs.map((r) => JSON.stringify(r));
+      if (extra.blankLines) lines.push("", "   ");
+      fs.writeFileSync(file, lines.join("\n") + "\n");
+      if (extra.access) {
+        fs.writeFileSync(file + ".access.json", JSON.stringify({ counts: extra.access }));
+      }
+      return file;
+    }
+
+    function migrateFixture(name) {
+      const dir = tmp("mig-" + name + "-" + Math.random().toString(36).slice(2));
+      fs.mkdirSync(dir, { recursive: true });
+      return path.join(dir, "mem.jsonl");
+    }
+
+    const FIXTURE_RECS = [
+      {
+        id: 1700000000001,
+        text: "I work at Acme",
+        created: "2020-06-15T12:34:56.000Z",
+        modified: "2020-06-15T12:34:56.000Z",
+        embedding: [1, 0, 0.25],
+        access_count: 2,
+        source: "user_stated",
+        embedding_version: 1,
+      },
+      {
+        id: 1700000000002,
+        text: "I used to work at Globex",
+        created: "2019-01-01T00:00:00.000Z",
+        modified: "2019-01-01T00:00:00.000Z",
+        embedding: [0, 1, 0],
+        valid_from: "2019-01-01T00:00:00.000Z",
+        valid_to: "2020-06-15T12:34:56.000Z",
+        superseded_by: 1700000000001,
+        last_access: "2020-01-01T00:00:00.000Z",
+      },
+      {
+        id: 7,
+        text: "no vector here",
+        created: "2021-03-03T03:03:03.000Z",
+        modified: "2021-03-03T03:03:03.000Z",
+      },
+      {
+        id: 8,
+        text: "soft deleted",
+        created: "2021-04-04T04:04:04.000Z",
+        modified: "2021-04-04T04:04:04.000Z",
+        deleted: true,
+        embedding: [0, 0, 1],
+      },
+    ];
+    const FIXTURE_ACCESS = {
+      "1700000000001": { n: 3, last: "2026-09-01T00:00:00.000Z" },
+      "7": { n: 1, last: "2026-09-02T00:00:00.000Z" },
+    };
+
+    await atest("10-step happy path: lossless, ids, access-fold-once, created, JSONL→.bak", async () => {
+      const jsonl = migrateFixture("happy");
+      writeJsonlFixture(jsonl, FIXTURE_RECS, { blankLines: true, access: FIXTURE_ACCESS });
+      const logs = [];
+      const result = await migrateJsonlToSqlite(jsonl, { log: (m) => logs.push(m) });
+      assert.strictEqual(result.status, "migrated");
+      assert.strictEqual(result.count, 4, "blank lines are not rows");
+      const dbPath = sqlitePathFor(jsonl);
+      assert.ok(fs.existsSync(dbPath), ".db at the live path");
+      assert.ok(!fs.existsSync(jsonl), "JSONL renamed off MEMORY_FILE_PATH");
+      assert.ok(fs.existsSync(jsonl + ".bak"), "recovery snapshot at .bak");
+      assert.ok(!fs.existsSync(jsonl + ".access.json"), "live access sidecar is gone");
+      assert.ok(fs.existsSync(jsonl + ".access.json.bak"), "access sidecar bak'd");
+      assert.ok(!fs.existsSync(dbPath + ".migrating"), "temp gone after rename");
+      assert.ok(logs.some((m) => /migrated 4 memories; original kept at /.test(m)));
+
+      const s = new SqliteStore(dbPath);
+      const all = s.all();
+      assert.strictEqual(all.length, 4);
+      const byId = new Map(all.map((r) => [String(r.id), r]));
+
+      const a = byId.get("1700000000001");
+      assert.strictEqual(Number(a.id), 1700000000001, "opaque id preserved (not AUTOINCREMENT 1)");
+      assert.strictEqual(a.created, "2020-06-15T12:34:56.000Z", "created preserved (not now())");
+      assert.strictEqual(a.text, "I work at Acme");
+      assert.strictEqual(a.access_count, 5, "in-row 2 + sidecar 3, folded ONCE");
+      assert.strictEqual(a.last_access, "2026-09-01T00:00:00.000Z");
+      assert.strictEqual(a.importance, 5, "AccessLog.apply sets importance = folded count");
+      assert.ok(embClose(a.embedding, [1, 0, 0.25]));
+
+      const b = byId.get("1700000000002");
+      assert.strictEqual(String(b.superseded_by), "1700000000001", "superseded_by preserved");
+      assert.strictEqual(b.created, "2019-01-01T00:00:00.000Z");
+      assert.strictEqual(b.valid_to, "2020-06-15T12:34:56.000Z");
+      assert.strictEqual(b.access_count, 0, "no sidecar entry, in-row stays 0");
+
+      const c = byId.get("7");
+      assert.strictEqual(Number(c.id), 7, "small explicit id is not reassigned");
+      assert.strictEqual(c.created, "2021-03-03T03:03:03.000Z");
+      assert.strictEqual(c.embedding, null, "vectorless stays vectorless — do not invent");
+      assert.strictEqual(c.access_count, 1, "sidecar-only count folded");
+
+      const d = byId.get("8");
+      assert.strictEqual(d.deleted, true);
+      assert.ok(embClose(d.embedding, [0, 0, 1]));
+
+      assert.strictEqual(s.current().length, 2, "superseded + deleted excluded from current()");
+      // BUG-007: leftover bak sidecar must not fold again on read.
+      assert.strictEqual(s.get(1700000000001).access_count, 5, "SqliteStore does not re-fold .bak sidecar");
+      s.close();
+    });
+
+    await atest("vectorless row migrates vectorless (do not invent a blob)", async () => {
+      const jsonl = migrateFixture("vectorless");
+      writeJsonlFixture(jsonl, [{
+        id: 42, text: "bare fact", created: "2018-08-08T08:08:08.000Z",
+      }]);
+      await migrateJsonlToSqlite(jsonl, { log() {} });
+      const s = new SqliteStore(sqlitePathFor(jsonl));
+      const r = s.get(42);
+      assert.strictEqual(r.embedding, null);
+      assert.strictEqual(r.created, "2018-08-08T08:08:08.000Z");
+      assert.strictEqual(s.embeddingRowCount(), 0);
+      s.close();
+    });
+
+    await atest("count-mismatch aborts non-destructively (JSONL live, no half .db)", async () => {
+      const jsonl = migrateFixture("mismatch");
+      writeJsonlFixture(jsonl, [
+        { id: 1, text: "a", created: "2020-01-01T00:00:00.000Z", embedding: [1, 0] },
+        { id: 2, text: "b", created: "2020-01-01T00:00:00.000Z", embedding: [0, 1] },
+      ]);
+      const before = fs.readFileSync(jsonl, "utf8");
+      let threw = null;
+      try {
+        await migrateJsonlToSqlite(jsonl, {
+          log() {},
+          onAfterIngest(store) {
+            store.db.exec("DELETE FROM memories WHERE id = 1");
+          },
+        });
+      } catch (e) { threw = e; }
+      assert.ok(threw, "must abort");
+      assert.strictEqual(threw.code, "MIGRATE_COUNT_MISMATCH");
+      assert.strictEqual(fs.readFileSync(jsonl, "utf8"), before, "JSONL still live, bytes unchanged");
+      const dbPath = sqlitePathFor(jsonl);
+      assert.ok(!fs.existsSync(dbPath), "no half .db at the live path");
+      assert.ok(!fs.existsSync(dbPath + ".migrating"), "temp deleted on abort");
+    });
+
+    await atest("in-process crash-before-rename leaves JSONL live + no half db", async () => {
+      const jsonl = migrateFixture("crash-throw");
+      writeJsonlFixture(jsonl, [
+        { id: 9, text: "keep me", created: "2017-07-07T07:07:07.000Z", embedding: [1, 1] },
+      ]);
+      const before = fs.readFileSync(jsonl, "utf8");
+      let threw = null;
+      try {
+        await migrateJsonlToSqlite(jsonl, {
+          log() {},
+          async onBeforeRename() { throw new Error("simulated crash before step 7"); },
+        });
+      } catch (e) { threw = e; }
+      assert.ok(threw);
+      assert.ok(/simulated crash/.test(threw.message));
+      assert.strictEqual(fs.readFileSync(jsonl, "utf8"), before);
+      const dbPath = sqlitePathFor(jsonl);
+      assert.ok(!fs.existsSync(dbPath), "no .db at MEMORY_FILE_PATH");
+      assert.ok(!fs.existsSync(dbPath + ".migrating"), "temp cleaned on in-process throw");
+    });
+
+    await atest("kill-9 before step 7: JSONL live, no half .db, re-run completes", async () => {
+      const { spawn } = require("child_process");
+      const jsonl = migrateFixture("kill9");
+      writeJsonlFixture(jsonl, FIXTURE_RECS, { access: FIXTURE_ACCESS });
+      const before = fs.readFileSync(jsonl, "utf8");
+      const ready = jsonl + ".ready";
+      const child = spawn(process.execPath, [path.join(__dirname, "migrate-sqlite.js"), jsonl], {
+        env: Object.assign({}, process.env, {
+          RM_MIGRATE_CRASH_BEFORE_RENAME: "1",
+          RM_MIGRATE_CRASH_READY: ready,
+        }),
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const t0 = Date.now();
+      while (!fs.existsSync(ready)) {
+        if (Date.now() - t0 > 15000) {
+          try { child.kill("SIGKILL"); } catch { /* */ }
+          throw new Error("kill-9 child never wrote ready file: " + (child.stderr && child.stderr.read()));
+        }
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      child.kill("SIGKILL");
+      await new Promise((resolve) => {
+        if (child.exitCode != null || child.signalCode) return resolve();
+        child.on("exit", resolve);
+        setTimeout(resolve, 5000);
+      });
+      assert.ok(fs.existsSync(jsonl), "JSONL still at its path after kill-9");
+      assert.strictEqual(fs.readFileSync(jsonl, "utf8"), before, "JSONL bytes unchanged");
+      const dbPath = sqlitePathFor(jsonl);
+      assert.ok(!fs.existsSync(dbPath), "no half .db sits at MEMORY_FILE_PATH");
+      // Leftover .db.migrating is allowed (finally did not run). Re-run must
+      // drop it (no resume-from-partial) and complete.
+      const result = await migrateJsonlToSqlite(jsonl, { log() {} });
+      assert.strictEqual(result.status, "migrated");
+      assert.strictEqual(result.count, 4);
+      assert.ok(fs.existsSync(dbPath));
+      assert.ok(!fs.existsSync(jsonl), "JSONL now at .bak");
+      assert.ok(fs.existsSync(jsonl + ".bak"));
+      assert.ok(!fs.existsSync(dbPath + ".migrating"));
+      const s = new SqliteStore(dbPath);
+      assert.strictEqual(s.get(1700000000001).access_count, 5);
+      assert.strictEqual(s.get(7).embedding, null);
+      assert.strictEqual(s.get(1700000000001).created, "2020-06-15T12:34:56.000Z");
+      s.close();
+    });
+
+    await atest("second run on an already-migrated store is a no-op (ignore leftover JSONL)", async () => {
+      const jsonl = migrateFixture("noop");
+      writeJsonlFixture(jsonl, [
+        { id: 1, text: "original", created: "2020-01-01T00:00:00.000Z", embedding: [1, 0] },
+      ]);
+      const first = await migrateJsonlToSqlite(jsonl, { log() {} });
+      assert.strictEqual(first.status, "migrated");
+      const dbPath = sqlitePathFor(jsonl);
+      const s1 = new SqliteStore(dbPath);
+      assert.strictEqual(s1.get(1).text, "original");
+      s1.close();
+      // A leftover JSONL at the original path must NOT be dual-read or re-ingested.
+      writeJsonlFixture(jsonl, [
+        { id: 99, text: "stale leftover — must be ignored", created: "2026-01-01T00:00:00.000Z" },
+      ]);
+      const logs = [];
+      const second = await migrateJsonlToSqlite(jsonl, { log: (m) => logs.push(m) });
+      assert.strictEqual(second.status, "already_migrated");
+      assert.strictEqual(second.ignoredJsonl, true);
+      assert.ok(logs.some((m) => /leftover JSONL ignored/.test(m)));
+      assert.ok(fs.existsSync(jsonl), "leftover JSONL is ignored, not consumed");
+      const s2 = new SqliteStore(dbPath);
+      assert.strictEqual(s2.all().length, 1, "db not re-ingested");
+      assert.strictEqual(s2.get(1).text, "original");
+      assert.strictEqual(s2.get(99), null, "leftover JSONL rows did not land");
+      s2.close();
+    });
+
+    await atest("empty .db beside a live JSONL is refused (openStore footgun), JSONL kept", async () => {
+      const jsonl = migrateFixture("empty-db");
+      writeJsonlFixture(jsonl, [
+        { id: 3, text: "do not lose me", created: "2016-06-06T06:06:06.000Z" },
+      ]);
+      const dbPath = sqlitePathFor(jsonl);
+      const empty = new SqliteStore(dbPath);
+      assert.strictEqual(empty.rowCount(), 0);
+      empty.close();
+      const before = fs.readFileSync(jsonl, "utf8");
+      let threw = null;
+      try { await migrateJsonlToSqlite(jsonl, { log() {} }); }
+      catch (e) { threw = e; }
+      assert.ok(threw);
+      assert.strictEqual(threw.code, "MIGRATE_EMPTY_DB");
+      assert.strictEqual(fs.readFileSync(jsonl, "utf8"), before, "JSONL still live");
+    });
+
+    await atest("CLI --migrate (entry.js) runs the protocol; not a fifth verb", async () => {
+      const { spawnSync } = require("child_process");
+      const jsonl = migrateFixture("cli");
+      writeJsonlFixture(jsonl, [
+        { id: 11, text: "cli fact", created: "2022-02-02T02:02:02.000Z", embedding: [0.5, 0.5] },
+      ]);
+      const entry = path.join(__dirname, "entry.js");
+      const env = Object.assign({}, process.env);
+      delete env.RM_MIGRATE_CRASH_BEFORE_RENAME;
+      delete env.RM_MIGRATE_CRASH_READY;
+      const ran = spawnSync(process.execPath, [entry, "--migrate", "--json", jsonl], {
+        encoding: "utf8", timeout: 20000, env,
+      });
+      assert.strictEqual(ran.status, 0, "cli exit: " + (ran.stderr || ran.stdout));
+      const out = JSON.parse(ran.stdout);
+      assert.strictEqual(out.status, "migrated");
+      assert.strictEqual(out.count, 1);
+      assert.ok(fs.existsSync(sqlitePathFor(jsonl)));
+      assert.ok(fs.existsSync(jsonl + ".bak"));
+      assert.ok(!fs.existsSync(jsonl));
+    });
+
+    await atest("unparseable non-blank line aborts; JSONL live", async () => {
+      const jsonl = migrateFixture("badline");
+      fs.mkdirSync(path.dirname(jsonl), { recursive: true });
+      fs.writeFileSync(jsonl, JSON.stringify({
+        id: 1, text: "ok", created: "2020-01-01T00:00:00.000Z",
+      }) + "\nthis is not json\n");
+      let threw = null;
+      try { await migrateJsonlToSqlite(jsonl, { log() {} }); }
+      catch (e) { threw = e; }
+      assert.ok(threw);
+      assert.strictEqual(threw.code, "MIGRATE_PARSE");
+      assert.ok(fs.existsSync(jsonl), "JSONL still live");
+      assert.ok(!fs.existsSync(sqlitePathFor(jsonl)));
+    });
+  }
+
   section("eval measure runner (RM-02.a)");
 
   await atest("duplicates corpus: both metrics compute via pipeline.js (cached embed)", async () => {

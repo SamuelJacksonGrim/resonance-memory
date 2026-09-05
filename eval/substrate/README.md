@@ -19,7 +19,9 @@ node eval/substrate/scale.js --no-field      # skip field-on latency (W-03)
 node eval/substrate/scale.js --embed-only    # fill eval/substrate/.cache/
 node eval/substrate/scale.js --offline       # cache must already exist
 node eval/substrate/scale.js --store sqlite --n 50000,100000 --no-field --latency-only
-     # RM-07 product Store; direct INSERT (migrator is a later slice)
+     # RM-07 product Store; direct INSERT (the migrator is --migrate / migrate-proof.js)
+node eval/substrate/migrate-proof.js
+     # RM-07 slice 2a: 50k JSONL → SQLite lossless proof (stream vs readFileSync wall)
 ```
 
 First run live-embeds against LM Studio (`:1234`, `text-embedding-nomic-embed-text-v1.5`),

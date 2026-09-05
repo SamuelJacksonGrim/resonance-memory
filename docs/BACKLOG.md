@@ -336,8 +336,16 @@ deletions, ever.
       "Store conformance" + I5-SQLite BUG-002, id-preservation, created-preservation,
       normalize() typed-array trap. (`touch` / `searchDense` not on this slice's
       surface.)
-- [ ] Transparent one-way migration on first run, with a `.bak`. *(next slice:
-      migrator + export.)*
+- [x] Streaming JSONL→SQLite migrator (`migrate-sqlite.js`, `--migrate` /
+      `npm run migrate`). 10-step protocol: stream (never `readFileSync`),
+      preserve ids, fold AccessLog once at ingest (BUG-007), count-verify,
+      WAL checkpoint, atomic `.db` rename, **then** JSONL → `.jsonl.bak`.
+      `.bak` is a recovery snapshot, not the sovereignty export. Kill-9
+      before the rename leaves the JSONL live; re-run completes. 50k/768-d
+      proof: lossless in 2.5 s against a 785 MB JSONL that `readFileSync`
+      cannot load. **Not auto-run on startup** (first-open is slice 4).
+- [ ] JSONL export / zip bundle (slice 2b) — the live sovereignty artifact.
+- [ ] Transparent one-way migration on first open (slice 4 default switch).
 - [ ] JSONL stays the default until SQLite passes conformance + eval parity.
       Conformance is green; golden parity on the sqlite backend is a later slice
       (eval still runs on JSONL because it is the default).

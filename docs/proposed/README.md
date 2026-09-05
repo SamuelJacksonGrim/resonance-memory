@@ -14,7 +14,7 @@ before anyone writes the implementation.
 | [0006](0006-constraints-decay-pruning.md) | Soft constraints, *importance* decay, pruning | `RM-08` | proposed — **scope likely much smaller than written**; measure first. *Substrate-level (learned-edge) decay moved to [`phase-0`](../phases/phase-0-edge-substrate.md).* |
 | [0007](0007-eval-harness.md) | The evaluation harness | `RM-00` | proposed |
 | [0009](0009-edge-threat-model.md) | Edge-substrate threat-model sketch | `RM-16` (feeds; does not build) | **sketch** — Phase 0.6. Implementation stays gated to Phase 2 / the 2.2 promotion gate |
-| [0010](0010-sqlite-backend.md) | SQLite backend behind the Store seam | `RM-07` | **slice 1 shipped** (selectable `SqliteStore`; JSONL still default). `node:sqlite` + BLOB + JS cosine; no sqlite-vec |
+| [0010](0010-sqlite-backend.md) | SQLite backend behind the Store seam | `RM-07` | **slice 1 shipped** (selectable `SqliteStore`) · **slice 2a shipped** (streaming JSONL→SQLite migrator, opt-in `--migrate`). JSONL still default. `node:sqlite` + BLOB + JS cosine; no sqlite-vec |
 
 > **Phase specs live in [`../phases/`](../phases/), not here.** These `proposed/` docs are RFC-style
 > *rationale* — reference material a phase links to. The edge-substrate design that was drafted here

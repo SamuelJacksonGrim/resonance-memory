@@ -9,6 +9,16 @@ stable; sophistication grows in the substrate, not in the API.
 ## [Unreleased]
 
 ### Added
+- **RM-07 slice 2a — streaming JSONL→SQLite migrator.** Opt-in CLI
+  (`node entry.js --migrate` / `npm run migrate`). 10-step protocol: stream
+  line-at-a-time into `.db.migrating` (never `readFileSync` — that is the S1
+  834 MB wall), preserve ids, fold AccessLog once at ingest (BUG-007),
+  count-verify, WAL checkpoint, atomic rename to `.db`, **then** JSONL →
+  `.jsonl.bak`. The `.bak` is a recovery snapshot, not the sovereignty export
+  (that's slice 2b). Failure before the `.db` rename leaves the JSONL live;
+  kill-9 is a test. Not auto-run on server startup. 50k/768-d proof:
+  **lossless in 2.5 s** against a 785 MB JSONL that `readFileSync` cannot
+  load. JSONL stays the default backend; golden unmoved.
 - **RM-07 slice 1 — `SqliteStore` drop-in.** Selectable backend (`RESONANCE_STORE=sqlite`
   / live-config `store`); JSONL stays default. `node:sqlite` `DatabaseSync`, WAL +
   `synchronous=FULL`, embeddings as Float32 BLOBs, in-process cache, JS cosine (no
@@ -16,7 +26,7 @@ stable; sophistication grows in the substrate, not in the API.
   in the row (`SqliteStore` never constructs `AccessLog`). Conformance suite proves
   JsonlStore ≡ SqliteStore on save/recall/edit/delete/vacuum. Product S1: **loads
   50k and 100k** (JSONL cannot); field-off recall p95 **49.6 ms @50k, 96.4 ms @100k**.
-  Migrator, export, default switch, edges-in-db, `searchDense` are later slices.
+  Export, default switch, edges-in-db, `searchDense` are later slices.
 
 ### Changed
 - **I5 restated** to match ARCHITECTURE/ROADMAP: durable writes; no *unbounded* /

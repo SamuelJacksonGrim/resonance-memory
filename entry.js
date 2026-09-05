@@ -21,6 +21,7 @@
 //   memory --install    (CLI)           -> connect to detected AI apps
 //   memory --uninstall  (CLI)           -> disconnect from AI apps
 //   memory --dedup-existing [--apply]   -> RM-02.c backfill (dry-run default)
+//   memory --migrate                    -> RM-07 slice 2a JSONL→SQLite (opt-in)
 const mode = process.argv[2];
 
 if (mode === "--mcp") {
@@ -33,6 +34,13 @@ if (mode === "--mcp") {
   if (r.ok && mode === "--install") console.log("\nDone. Restart your AI app to load the memory server.");
 } else if (mode === "--dedup-existing") {
   require("./dedup-existing.js").main(process.argv.slice(3)).then((code) => {
+    if (code) process.exit(code);
+  }).catch((e) => {
+    console.error(String(e.message || e));
+    process.exit(2);
+  });
+} else if (mode === "--migrate" || mode === "--migrate-sqlite") {
+  require("./migrate-sqlite.js").main(process.argv.slice(3)).then((code) => {
     if (code) process.exit(code);
   }).catch((e) => {
     console.error(String(e.message || e));
