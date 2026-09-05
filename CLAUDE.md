@@ -94,6 +94,7 @@ npm run migrate                   # RM-07 slice 2a: stream JSONL → sibling .db
 npm run eval      # run the RM-00 eval harness (offline, deterministic)
 npm run eval -- --accept        # lock the current scorecard in as golden.json
 npm run eval -- --filter <id>   # run only cases whose id starts with <id>
+npm run eval -- --store sqlite  # RM-07: same golden over SqliteStore (must match JSONL case-for-case)
 npm run measure   # reporting metrics (recall@k, duplicate_rate, …); not the golden gate
 ```
 
@@ -176,6 +177,8 @@ new golden case: `EVAL_REFRESH=1 npm run eval`. For a measurement corpus (`dupli
   (or live-config `store: "sqlite"`) opens `SqliteStore` at the sibling `.db`
   (`resonance-memory.jsonl` → `resonance-memory.db`). WAL + `synchronous=FULL`;
   embeddings as Float32 BLOBs; in-process cache hydrated once. Opaque `id` preserved.
+  RM-00 golden parity (slice 3): `node eval/run.js --store sqlite` matches the JSONL
+  scorecard 27/31 case-for-case. Default switch is slice 4 (after 2b export).
 - **JSONL→SQLite migrator (RM-07 slice 2a).** Opt-in CLI: `node entry.js --migrate`
   / `npm run migrate`. Streams the JSONL line-at-a-time (never `readFileSync` —
   that is the S1 834 MB wall) into `<store>.db.migrating`, count-verifies, WAL

@@ -13,6 +13,11 @@
  *   npm run eval                 run all corpora, print scorecard, check regressions
  *   npm run eval -- --accept     write the current scorecard as golden.json (the gate)
  *   npm run eval -- --filter X   run only cases whose id starts with X
+ *   npm run eval -- --store sqlite
+ *                                RM-07 slice 3: same corpora, SqliteStore behind
+ *                                the seam. Must match the JSONL scorecard
+ *                                case-for-case (any flip is a STOP). Also
+ *                                honours RESONANCE_STORE=sqlite; --store wins.
  *
  * Reporting metrics (recall@k, duplicate_rate, …) are eval/measure.js, not
  * this file. Measurement corpora (kind: "duplicates" / "messy" / gate: false / no
@@ -28,7 +33,7 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { JsonlStore } = require("../store.js");
+const { openStore } = require("../store.js");
 const { createMemory } = require("./pipeline.js");
 const { embed } = require("./embed-cache.js");
 const { scoreSingle, scoreRepeat, fieldSignals } = require("./metrics.js");
@@ -40,28 +45,70 @@ function readJsonl(file) {
   return fs.readFileSync(file, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
 }
 
-function freshStore() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rm-eval-"));
-  const file = path.join(dir, "store.jsonl");
-  return { store: new JsonlStore(file), file, dir };
+/*
+ * Backend for this eval process. `--store sqlite` (or `--store=sqlite`) wins
+ * over RESONANCE_STORE; anything else is jsonl. The golden lock is the JSONL
+ * scorecard; sqlite is a parity run of the same cases through the same
+ * memory-core, different Store. Unknown values fail loud — a typo must not
+ * silently fall back to jsonl and green-wash the drop-in contract.
+ */
+function parseStoreKind(argv, env) {
+  const args = argv || [];
+  const eq = args.find((a) => a.startsWith("--store="));
+  let raw = null;
+  if (eq) raw = eq.slice("--store=".length);
+  else {
+    const i = args.indexOf("--store");
+    if (i >= 0) raw = args[i + 1];
+  }
+  if (raw != null) {
+    const v = String(raw).toLowerCase();
+    if (v !== "jsonl" && v !== "sqlite") {
+      throw new Error("unknown --store " + JSON.stringify(raw) + " (jsonl|sqlite)");
+    }
+    return v;
+  }
+  const envRaw = String((env || process.env).RESONANCE_STORE || "jsonl").toLowerCase();
+  return envRaw === "sqlite" ? "sqlite" : "jsonl";
 }
 
-async function runCase(c, fieldOn) {
-  const { store, file, dir } = freshStore();
+function freshStore(storeKind) {
+  const kind = storeKind === "sqlite" ? "sqlite" : "jsonl";
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rm-eval-"));
+  // openStore is the product construction path (same seam server.js uses).
+  // Fresh temp: no sibling JSONL, so the sqlite missing-.db warning stays quiet.
+  const jsonlFile = path.join(dir, "store.jsonl");
+  const store = openStore(jsonlFile, { backend: kind });
+  return { store, file: store.file, dir, storeKind: kind };
+}
+
+function closeStore(store) {
+  if (store && typeof store.close === "function") {
+    try { store.close(); } catch { /* temp */ }
+  }
+}
+
+async function runCase(c, fieldOn, storeKind) {
+  const { store, file, dir } = freshStore(storeKind);
   const mem = createMemory({ store, embed, fieldEnabled: fieldOn, edgesPath: file + ".edges.json" });
-  for (const w of c.writes || []) await mem.save(w);
-  const turns = c.repeat || [{ query: c.query }];
-  const outputs = [];
-  for (const t of turns) outputs.push(await mem.recall(t.query));
-  const scored = c.repeat ? scoreRepeat(c, outputs) : scoreSingle(c, outputs[0]);
-  const sig = fieldSignals(c, outputs[outputs.length - 1]);
-  try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* temp */ }
-  return {
-    id: c.id, kind: c.kind, field: fieldOn, metric: c.metric || null,
-    pass: scored.pass, reasons: scored.reasons,
-    byTurn: scored.byTurn, first_hit_turn: scored.first_hit_turn,
-    rescued: sig.rescued, bled: sig.bled, appended: sig.appended,
-  };
+  try {
+    for (const w of c.writes || []) await mem.save(w);
+    const turns = c.repeat || [{ query: c.query }];
+    const outputs = [];
+    for (const t of turns) outputs.push(await mem.recall(t.query));
+    const scored = c.repeat ? scoreRepeat(c, outputs) : scoreSingle(c, outputs[0]);
+    const sig = fieldSignals(c, outputs[outputs.length - 1]);
+    return {
+      id: c.id, kind: c.kind, field: fieldOn, metric: c.metric || null,
+      pass: scored.pass, reasons: scored.reasons,
+      byTurn: scored.byTurn, first_hit_turn: scored.first_hit_turn,
+      rescued: sig.rescued, bled: sig.bled, appended: sig.appended,
+    };
+  } finally {
+    // Windows will not rmSync a directory that still has the .db open.
+    closeStore(store);
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* temp */ }
+  }
 }
 
 // Golden cases are the RM-00 contains/excludes scorecard. Measurement
@@ -74,14 +121,15 @@ function isGoldenCase(c) {
   return !!(c.expect && (c.query || c.repeat));
 }
 
-async function run({ filter = null } = {}) {
+async function run({ filter = null, storeKind = "jsonl" } = {}) {
+  const kind = storeKind === "sqlite" ? "sqlite" : "jsonl";
   const results = [];
   for (const fileName of fs.readdirSync(CORPORA).filter((f) => f.endsWith(".jsonl"))) {
     for (const c of readJsonl(path.join(CORPORA, fileName))) {
       if (!isGoldenCase(c)) continue;
       if (filter && !c.id.startsWith(filter)) continue;
       const modes = c.kind === "constraint" ? [false, true] : [c.field ?? false];
-      for (const fieldOn of modes) results.push(await runCase(c, fieldOn));
+      for (const fieldOn of modes) results.push(await runCase(c, fieldOn, kind));
     }
   }
   return results;
@@ -89,9 +137,9 @@ async function run({ filter = null } = {}) {
 
 const key = (r) => r.id + (r.kind === "constraint" ? (r.field ? " [field:on]" : " [field:off]") : "");
 
-function scorecard(results) {
+function scorecard(results, { storeKind = "jsonl" } = {}) {
   const line = "-".repeat(72);
-  console.log("\nRM-00 eval scorecard  " + new Date().toISOString());
+  console.log("\nRM-00 eval scorecard  " + new Date().toISOString() + "  store=" + storeKind);
   console.log(line);
 
   // Per-case, grouped by kind
@@ -177,23 +225,51 @@ function scorecard(results) {
   console.log(line + "\n");
 
   return { generated: new Date().toISOString(), passed, total: results.length,
+    store: storeKind,
     cases: Object.fromEntries(results.map((r) => [key(r), r.pass])) };
 }
 
-function gate(current) {
+function diffCases(goldenCases, currentCases) {
+  const regressions = [], improvements = [], flips = [];
+  for (const [k, wasPass] of Object.entries(goldenCases || {})) {
+    const now = currentCases[k];
+    if (now === undefined) continue;
+    if (wasPass && !now) { regressions.push(k); flips.push(k); }
+    if (!wasPass && now) { improvements.push(k); flips.push(k); }
+  }
+  return { regressions, improvements, flips };
+}
+
+function gate(current, { parity = false } = {}) {
   if (!fs.existsSync(GOLDEN)) {
     console.log("No golden.json yet. Review the scorecard above, then lock it in:");
     console.log("  npm run eval -- --accept\n");
     return 0;
   }
   const golden = JSON.parse(fs.readFileSync(GOLDEN, "utf8"));
-  const regressions = [], improvements = [];
-  for (const [k, wasPass] of Object.entries(golden.cases || {})) {
-    const now = current.cases[k];
-    if (now === undefined) continue;
-    if (wasPass && !now) regressions.push(k);
-    if (!wasPass && now) improvements.push(k);
+  const { regressions, improvements, flips } = diffCases(golden.cases, current.cases);
+
+  // SqliteStore parity is two-sided: a fail→pass is as much a drop-in
+  // break as a pass→fail. The JSONL default gate stays one-way (an
+  // improvement is news, not a red). Any sqlite flip is a STOP — f32
+  // near-tie or genuine inequivalence, report the case, don't paper it.
+  if (parity) {
+    if (flips.length) {
+      console.error("PARITY FAIL — scorecard differs from golden (store=" +
+        (current.store || "sqlite") + "):");
+      for (const k of flips) {
+        const was = golden.cases[k];
+        const now = current.cases[k];
+        console.error("  " + k + "  golden=" + (was ? "PASS" : "FAIL") +
+          "  now=" + (now ? "PASS" : "FAIL"));
+      }
+      console.error("");
+      return 1;
+    }
+    console.log("SqliteStore scorecard matches golden case-for-case.\n");
+    return 0;
   }
+
   if (improvements.length) console.log("IMPROVED since golden: " + improvements.join(", "));
   if (regressions.length) {
     console.error("REGRESSION - these cases flipped PASS -> FAIL:");
@@ -205,19 +281,38 @@ function gate(current) {
   return 0;
 }
 
-(async () => {
-  const args = process.argv.slice(2);
+async function main(argv) {
+  const args = argv || process.argv.slice(2);
   const accept = args.includes("--accept");
   const fi = args.indexOf("--filter");
   const filter = fi >= 0 ? args[fi + 1] : null;
+  const storeKind = parseStoreKind(args);
 
-  const results = await run({ filter });
-  const current = scorecard(results);
+  const results = await run({ filter, storeKind });
+  const current = scorecard(results, { storeKind });
 
   if (accept) {
+    // golden.json is the JSONL lock. Accepting a sqlite run would let an
+    // f32 near-tie rewrite the gate without anyone noticing the flip.
+    if (storeKind !== "jsonl") {
+      console.error("--accept writes golden.json; that lock is the JSONL scorecard.");
+      console.error("Re-run without --store " + storeKind + ".\n");
+      return 2;
+    }
     fs.writeFileSync(GOLDEN, JSON.stringify(current, null, 2));
     console.log("Wrote golden.json (" + current.passed + "/" + current.total + ").\n");
-    process.exit(0);
+    return 0;
   }
-  process.exit(gate(current));
-})().catch((e) => { console.error(String(e.message || e)); process.exit(2); });
+  return gate(current, { parity: storeKind === "sqlite" });
+}
+
+module.exports = {
+  run, runCase, scorecard, gate, parseStoreKind, isGoldenCase, key, diffCases, GOLDEN,
+};
+
+if (require.main === module) {
+  main().then((code) => process.exit(code)).catch((e) => {
+    console.error(String(e.message || e));
+    process.exit(2);
+  });
+}

@@ -1182,6 +1182,88 @@ test: JSONL stays at its path, no half `.db` at `MEMORY_FILE_PATH`, re-run
 completes (no resume-from-partial). `.bak` is a recovery snapshot, not the
 sovereignty export (slice 2b).
 
+### RM-07 slice 3 — golden parity (2026-09-05)
+
+The drop-in contract: same `memory-core.js`, SqliteStore instead of JsonlStore,
+**identical RM-00 scorecard**. This is the eval bar that unblocks the default
+switch (slice 4), after 2b export.
+
+Reproduce:
+
+```
+node eval/run.js                 # JSONL default
+node eval/run.js --store sqlite  # same cases, SqliteStore
+```
+
+Both offline (read `embeddings.cache.json`). Sqlite gate is two-sided parity
+against `golden.json`; any case flip is a STOP.
+
+#### Scorecards, side by side
+
+| case | jsonl | sqlite |
+|---|---|---|
+| adv-height-homonym [field:off] | PASS | PASS |
+| adv-height-homonym [field:on] | FAIL | FAIL |
+| adv-offtopic-quiet [field:off] | PASS | PASS |
+| adv-offtopic-quiet [field:on] | PASS | PASS |
+| basic-name | PASS | PASS |
+| basic-work | PASS | PASS |
+| basic-pref | PASS | PASS |
+| constraint-near [field:off] | PASS | PASS |
+| constraint-near [field:on] | PASS | PASS |
+| constraint-far-sparse [field:off] | PASS | PASS |
+| constraint-far-sparse [field:on] | PASS | PASS |
+| constraint-far-rich [field:off] | PASS | PASS |
+| constraint-far-rich [field:on] | PASS | PASS |
+| constraint-crowded [field:off] | PASS | PASS |
+| constraint-crowded [field:on] | PASS | PASS |
+| contra-job | PASS | PASS |
+| contra-city | PASS | PASS |
+| contra-wrongslot | PASS | PASS |
+| contra-additive-pets | PASS | PASS |
+| noise-schedule [field:off] | PASS | PASS |
+| noise-schedule [field:on] | PASS | PASS |
+| noise-homonym [field:off] | PASS | PASS |
+| noise-homonym [field:on] | PASS | PASS |
+| field-rescue [field:off] | FAIL | FAIL |
+| field-rescue [field:on] | PASS | PASS |
+| field-rescue-veg [field:off] | FAIL | FAIL |
+| field-rescue-veg [field:on] | PASS | PASS |
+| field-rescue-heights [field:off] | FAIL | FAIL |
+| field-rescue-heights [field:on] | PASS | PASS |
+| regress-direct [field:off] | PASS | PASS |
+| regress-direct [field:on] | PASS | PASS |
+| **TOTAL** | **27/31** | **27/31** |
+| field lifted fail→pass | 3 | 3 |
+| field BROKE | 1 | 1 |
+| ROC off / on | 1/4 / 4/4 | 1/4 / 4/4 |
+| TBR off / on | 0/4 / 1/4 | 0/4 / 1/4 |
+
+**No case flipped.** Gate lines: jsonl `No regressions vs golden.` · sqlite
+`SqliteStore scorecard matches golden case-for-case.`
+
+#### f32 vs f64
+
+JsonlStore stores embeddings as JSON float64 arrays; SqliteStore stores
+Float32 BLOBs. A 7th-decimal cosine difference *could* swap a near-tie
+(`constraint-crowded` is k=5; tea HI is 0.9522 vs `DEDUP_HI` 0.95).
+
+Measured on this corpus:
+
+- 354 cached vectors, 271,872 components: every value is already an exact
+  f32 (`Math.fround(x) === x`). `nomic-embed-text-v1.5` via the JSON cache
+  does not produce leftover f64 bits. Packing is lossless; pairwise
+  `|cos(f64,f64) − cos(query-f64, stored-f32)|` over the cache is **0**.
+- Tea HI pair: cosine **0.952246** on both paths, **0.002246** above 0.95.
+- Primary-hit **text** order identical on all 31 checks (opaque ids differ
+  because `nextId()` is `Date.now()`).
+
+No tolerance in the parity gate. A silent epsilon would hide a real
+inequivalence; this run did not need one. Clean equivalence, not a fudge.
+
+JSONL stays the default. Slice 2b (export/zip/panel) must land before the
+slice-4 default switch so `--migrate` is not a lock-in.
+
 ---
 
 ---

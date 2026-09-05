@@ -18,6 +18,11 @@
  *
  * Because save/recall are now literally the same code the server runs, the RM-00
  * golden is a regression guard on the server itself, not on a copy of it.
+ *
+ * The Store is injected. eval/run.js `--store sqlite` (RM-07 slice 3) passes a
+ * SqliteStore; the default is JsonlStore. Same createCore, different backend —
+ * that is the drop-in contract the golden-parity gate proves. Do not fork a
+ * sqlite recall path in here.
  */
 
 const { EdgeStore } = require("../edges.js");

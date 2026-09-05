@@ -1,6 +1,6 @@
 # 0010 — SQLite backend behind the Store seam (RM-07)
 
-**Status:** slice 1 shipped (drop-in `SqliteStore`) · slice 2a shipped (streaming JSONL→SQLite migrator, opt-in CLI) · JSONL still default · **Backlog:** `RM-07` · **Depends on:** `RM-00`, [`0005`](0005-store-abstraction.md)
+**Status:** slice 1 shipped (drop-in `SqliteStore`) · slice 2a shipped (streaming JSONL→SQLite migrator, opt-in CLI) · **slice 3 shipped** (RM-00 golden on SqliteStore = JSONL 27/31 case-for-case) · JSONL still default · **Backlog:** `RM-07` · **Depends on:** `RM-00`, [`0005`](0005-store-abstraction.md)
 **Spike:** [`spike/rm-07-sqlite/`](../../spike/rm-07-sqlite/) — de-risked the driver and the vector path.
 **Product:** `store-sqlite.js` `SqliteStore`, same JsonlStore method surface, `memory-core.js` verbs unchanged.
 
@@ -282,8 +282,8 @@ Landed. Selectable, not the default.
 
 ## What this slice is *not* (later slices)
 
-- Ripping out `JsonlStore`. JSONL stays default until SqliteStore passes
-  RM-00 golden parity (eval still runs on JSONL because it is the default).
+- Ripping out `JsonlStore`. JSONL stays default until the slice-4 switch.
+  Slice 3 (below) proved RM-00 golden parity; eval default is still JSONL.
 - Changing `memory-core.js` to `searchDense`. First landing is a drop-in
   Store. `searchDense` is a later shave (packed cosine was 48 ms at 100k
   in the spike); the product cache already cleared 100 ms.
@@ -366,6 +366,64 @@ fine on this box; materializing the JSONL as one UTF-8 string is not.
 
 ---
 
+## Slice 3 (shipped) — RM-00 golden on SqliteStore
+
+Landed. The drop-in contract: same `memory-core.js`, different Store, **identical
+scorecard**. This is the bar that unblocks the default switch (slice 4) — after
+2b export/zip, so migration does not open a lock-in window.
+
+Product: `eval/run.js --store sqlite` (also `RESONANCE_STORE=sqlite`; `--store`
+wins). `eval/pipeline.js` is unchanged — the Store is injected; sqlite vs jsonl
+is `openStore({ backend })` in the runner. Offline + deterministic: vectors
+still come from `eval/embeddings.cache.json`; SqliteStore holds them as
+Float32 BLOBs for the run. The sqlite gate is **two-sided parity** against
+`golden.json` (fail→pass is as much a STOP as pass→fail). `--accept` is
+jsonl-only so an f32 quirk cannot rewrite the lock.
+
+### Scorecard (2026-09-05)
+
+Both backends: **27/31**, same cases passing and failing. No flips.
+
+| | jsonl (default) | sqlite (`--store sqlite`) |
+|---|---|---|
+| TOTAL | 27/31 | 27/31 |
+| field lifted fail→pass | 3 | 3 |
+| field BROKE | 1 (`adv-height-homonym`) | 1 (same) |
+| ROC off / on | 1/4 / 4/4 | 1/4 / 4/4 |
+| TBR off / on | 0/4 / 1/4 | 0/4 / 1/4 |
+| gate | No regressions vs golden. | SqliteStore scorecard matches golden case-for-case. |
+
+Reproduce: `node eval/run.js` and `node eval/run.js --store sqlite`. Side-by-side
+in [`eval/RESULTS.md`](../../eval/RESULTS.md) "RM-07 slice 3".
+
+### f32 vs f64 (the near-tie watch)
+
+JsonlStore persists embeddings as JSON number arrays (IEEE-754 float64).
+SqliteStore packs Float32 BLOBs. Cosine of a 768-d unit vector could in
+principle differ in the ~7th decimal and swap a rank-5/6 near-tie, or
+push a pair across `DEDUP_HI` 0.95. **On this corpus it did not, and
+the reason is measured, not hoped:**
+
+- Every component in `eval/embeddings.cache.json` (354 vectors, 271,872
+  floats, `nomic-embed-text-v1.5`) is already an exact f32:
+  `Math.fround(x) === x` for all of them. Packing is lossless. Pairwise
+  `|cos(f64,f64) − cos(f64, f32)|` over the cache is **0**.
+- Tightest HI pair (tea): cosine **0.952246** on both paths, **0.002246**
+  above `DEDUP_HI` 0.95. That margin is three orders above f32 ulp; a
+  band flip would need a bug, not rounding.
+- Primary-hit **text** order was identical on all 31 golden checks
+  (opaque ids differ because `nextId()` is `Date.now()` per save).
+
+No tolerance was added to the parity gate. A silent epsilon would hide a
+genuine inequivalence; this run did not need one. If a future embedder
+emits values that are not f32-exact and a case actually flips, the honest
+move is to name the case and decide then — not to pre-paper the gate.
+
+This clears the default-switch *eval* gate. Slice 2b (export/zip/panel)
+must still land first so a migrated user can leave.
+
+---
+
 ## Open decisions (Samuel)
 
 These are product calls. The spike is evidence, not a substitute.
@@ -388,7 +446,9 @@ These are product calls. The spike is evidence, not a substitute.
    JSONL as the export format? Or SQLite-default as soon as conformance is
    green, because JSONL cannot load 50k? Recommend **SQLite default for new
    stores; existing JSONL migrates on first open with `.bak`**, once parity
-   is proven. A 50k JSONL user is already stuck.
+   is proven. A 50k JSONL user is already stuck. **Parity is now proven
+   (slice 3, 27/31 case-for-case).** Slice 2b export still gates the
+   switch so migration is not a lock-in.
 5. **Move-between-devices story.** `.db` copy (after checkpoint) for RM↔RM;
    JSONL export for leaving RM / handing to a competitor. Recommend **both**,
    with JSONL as the documented sovereignty path (embeddings as JSON, no RM
@@ -414,7 +474,7 @@ These are product calls. The spike is evidence, not a substitute.
    is the recovery snapshot from 2a, not the export.
 3. Conformance suite both backends (0005 step 4). Encode BUG-001/002.
 4. `normalize()` typed-array trap test.
-5. RM-00 golden on SqliteStore — must match JSONL scorecard.
+5. RM-00 golden on SqliteStore — must match JSONL scorecard. **Shipped (slice 3).**
 6. Re-run S1 against the product Store at 50k/100k; expect cached-recall
    numbers, not the uncached hydrate curve.
 7. Docs (`CLAUDE.md` storage section, BACKLOG tick, COMPETITIVE-ANALYSIS

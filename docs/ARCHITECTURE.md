@@ -146,7 +146,7 @@ same record the panel renders, the installer targets, `--dedup-existing` scans, 
 | `extract.js` | RM-01.c Tier 2: opt-in LLM extraction (prompt, parser, sanity gate, `/v1/chat/completions`, MCP sampling, capability detect). Off by default. `save()` is the only caller. | stdlib + `fetch` |
 | `dedup-existing.js` | RM-02.c CLI. Dry-run default; `--apply` is one durable rewrite. Thin wrapper over `dedupExisting()` — no second decision. | `memory-core`, `store` |
 | `record.js` | The shared record schema (`normalize()`), durable atomic writes (`writeFileDurable()`), the access sidecar (`AccessLog`), and the lexical heuristics (constraint typing, historical-query detection, supersession cues, cosine-banded `detectNearDuplicate`). Owned here so server and panel agree on a record byte-for-byte. | stdlib only |
-| `store.js` | Store seam: `JsonlStore` (default) plus `openStore()` selectability. Flag: `RESONANCE_STORE=sqlite` / live-config `store`. Same method surface; `memory-core.js` does not change. | `record`, `store-sqlite` |
+| `store.js` | Store seam: `JsonlStore` (default) plus `openStore()` selectability. Flag: `RESONANCE_STORE=sqlite` / live-config `store`. Same method surface; `memory-core.js` does not change. RM-00 golden parity (slice 3) is green. | `record`, `store-sqlite` |
 | `store-sqlite.js` | RM-07 `SqliteStore`. `node:sqlite` `DatabaseSync`, WAL + `synchronous=FULL`, BLOB embeddings, in-process cache, in-table access counts. Never constructs `AccessLog`. | `record`, `node:sqlite` |
 | `migrate-sqlite.js` | RM-07 slice 2a streaming JSONL→SQLite migrator (10-step protocol). Opt-in `--migrate`. `.bak` is a recovery snapshot, not the sovereignty export. | `store`, `store-sqlite`, `record` |
 | `field.js` | Associative layer (Phase 2a): a kNN semantic graph over stored vectors, neighborhood expansion, and constraint rescue. No new embedding calls, no LLM extraction. | stdlib only |
@@ -467,7 +467,9 @@ it reads `eval/embeddings.cache.json` and never touches the network or an API ke
   `adversarial`, `field-noise`, `field-stress`) with the field **off and on**, reports the
   **ROC** (did the apex constraint surface?) and **TBR** (did forbidden junk bleed in?) split,
   and gates against `golden.json`. `--filter <id>` runs a subset; `--accept` locks the current
-  scorecard as the new golden. Measurement corpora (`duplicates`) are skipped here.
+  scorecard as the new golden. `--store sqlite` (RM-07 slice 3) runs the same cases
+  through `SqliteStore`; the gate is two-sided parity against `golden.json` (any
+  case flip is a STOP). `--accept` is jsonl-only. Measurement corpora (`duplicates`) are skipped here.
 - `eval/measure.js` runs reporting metrics from the registry in `eval/metrics.js`
   (`recall_at_k`, `duplicate_rate`, `extraction_precision`, `extraction_recall`, `mrr`;
   add more with `register(...)`). A/B numbers, not the

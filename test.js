@@ -3322,6 +3322,50 @@ async function asyncTests() {
       assert.strictEqual(jsonl.all().length, sqlite.all().length);
       sqlite.close();
     });
+
+    section("RM-00 golden parity (JsonlStore ≡ SqliteStore)");
+
+    const {
+      parseStoreKind, run: runEval, key: evalKey,
+    } = require("./eval/run.js");
+
+    test("parseStoreKind: --store sqlite / env, flag wins, unknown throws", () => {
+      const prev = process.env.RESONANCE_STORE;
+      try {
+        delete process.env.RESONANCE_STORE;
+        assert.strictEqual(parseStoreKind([]), "jsonl");
+        assert.strictEqual(parseStoreKind(["--store", "sqlite"]), "sqlite");
+        assert.strictEqual(parseStoreKind(["--store=sqlite"]), "sqlite");
+        assert.strictEqual(parseStoreKind(["--store", "jsonl"]), "jsonl");
+        process.env.RESONANCE_STORE = "sqlite";
+        assert.strictEqual(parseStoreKind([]), "sqlite", "env fallback");
+        assert.strictEqual(parseStoreKind(["--store", "jsonl"]), "jsonl", "flag wins over env");
+        assert.throws(() => parseStoreKind(["--store", "mysql"]), /unknown --store/);
+      } finally {
+        if (prev === undefined) delete process.env.RESONANCE_STORE;
+        else process.env.RESONANCE_STORE = prev;
+      }
+    });
+
+    // Full golden, both backends, same memory-core. 31 checks, cached
+    // embedder, a couple of seconds — cheaper than a fake mini-corpus
+    // that could miss a k=5 near-tie. Any pass/fail flip is a STOP.
+    await atest("golden scorecard is identical on JsonlStore and SqliteStore", async () => {
+      const jsonl = await runEval({ storeKind: "jsonl" });
+      const sqlite = await runEval({ storeKind: "sqlite" });
+      const j = Object.fromEntries(jsonl.map((r) => [evalKey(r), r.pass]));
+      const s = Object.fromEntries(sqlite.map((r) => [evalKey(r), r.pass]));
+      const keys = [...new Set([...Object.keys(j), ...Object.keys(s)])];
+      const flips = keys.filter((k) => j[k] !== s[k])
+        .map((k) => k + " jsonl=" + j[k] + " sqlite=" + s[k]);
+      assert.strictEqual(flips.length, 0, "case flips:\n  " + flips.join("\n  "));
+      assert.strictEqual(jsonl.length, 31, "golden is 31 checks");
+      assert.strictEqual(sqlite.length, 31);
+      assert.strictEqual(
+        jsonl.filter((r) => r.pass).length,
+        sqlite.filter((r) => r.pass).length
+      );
+    });
   }
 
   section("RM-01.b save() wiring (Tier 0/1 on the live path)");

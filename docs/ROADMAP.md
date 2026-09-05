@@ -113,7 +113,7 @@ Status only. Where each lives and how it works: `ARCHITECTURE.md`. What each sat
 | Embed-at-save, cosine recall, keyword fallback | — | Foundation |
 | Durable atomic writes; recall does no *unbounded* store write | — | `BUG-001`/`BUG-002` |
 | Soft delete + `vacuum()` compaction | — | Records: `deleted` then `vacuum()`. Edges (0.4): `pruned_at` then `EdgeStore.vacuum()`. |
-| Store abstraction behind the verbs | `RM-07` | `SqliteStore` selectable (`RESONANCE_STORE=sqlite`); JSONL still default. S1 product: loads 50k/100k; field-off p95 49.6 / 96.4 ms. |
+| Store abstraction behind the verbs | `RM-07` | `SqliteStore` selectable (`RESONANCE_STORE=sqlite`); JSONL still default. Golden parity (slice 3): `--store sqlite` = JSONL 27/31 case-for-case. S1 product: loads 50k/100k; field-off p95 49.6 / 96.4 ms. |
 | kNN semantic graph, neighborhood expansion, constraint rescue | — | 🟡 ephemeral, rebuilt per recall |
 | Hebbian weights, bounded `maxBonus·tanh(w)`, provenance-discounted | — | 🟡 per-edge bounding solved; wall-clock decay ✅ (0.2) |
 | Decay + prune | — | ✅ lazy wall-clock half-life (0.2); soft prune + reactivation (0.4, I8 held for edges) |
@@ -193,7 +193,7 @@ Not substrate work; what makes it runnable by anyone. Scope + acceptance: `BACKL
 |---|---|---|
 | `RM-01` | Write-side extraction (heuristics first; local LLM optional, off by default, never blocks save) | ✅ 01.a+01.b+01.c (messy precision 0.26→1.00; messy-hard live Tier 2 A/B in RESULTS.md) |
 | `RM-02` | Near-duplicate detection + merge | ✅ 02.a+02.b+02.c (A/B + backfill: dup_rate 0.3182→0.0000, recall@5 held) |
-| `RM-07` | SQLite backend behind the Store seam (`node:sqlite` + BLOB/JS cosine; FTS5 later) | ⬜ design+spike in [`proposed/0010`](proposed/0010-sqlite-backend.md) |
+| `RM-07` | SQLite backend behind the Store seam (`node:sqlite` + BLOB/JS cosine; FTS5 later) | 🟡 slice 1+2a+3 shipped (selectable Store, `--migrate`, golden parity); 2b export + default switch still open. [`proposed/0010`](proposed/0010-sqlite-backend.md) |
 | `RM-11` | Cross-platform builds + signing | ⬜ |
 | `RM-12` | SDKs against a documented local HTTP API | ⬜ |
 | `RM-13` | Opt-in local-only telemetry + failure-report bundle | ⬜ |

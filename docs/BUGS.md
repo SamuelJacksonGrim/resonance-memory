@@ -88,8 +88,9 @@ no other column touched.
 still rewrite the whole file. That is inherent to a flat JSONL backend. **`RM-07` slice 1**
 ships `SqliteStore` (`store-sqlite.js`, `node:sqlite`, BLOB + JS cosine, no sqlite-vec —
 see [`proposed/0010`](proposed/0010-sqlite-backend.md)) as a selectable backend; JSONL
-stays default until golden parity. JSONL's load wall (50k cannot `readFileSync`) is the
-reason it exists.
+stays default until the slice-4 switch (conformance + golden parity are green;
+`eval/run.js --store sqlite` matches JSONL 27/31 case-for-case). JSONL's load wall
+(50k cannot `readFileSync`) is the reason it exists.
 
 ---
 

@@ -346,9 +346,11 @@ deletions, ever.
       cannot load. **Not auto-run on startup** (first-open is slice 4).
 - [ ] JSONL export / zip bundle (slice 2b) — the live sovereignty artifact.
 - [ ] Transparent one-way migration on first open (slice 4 default switch).
-- [ ] JSONL stays the default until SQLite passes conformance + eval parity.
-      Conformance is green; golden parity on the sqlite backend is a later slice
-      (eval still runs on JSONL because it is the default).
+- [x] JSONL stays the default until SQLite passes conformance + eval parity.
+      Conformance green. Golden parity (slice 3): `node eval/run.js --store sqlite`
+      matches JSONL **27/31 case-for-case** (no flips; cache vectors already
+      exact f32 so packing is lossless on this embedder). Default switch is
+      slice 4, after 2b export/zip so migration does not open a lock-in window.
 
 **Acceptance:** 100k memories, recall p95 <100ms, no full-file rewrite; both backends
 byte-identical on the eval scorecard.

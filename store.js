@@ -25,8 +25,10 @@
  * MCP verbs never see anything in here.
  *
  * RM-07 slice 1: SqliteStore is SELECTABLE (RESONANCE_STORE=sqlite or live-config
- * `store: "sqlite"`). Default stays JsonlStore until conformance + golden parity
- * land the default switch. openStore() is the one construction path.
+ * `store: "sqlite"`). Default stays JsonlStore — conformance (slice 1) and
+ * RM-00 golden parity (slice 3, `eval/run.js --store sqlite`) are green;
+ * the default switch is slice 4, after 2b export so migration is not a
+ * lock-in. openStore() is the one construction path.
  *
  * RM-07 slice 2a: JSONL→SQLite is a separate streaming migrator
  * (`migrate-sqlite.js`, `node entry.js --migrate`). openStore() does NOT
@@ -148,9 +150,9 @@ class JsonlStore {
 }
 
 /*
- * Backend selectability (RM-07 slice 1). Default is jsonl — the default
- * switch is a later slice, after conformance + RM-00 golden parity.
- * Live-config `store` wins over env RESONANCE_STORE, same pattern as the
+ * Backend selectability (RM-07 slice 1). Default is jsonl — conformance
+ * and RM-00 golden parity (slice 3) are green; the default switch is
+ * slice 4, after 2b export. Live-config `store` wins over env RESONANCE_STORE, same pattern as the
  * field toggle. A backend change needs a process restart (you cannot
  * hot-swap engines under an open file).
  */

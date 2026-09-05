@@ -36,7 +36,8 @@ an opaque `id`.
   rewrites it, see `BUG-002`). A leftover `<store>.assoc.json` is legacy /
   read-only-for-migration. Both live sidecars are regenerable: deleting them loses
   learned associations and access counts, never a memory. SQLite is selectable
-  (`RESONANCE_STORE=sqlite`); JSONL stays default. `--migrate` (`npm run migrate`)
+  (`RESONANCE_STORE=sqlite`); JSONL stays default. `npm run eval -- --store sqlite`
+  is the RM-00 parity gate (slice 3: 27/31 case-for-case with JSONL). `--migrate` (`npm run migrate`)
   streams an existing JSONL into the sibling `.db` (10-step protocol in
   [`proposed/0010`](docs/proposed/0010-sqlite-backend.md)): temp `.db.migrating`,
   line-at-a-time INSERT, count-verify, WAL checkpoint, atomic rename, **then**

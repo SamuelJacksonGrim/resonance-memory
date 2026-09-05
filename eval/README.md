@@ -16,11 +16,32 @@ can't match that; their eval needs their cloud.
 npm run eval                 # run all corpora, print the scorecard, check regressions
 npm run eval -- --accept     # lock the current scorecard in as golden.json (the gate)
 npm run eval -- --filter constraint   # only cases whose id starts with "constraint"
+npm run eval -- --store sqlite        # RM-07: same golden over SqliteStore (parity, two-sided)
 npm run measure              # reporting metrics (A/B): recall@k, duplicate_rate, extraction_precision, mrr, …
 npm run measure -- --bands   # also print pairwise cosine within each dup group
 npm run measure -- --json    # machine-readable (the 02.b A/B compares this)
 npm run scale                # S1 needle-in-haystack at 1k/10k/50k/100k (live embed first run)
 ```
+
+`--store sqlite` (or `RESONANCE_STORE=sqlite`; `--store` wins) builds the same
+`memory-core.createCore` over a `SqliteStore` instead of `JsonlStore`. The
+eval stays offline — vectors still come from `embeddings.cache.json`; SQLite
+just holds them as Float32 BLOBs for the run. The sqlite gate is **parity**,
+not one-way regression: any case that differs from `golden.json` (fail→pass
+or pass→fail) is a STOP. `--accept` is jsonl-only so an f32 quirk cannot
+rewrite the lock. Slice 3 result (2026-09-05): **27/31 identical,
+case-for-case, no flips.** See `RESULTS.md` "RM-07 slice 3".
+
+JsonlStore persists embeddings as JSON float64 arrays; SqliteStore packs
+Float32 BLOBs. In principle a 7th-decimal cosine difference could swap a
+near-tie and flip a case. On this corpus it did not: every cached component
+(`nomic-embed-text-v1.5`) is already an exact f32 (`Math.fround` is a
+no-op on all 271,872 values), so packing is lossless. The tightest HI pair
+(tea, 0.952246) sits 0.002246 above `DEDUP_HI` 0.95 — the gap is three
+orders above f32 ulp. Primary hit **text** order matched on every golden
+case (opaque ids differ because `nextId()` is `Date.now()`). No tolerance
+was added: a silent epsilon would hide a real inequivalence, and this run
+did not need one.
 
 Normal runs are **offline and deterministic** — they read `embeddings.cache.json` and
 never touch the network. Adding a new corpus case needs its embeddings once:
@@ -93,6 +114,7 @@ eval/
                          PLUS the reporting-metric registry (recall_at_k,
                          duplicate_rate, extraction_precision, extraction_recall, mrr)
   run.js                 the golden runner + regression gate
+                         (`--store sqlite` = same cases, SqliteStore; parity gate)
   measure.js             reporting-metric runner (A/B; does not touch golden.json)
   golden.json            last accepted scorecard (written by --accept)
   save-time-cost.js      Phase 0.1 cost sweep (neighbor-scan + EdgeStore.save p50/p95/p99

@@ -9,6 +9,15 @@ stable; sophistication grows in the substrate, not in the API.
 ## [Unreleased]
 
 ### Added
+- **RM-07 slice 3 — RM-00 golden on SqliteStore.** `eval/run.js --store sqlite`
+  (also `RESONANCE_STORE=sqlite`; `--store` wins) runs the same corpora through
+  `SqliteStore` behind the Store seam — same `memory-core.js`, no forked recall
+  path. Offline + deterministic (vectors from `eval/embeddings.cache.json`).
+  The sqlite gate is two-sided parity against `golden.json`; `--accept` is
+  jsonl-only. **27/31 identical case-for-case, no flips.** Cache embeddings
+  are already exact f32, so Float32 BLOB packing is lossless on this embedder;
+  no cosine-tolerance was added. JSONL stays default (switch is slice 4, after
+  2b export).
 - **RM-07 slice 2a — streaming JSONL→SQLite migrator.** Opt-in CLI
   (`node entry.js --migrate` / `npm run migrate`). 10-step protocol: stream
   line-at-a-time into `.db.migrating` (never `readFileSync` — that is the S1
