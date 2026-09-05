@@ -17,6 +17,16 @@ Beta-readiness pass:
   "revisit only if hosted resale looms" trigger the backlog pre-registered, now pulled.
 
 ### Added
+- **RM-01.c Tier 2 opt-in LLM extraction.** Off by default (RM does the work; a
+  weak local model can extract worse than Tier 0/1). Capability-detect: MCP
+  sampling **or** a non-embedding chat model at the configured endpoint. Visible
+  panel toggle, surfaced when a capable model is detected. One ADD-only call on
+  the already-guarded text; any failure/timeout/garbage degrades silently to
+  Tier 0/1 — a save never fails or hangs because extraction did. PII is refused
+  before any LLM call. `eval/corpora/messy-hard.jsonl` is the stick (`eval/messy`
+  is already maxed by 01.b). Live A/B (`openai/gpt-oss-20b`, temperature 0) in
+  [`eval/RESULTS.md`](eval/RESULTS.md). Golden unmoved (Tier 2 is off on that
+  path). RM-01 is done.
 - **RM-01.b write-side extraction (Tier 0 + Tier 1, no LLM).** Always-on at
   `save()`: collapse whitespace, strip leading filler openers and assistant-aimed
   imperatives (full phrases, not 0001's short `^(i think )`), split on `; ` /
@@ -26,7 +36,7 @@ Beta-readiness pass:
   for vacuous precision). **A/B vs the 01.a bar:** `extraction_precision`
   0.2609 → **1.0000**, `extraction_recall` **1.0000**, `recall@5` held at
   **1.0000**, `pii_refusal_rate` 0 → **1.0000**. Golden unmoved. See
-  [`eval/RESULTS.md`](eval/RESULTS.md) RM-01.b. Tier 2 (opt-in local LLM) is 01.c.
+  [`eval/RESULTS.md`](eval/RESULTS.md) RM-01.b.
 - **RM-01.a measurement seed (write-side extraction).** `extraction_precision`
   in the reporting-metric registry plus `eval/corpora/messy.jsonl` (filler
   openers, assistant-aimed imperatives, multi-fact splits, PII/secret

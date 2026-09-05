@@ -1650,6 +1650,7 @@ section("field signals: ROC / TBR (RM-00)");
 const {
   fieldSignals,
   register, listMetrics, computeMetric, explainMetric, makeRecallAtK, parsePrimaryHits,
+  isCorrectStored, COVER_MAX_WORDS,
 } = require("./eval/metrics.js");
 
 const relOut =
@@ -1905,6 +1906,42 @@ test("messy corpus loads; every write has gold_facts + noise labels", () => {
   assert.ok(pii.length >= 4, "a few secret/PII shapes");
 });
 
+test("messy-hard corpus loads; every write is a long blob with gold facts", () => {
+  const { loadScenarios } = require("./eval/measure.js");
+  const scenarios = loadScenarios(path.join(__dirname, "eval", "corpora", "messy-hard.jsonl"));
+  assert.strictEqual(scenarios.length, 1);
+  const s = scenarios[0];
+  assert.strictEqual(s.extract_match, "cover");
+  assert.ok(s.writes.length >= 8, "enough hard cases");
+  assert.ok(s.queries.length >= 12, "enough queries for recall@5");
+  const writeIds = new Set(s.writes.map((w) => w.id));
+  const bands = new Set(s.writes.map((w) => w.band));
+  for (const need of ["implicit", "narrative", "coreference", "multi-and"]) {
+    assert.ok(bands.has(need), "messy-hard missing band " + need);
+  }
+  for (const w of s.writes) {
+    assert.ok(Array.isArray(w.gold_facts) && w.gold_facts.length >= 1, w.id + " needs gold");
+    assert.ok(w.text.trim().split(/\s+/).length > COVER_MAX_WORDS,
+      w.id + " blob must exceed COVER_MAX_WORDS so Tier 0 fails cover-match");
+    assert.strictEqual(w.extract_match, "cover");
+    assert.ok(!w.expect_refusal, w.id + " is not a PII case");
+    // Tier 0 cannot emit these gold facts: no '; '/ 'and also' split, and
+    // the gold string is not the blob.
+    const prepared = prepareWrite(w.text);
+    assert.ok(prepared.ok && prepared.facts.length === 1, w.id + " Tier 0 keeps one blob");
+    assert.strictEqual(prepared.facts[0], w.text.replace(/\s+/g, " ").trim());
+    for (const g of w.gold_facts) {
+      assert.ok(!isCorrectStored(prepared.facts[0], [g], w.noise || [], "cover"),
+        w.id + " Tier 0 blob must not cover gold " + JSON.stringify(g));
+    }
+  }
+  for (const q of s.queries) {
+    assert.ok(Array.isArray(q.relevant_writes) && q.relevant_writes.length, q.id);
+    assert.ok(Array.isArray(q.relevant_facts) && q.relevant_facts.length, q.id);
+    for (const id of q.relevant_writes) assert.ok(writeIds.has(id), q.id + " missing write " + id);
+  }
+});
+
 test("messy corpus: current-save simulation is the pre-extraction baseline", () => {
   const { loadScenarios } = require("./eval/measure.js");
   const s = loadScenarios(path.join(__dirname, "eval", "corpora", "messy.jsonl"))[0];
@@ -2071,6 +2108,114 @@ test("0001's short 'I think ' opener is NOT used (would half-strip the gold case
   const kept = prepareWrite("I think Samuel likes dogs named Rex");
   assert.ok(kept.facts[0].toLowerCase().startsWith("i think "),
     "short 'I think ' must not fire; got " + kept.facts[0]);
+});
+
+// ------------------------------------------------- RM-01.c Tier 2 (pure)
+section("RM-01.c Tier 2 extraction (pure, no network)");
+
+const {
+  parseExtractJson, sanityCheckExtract, acceptExtract, pickChatModel,
+  isEmbeddingModel, clientSupportsSampling, readExtractEnabled,
+  chatCompletionsUrl, modelsUrl, EXTRACT_MAX_FACTS,
+} = require("./extract.js");
+
+test("parseExtractJson: minified object, fenced, think-stripped", () => {
+  assert.deepStrictEqual(
+    parseExtractJson('{"facts":["I have a dog named Rex"],"skip":false}'),
+    { facts: ["I have a dog named Rex"], skip: false }
+  );
+  assert.deepStrictEqual(
+    parseExtractJson("```json\n{\"facts\":[\"A\"],\"skip\":false}\n```"),
+    { facts: ["A"], skip: false }
+  );
+  assert.deepStrictEqual(
+    parseExtractJson("<think>planning</think>{\"facts\":[\"B\"],\"skip\":false}"),
+    { facts: ["B"], skip: false }
+  );
+  assert.throws(() => parseExtractJson("not json at all"), /no JSON|malformed/);
+  assert.throws(() => parseExtractJson("{\"facts\":\"nope\"}"), /facts is not an array/);
+});
+
+test("sanityCheckExtract rejects skip, empty, too many, too long, prompt echo", () => {
+  const src = "short source text";
+  assert.strictEqual(sanityCheckExtract({ facts: ["ok fact here"], skip: false }, src).ok, true);
+  assert.strictEqual(sanityCheckExtract({ facts: [], skip: true }, src).ok, false);
+  assert.strictEqual(sanityCheckExtract({ facts: [], skip: false }, src).ok, false);
+  const many = [];
+  for (let i = 0; i < EXTRACT_MAX_FACTS + 1; i++) many.push("fact number " + i);
+  assert.strictEqual(sanityCheckExtract({ facts: many, skip: false }, src).reason, "too-many");
+  assert.strictEqual(sanityCheckExtract({
+    facts: ["this extracted fact is way longer than the source by a large margin xx"],
+    skip: false,
+  }, src).reason, "too-long");
+  const longSrc = "I have a dog named Rex and I live in Texas now as of last spring really";
+  assert.strictEqual(sanityCheckExtract({
+    facts: ["Extract durable facts"],
+    skip: false,
+  }, longSrc).reason, "prompt-echo");
+});
+
+test("acceptExtract: garbage degrades to null (keep Tier 0)", () => {
+  const src = "I have a dog named Rex and I live in Texas now as of last spring";
+  assert.deepStrictEqual(
+    acceptExtract({ facts: ["I have a dog named Rex"], skip: false }, src),
+    ["I have a dog named Rex"]
+  );
+  assert.strictEqual(acceptExtract({ facts: [], skip: true }, src), null);
+  assert.strictEqual(acceptExtract("hello", src), null);
+  assert.strictEqual(acceptExtract({ facts: "nope" }, src), null);
+  assert.strictEqual(acceptExtract(null, src), null);
+  assert.strictEqual(acceptExtract({ facts: [1, 2] }, src), null);
+});
+
+test("pickChatModel skips embedding ids; sampling capability is the initialize flag", () => {
+  assert.ok(isEmbeddingModel("text-embedding-nomic-embed-text-v1.5"));
+  assert.ok(!isEmbeddingModel("qwen3.6-35b-a3b"));
+  const body = { data: [
+    { id: "text-embedding-nomic-embed-text-v1.5" },
+    { id: "openai/gpt-oss-20b" },
+    { id: "qwen3.8-27b" },
+  ] };
+  assert.strictEqual(pickChatModel(body), "openai/gpt-oss-20b");
+  assert.strictEqual(pickChatModel(body, "qwen3.8-27b"), "qwen3.8-27b");
+  assert.strictEqual(pickChatModel({ data: [{ id: "text-embedding-nomic-embed-text-v1.5" }] }), null);
+  assert.ok(clientSupportsSampling({ capabilities: { sampling: {} } }));
+  assert.ok(!clientSupportsSampling({ capabilities: { tools: {} } }));
+  assert.ok(!clientSupportsSampling(null));
+});
+
+test("readExtractEnabled: live-config wins over env, default off", () => {
+  const prev = process.env.RESONANCE_EXTRACT_LLM;
+  try {
+    delete process.env.RESONANCE_EXTRACT_LLM;
+    assert.strictEqual(readExtractEnabled(null), false, "off by default");
+    assert.strictEqual(readExtractEnabled({ extract_llm: true }), true);
+    process.env.RESONANCE_EXTRACT_LLM = "1";
+    assert.strictEqual(readExtractEnabled(null), true, "env when no config");
+    assert.strictEqual(readExtractEnabled({ extract_llm: false }), false, "config wins");
+  } finally {
+    if (prev === undefined) delete process.env.RESONANCE_EXTRACT_LLM;
+    else process.env.RESONANCE_EXTRACT_LLM = prev;
+  }
+});
+
+test("chat URL is derived from the embed endpoint, not a second config", () => {
+  assert.strictEqual(
+    chatCompletionsUrl("http://localhost:1234/v1/embeddings"),
+    "http://localhost:1234/v1/chat/completions"
+  );
+  assert.strictEqual(modelsUrl("http://localhost:1234/v1/embeddings"), "http://localhost:1234/v1/models");
+});
+
+test("cover-match: a short paraphrase hits gold; a long blob does not", () => {
+  const gold = ["I have a thyroid condition"];
+  assert.ok(isCorrectStored("I have a thyroid condition", gold, [], "cover"));
+  assert.ok(isCorrectStored("The user has a thyroid condition", gold, [], "cover"));
+  const blob = "Stopped by the clinic after work and had a great chat with Dr. Chen about my thyroid. She wants me back in 3 months and said to keep taking the same dose until then. Felt better just having a plan.";
+  assert.ok(blob.trim().split(/\s+/).length > COVER_MAX_WORDS, "fixture blob must exceed the atomic-length gate");
+  assert.ok(!isCorrectStored(blob, gold, [], "cover"), "Tier 0 blob is not an extracted fact");
+  assert.ok(!isCorrectStored("The user has a thyroid condition", gold, [], "exact"),
+    "exact match (messy.jsonl) still rejects paraphrase");
 });
 
 // ------------------------------------------------- warm field (Phase 1 / PR1)
@@ -2305,6 +2450,17 @@ async function asyncTests() {
       "duplicates writes have no gold_facts; extraction_precision is not a duplicates number");
   });
 
+  await atest("messy-hard corpus: Tier 0 baseline is low (cached embed, no LLM)", async () => {
+    const { loadScenarios, runScenario } = require("./eval/measure.js");
+    const scenarios = loadScenarios(path.join(__dirname, "eval", "corpora", "messy-hard.jsonl"));
+    const r = await runScenario(scenarios[0], { k: 5 });
+    assert.ok(r.extraction_precision, "messy-hard writes are labeled");
+    assert.strictEqual(scenarios[0].extract_match, "cover");
+    assert.strictEqual(r.extraction_recall.rate, 0, "Tier 0 cannot recover implicit gold");
+    assert.strictEqual(r.extraction_precision.n_correct, 0, "narrative blobs are not atomic facts");
+    assert.strictEqual(r.metrics.recall_at_k, 0, "facts_only relevant ids miss on the blob");
+  });
+
   await atest("messy corpus: extraction_precision via pipeline.js (current save, cached embed)", async () => {
     const { loadScenarios, runScenario } = require("./eval/measure.js");
     const scenarios = loadScenarios(path.join(__dirname, "eval", "corpora", "messy.jsonl"));
@@ -2425,6 +2581,115 @@ async function asyncTests() {
     const msg = await core.save("I live in Texas; my API key is sk-abcdefghijklmnopqrstuvwxyz123456");
     assert.ok(/not saved/i.test(msg));
     assert.strictEqual(store.current().length, 0);
+  });
+
+  section("RM-01.c save() wiring (Tier 2, mock LLM)");
+
+  function tier2Core(file, extra) {
+    let embedCalls = 0;
+    const seen = [];
+    const store = new JsonlStore(tmp(file));
+    const embed = async (texts) => {
+      embedCalls += texts.length;
+      return texts.map((t) => {
+        let i = seen.indexOf(t);
+        if (i < 0) { i = seen.length; seen.push(t); }
+        const v = new Array(8).fill(0);
+        v[i % 8] = 1;
+        v[(i * 3 + 1) % 8] = 0.2;
+        return v;
+      });
+    };
+    const sent = [];
+    const opts = Object.assign({ store, embed }, extra || {});
+    if (typeof opts.extract === "function") {
+      const inner = opts.extract;
+      opts.extract = async (text) => { sent.push(text); return inner(text); };
+    }
+    return { store, core: createCore(opts), embeds: () => embedCalls, sent };
+  }
+
+  await atest("toggle off: extract is never called; byte-identical to 01.b", async () => {
+    let called = 0;
+    const { store, core } = tier2Core("rm01c-off.jsonl", {
+      extractEnabled: () => false,
+      extract: async () => { called++; return { facts: ["SHOULD NOT STORE"], skip: false }; },
+    });
+    await core.save("I think you should know that Samuel prefers concise answers");
+    assert.strictEqual(called, 0);
+    assert.strictEqual(store.current()[0].text, "Samuel prefers concise answers");
+  });
+
+  await atest("toggle on + mock facts: ADD-only, those facts are what is stored", async () => {
+    const { store, core, sent } = tier2Core("rm01c-on.jsonl", {
+      extractEnabled: () => true,
+      extract: async () => ({ facts: ["I have a green parrot named Mango", "I go to the gym at 5am"], skip: false }),
+    });
+    const msg = await core.save("Life at home is loud in a good way. Between the parrot (Mango, the green one) and getting up for the gym at 5am, quiet evenings are rare and I would not trade it.");
+    assert.ok(/Saved 2 memories/.test(msg), msg);
+    const texts = store.current().map((r) => r.text).sort();
+    assert.deepStrictEqual(texts, ["I go to the gym at 5am", "I have a green parrot named Mango"]);
+    assert.strictEqual(sent.length, 1, "one extraction call");
+    assert.ok(!/Life at home is loud/.test(store.current().map((r) => r.text).join(" ")),
+      "the narrative blob is not stored alongside the facts (extraction replaces, ADD-only vs existing memories)");
+  });
+
+  await atest("mock throws / times out / returns garbage: silent degrade to Tier 0/1", async () => {
+    const src = "I think you should know that Samuel prefers concise answers";
+    const { store: s1, core: c1 } = tier2Core("rm01c-throw.jsonl", {
+      extractEnabled: () => true,
+      extract: async () => { throw new Error("boom"); },
+    });
+    const m1 = await c1.save(src);
+    assert.ok(/Saved/.test(m1), m1);
+    assert.strictEqual(s1.current()[0].text, "Samuel prefers concise answers");
+
+    const { store: s2, core: c2 } = tier2Core("rm01c-timeout.jsonl", {
+      extractEnabled: () => true,
+      extractTimeoutMs: () => 30,
+      extract: () => new Promise(() => {}),
+    });
+    const t0 = Date.now();
+    const m2 = await c2.save(src);
+    assert.ok(Date.now() - t0 < 2000, "timeout must not hang save");
+    assert.ok(/Saved/.test(m2), m2);
+    assert.strictEqual(s2.current()[0].text, "Samuel prefers concise answers");
+
+    const { store: s3, core: c3 } = tier2Core("rm01c-garbage.jsonl", {
+      extractEnabled: () => true,
+      extract: async () => ({ facts: "not-an-array", skip: false }),
+    });
+    await c3.save(src);
+    assert.strictEqual(s3.current()[0].text, "Samuel prefers concise answers");
+  });
+
+  await atest("PII is refused BEFORE any LLM call (secret is never sent)", async () => {
+    const { store, core, sent } = tier2Core("rm01c-pii.jsonl", {
+      extractEnabled: () => true,
+      extract: async (t) => ({ facts: ["leaked: " + t], skip: false }),
+    });
+    const msg = await core.save("my API key is sk-abcdefghijklmnopqrstuvwxyz123456");
+    assert.ok(/not saved/i.test(msg), msg);
+    assert.strictEqual(store.current().length, 0);
+    assert.strictEqual(sent.length, 0, "extract must not see a secret");
+  });
+
+  await atest("capability-detect false: toggle on still no-ops (extract never called)", async () => {
+    let called = 0;
+    const { store, core } = tier2Core("rm01c-incapable.jsonl", {
+      extractEnabled: () => true,
+      extractCapable: () => false,
+      extract: async () => { called++; return { facts: ["SHOULD NOT STORE"], skip: false }; },
+    });
+    await core.save("I think you should know that Samuel prefers concise answers");
+    assert.strictEqual(called, 0);
+    assert.strictEqual(store.current()[0].text, "Samuel prefers concise answers");
+  });
+
+  await atest("default createCore: Tier 2 off, no extract injector, 01.b path", async () => {
+    const { store, core } = extractCore("rm01c-default.jsonl");
+    await core.save("FYI, the Friday standup is at 10am");
+    assert.strictEqual(store.current()[0].text, "The Friday standup is at 10am");
   });
 
   section("RM-02.b cosine-banded dedup at save");

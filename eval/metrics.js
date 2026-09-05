@@ -378,17 +378,62 @@ function joinExtractCases(results, corpus) {
       expect_refusal: !!(merged.expect_refusal || c.expect_refusal || r.expect_refusal),
       refused: !!(r.refused || merged.refused),
       stored: storedList(r).length ? storedList(r) : storedList(merged),
+      extract_match: merged.extract_match || c.extract_match || r.extract_match || null,
     });
   }
   return out;
 }
 
-function isCorrectStored(text, goldFacts, noiseSpans) {
+/*
+ * Cover-match (messy-hard / Tier 2). Exact equality is the right test for
+ * deterministic Tier 0 (a blob that *contains* the gold is still noise).
+ * An LLM will paraphrase, so messy-hard labels `extract_match: "cover"`:
+ * a stored record matches iff it is short (atomic, not the narrative blob)
+ * and covers the gold's content-bearing tokens (or contains / is contained
+ * in the gold string). A long blob fails the word-count gate on purpose —
+ * that is the Tier-0-on-messy-hard miss the A/B is supposed to show.
+ */
+const COVER_MAX_WORDS = 22;
+const COVER_MIN = 0.55;
+const COVER_STOP = new Set([
+  "the", "a", "an", "and", "or", "to", "of", "in", "on", "for", "with",
+  "my", "i", "is", "am", "at", "by", "from", "that", "this", "it", "as",
+  "be", "are", "was", "were", "me", "we", "our",
+]);
+
+function wordCount(s) {
+  return String(s || "").trim().split(/\s+/).filter(Boolean).length;
+}
+
+function factTokens(s) {
+  return new Set(normFact(s).split(/[^a-z0-9]+/).filter((t) => t.length > 1 && !COVER_STOP.has(t)));
+}
+
+function coverScore(stored, gold) {
+  const A = factTokens(stored);
+  const B = factTokens(gold);
+  if (!B.size) return 0;
+  let inter = 0;
+  for (const t of B) if (A.has(t)) inter++;
+  return inter / B.size;
+}
+
+function isCorrectStored(text, goldFacts, noiseSpans, match) {
   const n = normFact(text);
   if (!n) return false;
   for (const span of noiseSpans || []) {
     const ns = normFact(span);
     if (ns && n.includes(ns)) return false;
+  }
+  if (match === "cover") {
+    if (wordCount(n) > COVER_MAX_WORDS) return false;
+    return (goldFacts || []).some((g) => {
+      const ng = normFact(g);
+      if (!ng) return false;
+      if (n === ng) return true;
+      if (n.includes(ng) || ng.includes(n)) return true;
+      return coverScore(n, ng) >= COVER_MIN;
+    });
   }
   return (goldFacts || []).some((g) => n === normFact(g));
 }
@@ -405,9 +450,10 @@ function extractionPrecisionStats(results, corpus) {
     const stored = c.stored || [];
     let correct = 0;
     let noisy = 0;
+    const match = c.extract_match === "cover" ? "cover" : "exact";
     for (const text of stored) {
       nStored++;
-      if (isCorrectStored(text, c.gold_facts, c.noise)) {
+      if (isCorrectStored(text, c.gold_facts, c.noise, match)) {
         nCorrect++;
         correct++;
       } else {
@@ -503,10 +549,11 @@ function extractionRecallStats(results, corpus) {
   const byCase = [];
   for (const c of cases) {
     const stored = c.stored || [];
+    const match = c.extract_match === "cover" ? "cover" : "exact";
     let hit = 0;
     for (const g of c.gold_facts || []) {
       nGold++;
-      if (stored.some((text) => isCorrectStored(text, [g], c.noise))) {
+      if (stored.some((text) => isCorrectStored(text, [g], c.noise, match))) {
         nHit++;
         hit++;
       }
@@ -609,4 +656,5 @@ module.exports = {
   register, getMetric, listMetrics, computeMetric, explainMetric, computeAll,
   makeRecallAtK, groupsFromWrites, parsePrimaryHits,
   normFact, isCorrectStored, isSaveRefusal,
+  COVER_MAX_WORDS, coverScore,
 };

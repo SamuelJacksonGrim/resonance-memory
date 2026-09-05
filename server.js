@@ -46,6 +46,7 @@ const path = require("path");
 const { EdgeStore, hebbianDecayType } = require("./edges.js");
 const { JsonlStore } = require("./store.js");
 const { createCore, defaultGetEdges, readDedupThresholds } = require("./memory-core.js");
+const extract = require("./extract.js");
 const { WarmField } = require("./warm.js");
 // Single source of truth for the version, so serverInfo can't drift from package.json.
 // esbuild inlines this JSON into the bundle, so it resolves in the SEA build too.
@@ -94,6 +95,69 @@ function dedupThresholds() {
     return readDedupThresholds(JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8")));
   } catch { /* no config yet -> env / defaults */ }
   return readDedupThresholds(null);
+}
+// RM-01.c Tier 2. Live-config `extract_llm` wins over env RESONANCE_EXTRACT_LLM,
+// default false. Read per save so the panel toggle needs no restart, same as
+// the field. Capability is a separate probe: toggle-on without a capable path
+// is a silent no-op, not a hung save.
+function extractEnabled() {
+  try {
+    return extract.readExtractEnabled(JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8")));
+  } catch { /* no config yet -> env / default off */ }
+  return extract.readExtractEnabled(null);
+}
+
+let clientSampling = false;
+let capCache = { at: 0, capable: false, model: null };
+const CAP_TTL_MS = 30000;
+
+async function extractCapable() {
+  if (clientSampling) return true;
+  if (Date.now() - capCache.at < CAP_TTL_MS) return capCache.capable;
+  const probe = await extract.probeChatCapability({
+    modelsUrl: extract.modelsUrl(EMBED_URL),
+    preferred: process.env.RESONANCE_EXTRACT_MODEL,
+  });
+  capCache = { at: Date.now(), capable: probe.capable, model: probe.model };
+  return probe.capable;
+}
+
+const pendingSamples = new Map();
+let sampleSeq = 0;
+
+function mcpSample(params, timeoutMs) {
+  const ms = timeoutMs != null ? timeoutMs : extract.EXTRACT_TIMEOUT_MS;
+  return new Promise((resolve, reject) => {
+    const id = "rm-extract-" + (++sampleSeq);
+    const timer = setTimeout(() => {
+      if (!pendingSamples.has(id)) return;
+      pendingSamples.delete(id);
+      reject(new Error("extract timeout"));
+    }, ms);
+    pendingSamples.set(id, {
+      resolve(v) { clearTimeout(timer); resolve(v); },
+      reject(e) { clearTimeout(timer); reject(e); },
+    });
+    send({ jsonrpc: "2.0", id, method: "sampling/createMessage", params });
+  });
+}
+
+async function extractFn(text) {
+  const timeoutMs = extract.envNumber("RESONANCE_EXTRACT_TIMEOUT_MS", extract.EXTRACT_TIMEOUT_MS);
+  if (clientSampling) {
+    return extract.extractFacts(text, { sample: mcpSample, timeoutMs });
+  }
+  const model = capCache.model || process.env.RESONANCE_EXTRACT_MODEL;
+  const use = model || (await extract.probeChatCapability({
+    modelsUrl: extract.modelsUrl(EMBED_URL),
+    preferred: process.env.RESONANCE_EXTRACT_MODEL,
+  })).model;
+  if (!use) throw new Error("extract: no chat model");
+  return extract.extractFacts(text, {
+    endpoint: extract.chatCompletionsUrl(EMBED_URL),
+    model: use,
+    timeoutMs,
+  });
 }
 const EMBED_URL = process.env.EMBED_ENDPOINT || "http://localhost:1234/v1/embeddings";
 const EMBED_MODEL = process.env.EMBED_MODEL || "text-embedding-nomic-embed-text-v1.5";
@@ -146,6 +210,8 @@ const core = createCore({
   warmEnabled, getWarm, getEdges: defaultGetEdges,
   saveSeed: () => true,          // production: a just-saved fact is warm without a recall
   warmTrace, warmEdgeCap,
+  extractEnabled, extractCapable, extract: extractFn,
+  extractTimeoutMs: () => extract.envNumber("RESONANCE_EXTRACT_TIMEOUT_MS", extract.EXTRACT_TIMEOUT_MS),
 });
 
 // -------------------------------------------------------------------- tools
@@ -210,6 +276,7 @@ function send(msg) { process.stdout.write(JSON.stringify(msg) + "\n"); }
 async function handle(req) {
   const { id, method, params } = req;
   if (method === "initialize") {
+    clientSampling = extract.clientSupportsSampling(params);
     return { jsonrpc: "2.0", id, result: {
       protocolVersion: (params && params.protocolVersion) || "2024-11-05",
       capabilities: { tools: {} },
@@ -247,18 +314,35 @@ try {
 } catch { /* non-fatal: maintenance must never break startup */ }
 
 let buf = "";
+let requestChain = Promise.resolve();
 process.stdin.setEncoding("utf8");
-process.stdin.on("data", async (chunk) => {
+process.stdin.on("data", (chunk) => {
   buf += chunk;
   let nl;
   while ((nl = buf.indexOf("\n")) >= 0) {
     const line = buf.slice(0, nl).trim();
     buf = buf.slice(nl + 1);
     if (!line) continue;
-    let req;
-    try { req = JSON.parse(line); } catch { continue; }
-    const res = await handle(req);
-    if (res) send(res);
+    let msg;
+    try { msg = JSON.parse(line); } catch { continue; }
+    // Response to an outbound sampling/createMessage. Resolve immediately so
+    // a save() waiting on mcpSample can finish; do NOT queue behind handle().
+    if (msg && msg.id != null && pendingSamples.has(msg.id) && msg.method == null) {
+      const p = pendingSamples.get(msg.id);
+      pendingSamples.delete(msg.id);
+      if (msg.error) p.reject(new Error((msg.error && msg.error.message) || "sampling error"));
+      else p.resolve(msg.result);
+      continue;
+    }
+    const req = msg;
+    requestChain = requestChain.then(async () => {
+      const res = await handle(req);
+      if (res) send(res);
+    }).catch((e) => {
+      if (req && req.id !== undefined) {
+        send({ jsonrpc: "2.0", id: req.id, error: { code: -32603, message: String(e && e.message || e) } });
+      }
+    });
   }
 });
 

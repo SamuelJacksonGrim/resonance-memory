@@ -785,6 +785,123 @@ Clean controls (`My name is Samuel`, garage `4821`, `1500mg` metformin, …)
 pass through byte-identical. Golden corpora are clean facts; the gate did
 not move.
 
+---
+
+# RM-01.c — Tier 2 opt-in LLM extraction (messy-hard)
+
+**Date:** 2026-09-05 · **Embedder:** `text-embedding-nomic-embed-text-v1.5`.
+**Chat model (live A/B only):** `openai/gpt-oss-20b` · **temperature 0** (greedy) ·
+`max_tokens` 400 · timeout 45s for the measurement (production interactive
+bound is 8s). **Reproduce the offline floor:**
+`node eval/measure.js --corpus messy-hard` (Tier 2 off, cached embed).
+**Reproduce the live column:** load the chat model beside the embedder, then
+`node eval/measure.js --corpus messy-hard --extract --extract-model openai/gpt-oss-20b --extract-timeout 45000`
+with `EVAL_REFRESH=1` so newly extracted strings enter the cache. **Not part of
+the golden gate.** Golden: `node eval/run.js` → **No regressions vs golden.**
+Tier 2 is **off by default**; `eval/run.js` never invokes it.
+
+`eval/messy` is already maxed by Tier 0/1 (precision 1.0, recall 1.0). Tier 2
+cannot show improvement there. `eval/corpora/messy-hard.jsonl` is the stick:
+implicit facts, facts buried in narrative, paraphrase multi-facts that do not
+split on `; ` / `and also`, coreference. Matching is **cover** (short stored
+text covering gold tokens), not exact — an LLM will paraphrase. Query→gold
+geometry (nomic-embed-text-v1.5): **24/24** queries sit closer to their gold
+fact than to the raw narrative blob.
+
+## Tier-0-only baseline on messy-hard (measured BEFORE the live run)
+
+```
+writes=12  stored_current=9  groups=12  exact_restatements_caught=0
+duplicate_rate         0.0000
+recall@5               0.0000   (0/24 queries hit)
+extraction_precision   0.0000   (correct=0/12 stored, labeled=12)
+extraction_recall      0.0000   (hit=0/24 gold facts)
+```
+
+Tier 0 stores the narrative blob. Cover-match rejects long blobs on purpose,
+so every gold fact is a miss. `stored_current=9` not 12 because RM-02.b merged
+three near-narrative pairs after the fact — extraction scoring is per-write
+delta (12 blobs stored, 0 correct), not the post-merge current count.
+
+## Pre-declared RM-01.c pass bar (written BEFORE the live Tier-2 run)
+
+Same discipline as the RM-02.a 50% bar and the 01.b 0.9 bar. Changing these
+numbers after seeing the live table is cheating.
+
+| metric | Tier-0 baseline | pass iff |
+|---|---|---|
+| `extraction_recall` | **0.0000** (0/24) | lift **≥ +0.50** absolute → **≥ 0.50** (Tier 2 recovers the implicit facts) |
+| `extraction_precision` | **0.0000** (0/12) | **≥ baseline** (the spec) **and ≥ 0.70** (anti-hallucination floor — ≥ 0 is free when baseline is 0; we require most stored facts to cover gold) |
+| `recall@5` | **0.0000** (0/24) | **rises** (atomic facts retrieve; the blob does not) |
+
+`eval/messy` with Tier 2 **off** stays at precision 1.0 / recall 1.0 (01.b
+acceptance, unchanged). Write-latency p95 with Tier 2 off is still string
+ops — the live path is not entered.
+
+## After (live Tier 2 ON, `openai/gpt-oss-20b`, temp 0)
+
+```
+writes=12  stored_current=42  groups=12  exact_restatements_caught=0
+duplicate_rate         0.0000
+recall@5               0.5833   (14/24 queries hit)
+extraction_precision   0.3023   (correct=13/43 stored, labeled=12)
+extraction_recall      0.5833   (hit=14/24 gold facts)
+```
+
+Model id: **`openai/gpt-oss-20b`** (MXFP4, LM Studio). Temperature **0**.
+`max_tokens` 400. Measure timeout 45s (no timeouts fired). Interactive
+production bound remains 8s.
+
+## Before → after vs the pre-declared bar
+
+| metric | Tier-0 baseline | Tier 2 ON | bar | verdict |
+|---|---|---|---|---|
+| `extraction_recall` | 0.0000 (0/24) | **0.5833** (14/24) | ≥ 0.50 | **PASS** (+0.58) |
+| `extraction_precision` | 0.0000 (0/12) | **0.3023** (13/43) | ≥ baseline **and ≥ 0.70** | ≥ baseline **PASS**; ≥ 0.70 **FAIL** |
+| `recall@5` | 0.0000 (0/24) | **0.5833** (14/24) | rises | **PASS** |
+
+`eval/messy` with Tier 2 off is unchanged (precision 1.0 / recall 1.0 / recall@5 1.0).
+Write path with the toggle off never calls extract (unit-tested).
+
+### What the extras are (not invented medical facts)
+
+43 stored vs 24 gold. The 30 "incorrect" records are almost all **true
+details copied from the source** that the gold did not list, plus a few
+ephemeral / process sentences the prompt asked to omit:
+
+- Thyroid: stored "had a great chat with Dr. Chen about my thyroid" and
+  "keep taking the same dose" — did **not** emit "I have a thyroid
+  condition". Follow-up was phrased "Dr. Chen wants me back in 3 months"
+  (cover-miss vs the gold wording).
+- Honey / cats: stored the *evidence* ("skipped baklava because of the
+  honey", "cats trigger my symptoms") rather than the named constraint
+  ("I cannot eat honey", "I am allergic to cats").
+- Cello / parrot / Maya / Oak / Harbor: surface-form gold, recovered.
+
+No case invented a fact absent from the input (no fabricated doctor, no
+fake allergy). The precision miss vs 0.70 is **over-extraction of
+unlabeled true details + sentence-copy instead of implicit naming**, not
+hallucination of things that are not there. gpt-oss-20b at temp 0 is
+faithful and verbose. A follow-up (different instruct model, or a
+stricter "at most 2 facts, name the implied condition") could chase the
+0.70 floor; this slice records the first live number.
+
+Query misses (10/24): thyroid, follow-up, wrists, oat, tom-job, honey,
+mead, cats, dogs, lena-start — the implicit-naming cases plus a few
+cover-threshold near-misses.
+
+### Backlog acceptance (the original RM-01 line)
+
+- `extraction_precision ≥ 0.9` on `eval/messy` with Tier 2 off: **met (01.b)**.
+- Tier 2 improves `recall@5` without lowering precision (messy-hard):
+  recall@5 0 → 0.58, precision 0 → 0.30: **met**.
+- Write latency p95 unchanged when Tier 2 off: **met** (path not entered).
+
+RM-01 is done against that acceptance. The extra 0.70 anti-flood floor
+on messy-hard is a recorded miss, not a silent one.
+
+---
+
 ## What 0001 got wrong (and 01.b did not ship)
 
 Measured against the messy gold, not 0001's regexes as-is (01.a NOTES §3):

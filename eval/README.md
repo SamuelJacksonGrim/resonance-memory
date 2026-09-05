@@ -33,7 +33,7 @@ $env:EVAL_REFRESH=1; npm run measure; Remove-Item Env:EVAL_REFRESH
 That hits a live LM Studio (`/v1/embeddings` on :1234), grows the cache, and you commit
 the diff. The two-step ritual is a feature: fixtures stay honest and reviewable.
 
-Measurement corpora (`duplicates.jsonl`, `messy.jsonl`) are skipped by `npm run eval`,
+Measurement corpora (`duplicates.jsonl`, `messy.jsonl`, `messy-hard.jsonl`) are skipped by `npm run eval`,
 so a new write or query there is refreshed with `EVAL_REFRESH=1 npm run measure` instead.
 
 ## What it measures
@@ -72,7 +72,9 @@ bar, ("RM-02.b") for the measured win at save-time, and ("RM-02.c") for the
 `recall@5` held at 1.0000. RM-02 is done. See `RESULTS.md` ("RM-01.a") for the
 pre-extraction baseline on `eval/messy` and ("RM-01.b") for the measured win:
 `extraction_precision` 0.2609 → 1.0000, `extraction_recall` 1.0000, `recall@5` held,
-`pii_refusal_rate` 0 → 1.0000.
+`pii_refusal_rate` 0 → 1.0000. RM-01.c adds `eval/corpora/messy-hard.jsonl` (implicit
+facts Tier 0 cannot split) and a live Tier 2 A/B (`--extract`); that number is **not**
+the golden gate. See `RESULTS.md` ("RM-01.c").
 
 ## Layout
 

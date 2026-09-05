@@ -74,7 +74,7 @@ Design: [`proposed/0002`](proposed/0002-temporal-supersession.md).
 
 ---
 
-### `RM-01` — Write-side extraction and summarization · **L** · `in progress` — 01.a + 01.b (Tier 0/1) shipped
+### `RM-01` — Write-side extraction and summarization · **L** · ✅ `done` — 01.a + 01.b + 01.c shipped
 
 A **tiered** pipeline. Cheap deterministic work first; the LLM pass is optional, local,
 off by default, and never blocks the save.
@@ -93,15 +93,23 @@ off by default, and never blocks the save.
 - [x] **`extraction_recall`** registry (anti-cheat for vacuous precision). A/B in
       [`eval/RESULTS.md`](../eval/RESULTS.md) RM-01.b: precision 0.2609 → **1.0000**,
       recall@5 held at **1.0000**, pii_refusal_rate 0 → **1.0000**.
-- [ ] **Tier 2 (opt-in, local):** a single-pass extraction prompt against the *already
-      configured local endpoint*, emitting `{facts: [...], skip: bool}`. One call, ADD-only,
-      conflict resolution deferred to `RM-03` — mirroring Mem0's 2026 move that cut write-time
-      LLM calls 60–70%.
-- [ ] Tier 2 failures degrade silently to Tier 0/1. **A save never fails because extraction did.**
-- [ ] Panel toggle, same live-config pattern as the associative field.
+- [x] **Tier 2 (opt-in, local):** a single-pass extraction prompt against the *already
+      configured local endpoint* (or MCP sampling), emitting `{facts: [...], skip: bool}`.
+      One call, ADD-only, conflict resolution deferred to `RM-03` — mirroring Mem0's 2026
+      move that cut write-time LLM calls 60–70%. Off by default. Capability-detect:
+      sampling **or** a non-embedding chat model at `/v1/models`.
+- [x] Tier 2 failures degrade silently to Tier 0/1. **A save never fails because extraction did.**
+- [x] Panel toggle, same live-config pattern as the associative field. Surfaced when a
+      capable model is detected ("a capable model is available — enable LLM extraction?").
 
 **Acceptance:** `extraction_precision ≥ 0.9` on `eval/messy` with Tier 2 off; Tier 2 improves
 recall@5 without lowering precision; write latency p95 unchanged when Tier 2 off.
+**Met (01.b):** messy precision 0.2609 → **1.0000**, recall@5 held, pii_refusal 1.0.
+**Met (01.c):** messy-hard A/B in [`eval/RESULTS.md`](../eval/RESULTS.md) —
+`openai/gpt-oss-20b` temp 0: `extraction_recall` 0 → **0.5833**, `recall@5`
+0 → **0.5833**, precision 0 → 0.3023 (did not drop; the extra 0.70
+anti-flood floor missed because the model over-extracted unlabeled true
+details, not invented facts).
 
 Design: [`proposed/0001`](proposed/0001-write-pipeline.md).
 

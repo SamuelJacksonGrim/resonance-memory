@@ -16,7 +16,7 @@
  *
  * Reporting metrics (recall@k, duplicate_rate, …) are eval/measure.js, not
  * this file. Measurement corpora (kind: "duplicates" / "messy" / gate: false / no
- * expect) are skipped here so they cannot flip golden.json.
+ * expect, including messy-hard) are skipped here so they cannot flip golden.json.
  *
  * Constraint cases run BOTH field:false and field:true; the gap between them is
  * the associative field's measured value - the number this project most needs and

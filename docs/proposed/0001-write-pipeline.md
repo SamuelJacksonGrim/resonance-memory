@@ -1,6 +1,6 @@
 # 0001 — The write pipeline: extraction, guarding, structuring
 
-**Status:** Tier 0/1 **shipped (RM-01.b)** · Tier 2 still proposed · **Backlog:** `RM-01` (with `RM-02`, `RM-16`) · **Depends on:** `RM-00`
+**Status:** **shipped (RM-01.a + 01.b + 01.c)** · **Backlog:** `RM-01` done (with `RM-02`, `RM-16`) · **Depends on:** `RM-00`
 
 ## Problem
 

@@ -16,6 +16,9 @@
  *   node eval/measure.js --k 5               recall_at_k's k (default 5)
  *   node eval/measure.js --json              machine-readable (02.b A/B)
  *   node eval/measure.js --bands             also print pairwise cosine within each group
+ *   node eval/measure.js --extract           RM-01.c live Tier 2 (needs a chat model)
+ *   node eval/measure.js --extract-model ID  chat model id (default: first non-embed)
+ *   node eval/measure.js --extract-timeout N ms (default 45000 for the live A/B)
  *
  * Reuses `pipeline.js` → `memory-core.js`. Does not write golden.json, does
  * not change product behaviour. Measurement corpora (`kind: "duplicates"` /
@@ -35,9 +38,10 @@ const os = require("os");
 const { JsonlStore } = require("../store.js");
 const { createMemory, cosine } = require("./pipeline.js");
 const { embed } = require("./embed-cache.js");
+const extract = require("../extract.js");
 const {
   computeMetric, explainMetric, listMetrics, groupsFromWrites, parsePrimaryHits,
-  isSaveRefusal, normFact,
+  isSaveRefusal, normFact, isCorrectStored,
 } = require("./metrics.js");
 
 const CORPORA = path.join(__dirname, "corpora");
@@ -76,12 +80,18 @@ function loadScenarios(file) {
     }
     if (c.role === "meta" || (c.kind && c.id && !c.role && !c.text && !c.query)) {
       flush();
-      current = { id: c.id, kind: c.kind || "measure", writes: [], queries: [], note: c.note || "" };
+      current = {
+        id: c.id, kind: c.kind || "measure", writes: [], queries: [],
+        note: c.note || "", extract_match: c.extract_match || null,
+      };
       continue;
     }
     if (c.role === "write" || (c.text && (c.dup_group || Array.isArray(c.gold_facts)) && !c.query)) {
       if (!current) throw new Error(file + ": write line before a meta/id line");
-      current.writes.push(c);
+      const w = (current.extract_match && !c.extract_match)
+        ? Object.assign({}, c, { extract_match: current.extract_match })
+        : c;
+      current.writes.push(w);
       continue;
     }
     if (c.role === "query" || (c.query && (c.relevant_groups || c.relevant_ids || c.relevant_texts || c.relevant_writes || c.relevant_facts))) {
@@ -102,7 +112,9 @@ function loadAllScenarios(filter) {
     if (!lines.some(isMeasurementLine)) continue;
     const stem = fn.replace(/\.jsonl$/, "");
     for (const s of loadScenarios(file)) {
-      if (filter && !String(s.id).startsWith(filter) && stem !== filter && !stem.startsWith(filter)) continue;
+      // Exact stem match (so --corpus messy does not also pull messy-hard)
+      // or scenario-id prefix.
+      if (filter && stem !== filter && !String(s.id).startsWith(filter)) continue;
       out.push(Object.assign({ file: fn }, s));
     }
   }
@@ -140,7 +152,7 @@ function liveRelevantId(id, records, allRecords) {
   return start;
 }
 
-function resolveRelevant(q, records, groups, saveLog, allRecords) {
+function resolveRelevant(q, records, groups, saveLog, allRecords, opts) {
   if (Array.isArray(q.relevant_ids) && q.relevant_ids.length) {
     return q.relevant_ids.map(String);
   }
@@ -156,18 +168,26 @@ function resolveRelevant(q, records, groups, saveLog, allRecords) {
       }
     }
     if (labeledFact) {
-      const facts = new Set(q.relevant_facts.map(normFact));
+      const facts = q.relevant_facts;
+      const cover = !!(opts && opts.extractMatch === "cover");
+      const hit = (text) => cover
+        ? isCorrectStored(text, facts, [], "cover")
+        : facts.some((g) => normFact(g) === normFact(text));
       const matched = [];
       for (const rec of records || []) {
-        if (facts.has(normFact(rec.text))) matched.push(String(rec.id));
+        if (hit(rec.text)) matched.push(String(rec.id));
       }
       for (const r of origin) {
-        if (facts.has(normFact(asStoredText(r)))) {
+        if (hit(asStoredText(r))) {
           matched.push(liveRelevantId(r.id, records, allRecords));
         }
       }
       const uniq = [...new Set(matched)];
       if (uniq.length) return uniq;
+      // Cover-match (messy-hard): a narrative blob must NOT count as the
+      // atomic fact. Miss, don't fall back to the origin write — that's
+      // the Tier-0 baseline the A/B is supposed to show as low.
+      if (cover) return [MISSING_RELEVANT];
     }
     // Baseline fallback: the raw blob does not equal the gold fact, so
     // fact-match is empty. Attribute the origin write's stored records
@@ -215,9 +235,14 @@ async function pairwiseCosines(groups) {
 async function runScenario(scenario, opts) {
   const k = opts && opts.k != null ? Number(opts.k) : 5;
   const fieldEnabled = !!(opts && opts.fieldEnabled);
+  const extractEnabled = !!(opts && opts.extractEnabled);
   const { store, file, dir } = freshStore();
   const mem = createMemory({
     store, embed, fieldEnabled, edgesPath: file + ".edges.json",
+    extractEnabled,
+    extractCapable: opts && opts.extractCapable,
+    extract: opts && opts.extract,
+    extractTimeoutMs: opts && opts.extractTimeoutMs,
   });
 
   const writes = (scenario.writes || []).map((w) => (typeof w === "string" ? { text: w } : w));
@@ -259,7 +284,9 @@ async function runScenario(scenario, opts) {
       query: q.query,
       ranked_ids: ranked.map((h) => String(h.id)),
       ranked_texts: ranked.map((h) => h.text),
-      relevant_ids: resolveRelevant(q, records, groups, saveLog, allRecords),
+      relevant_ids: resolveRelevant(q, records, groups, saveLog, allRecords, {
+        extractMatch: scenario.extract_match,
+      }),
       relevant_groups: q.relevant_groups || null,
       relevant_writes: q.relevant_writes || null,
       relevant_facts: q.relevant_facts || null,
@@ -353,10 +380,38 @@ async function main(argv) {
   const json = args.includes("--json");
   const bands = args.includes("--bands");
   const fieldEnabled = args.includes("--field");
+  const wantExtract = args.includes("--extract");
   const ci = args.indexOf("--corpus");
   const filter = ci >= 0 ? args[ci + 1] : null;
   const ki = args.indexOf("--k");
   const k = ki >= 0 ? Number(args[ki + 1]) : 5;
+  const mi = args.indexOf("--extract-model");
+  const extractModelArg = mi >= 0 ? args[mi + 1] : process.env.RESONANCE_EXTRACT_MODEL;
+  const ti = args.indexOf("--extract-timeout");
+  const extractTimeoutMs = ti >= 0 ? Number(args[ti + 1]) : 45000;
+
+  let extractFn = null;
+  let extractEnabled = false;
+  if (wantExtract) {
+    const probe = await extract.probeChatCapability({
+      preferred: extractModelArg,
+    });
+    const model = extractModelArg || probe.model;
+    if (!model) {
+      console.error("Tier 2 --extract: no chat-capable model at " + extract.modelsUrl() + ".");
+      process.exit(2);
+    }
+    extractFn = extract.makeChatExtractor({
+      endpoint: extract.chatCompletionsUrl(),
+      model,
+      timeoutMs: extractTimeoutMs,
+    });
+    extractEnabled = true;
+    if (!json) {
+      console.error("Tier 2 live extract: model=" + model +
+        " temperature=0 timeout_ms=" + extractTimeoutMs);
+    }
+  }
 
   const scenarios = loadAllScenarios(filter);
   if (!scenarios.length) {
@@ -364,7 +419,12 @@ async function main(argv) {
     process.exit(2);
   }
   const reports = [];
-  for (const s of scenarios) reports.push(await runScenario(s, { k, fieldEnabled, bands }));
+  for (const s of scenarios) {
+    reports.push(await runScenario(s, {
+      k, fieldEnabled, bands,
+      extractEnabled, extract: extractFn, extractTimeoutMs,
+    }));
+  }
 
   if (json) {
     console.log(JSON.stringify({

@@ -48,6 +48,19 @@
  *                                  or inject. Never read CONFIG_PATH here —
  *                                  that would make the golden depend on the
  *                                  user's panel file.)
+ *   extractEnabled  () -> boolean  (RM-01.c Tier 2. Default off. Production
+ *                                  reads live-config extract_llm / env
+ *                                  RESONANCE_EXTRACT_LLM. Eval/tests inject.)
+ *   extractCapable  () -> boolean  (capability probe. If a function and it
+ *                                  returns false, Tier 2 no-ops even when
+ *                                  the toggle is on. Omitted = don't check
+ *                                  — an injected extract is trusted.)
+ *   extract         async (text) -> { facts, skip } | string | throw
+ *                                  (the LLM call. Mock in tests; chat or
+ *                                  MCP sampling in production. Never reached
+ *                                  for from here.)
+ *   extractTimeoutMs () -> number  (backstop so a hanging extract cannot
+ *                                  stall save. Default EXTRACT_TIMEOUT_MS.)
  *
  * Ranking is COSINE ONLY (see server.js's invariants); the field is additive and
  * never allowed to throw into the recall path. Warmth in PR1 is the same: seed
@@ -60,8 +73,9 @@ const {
 } = require("./warm.js");
 const {
   normalize, isCurrent, isHistoricalQuery, detectSupersession, supersedePatches,
-  detectNearDuplicate, pickMergeSurvivor, prepareWrite,
+  detectNearDuplicate, pickMergeSurvivor, prepareWrite, guardSecrets,
 } = require("./record.js");
+const { acceptExtract, EXTRACT_TIMEOUT_MS } = require("./extract.js");
 const { makeEdge, setSemantic, semanticValid, hebbianDecayType, reactivateEdge } = require("./edges.js");
 
 // Reciprocal-kNN edge construction (RM-00 field experiment, 2026-08-01). Directional
@@ -533,6 +547,10 @@ function createCore({
   warmTrace = () => false,
   warmEdgeCap = () => WARM_EDGE_CAP,
   dedupThresholds = () => readDedupThresholds(null),
+  extractEnabled = () => false,
+  extractCapable,
+  extract,
+  extractTimeoutMs = () => EXTRACT_TIMEOUT_MS,
 }) {
 
   // Lazy fallback so a test can pass warmEnabled without getWarm. Production
@@ -711,24 +729,79 @@ function createCore({
     return "Saved. (" + store.current().length + " memories total.)";
   }
 
+  function extractTimeout() {
+    try {
+      const t = typeof extractTimeoutMs === "function" ? extractTimeoutMs() : extractTimeoutMs;
+      if (typeof t === "number" && Number.isFinite(t) && t > 0) return t;
+    } catch { /* injected getter must never break save */ }
+    return EXTRACT_TIMEOUT_MS;
+  }
+
+  function raceTimeout(promise, ms) {
+    let timer;
+    return Promise.race([
+      Promise.resolve(promise).finally(() => { if (timer) clearTimeout(timer); }),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error("extract timeout")), ms);
+      }),
+    ]);
+  }
+
+  /*
+   * RM-01.c: toggle on AND a callable extract AND (if a capable-probe was
+   * injected) that probe saying yes. A false probe is an honest no-op, not
+   * a throw — the user flipped a lever that cannot run on this host.
+   */
+  function shouldExtract() {
+    try { if (!extractEnabled()) return false; } catch { return false; }
+    if (typeof extract !== "function") return false;
+    if (typeof extractCapable === "function") {
+      try { if (!extractCapable()) return false; } catch { return false; }
+    }
+    return true;
+  }
+
+  async function applyTier2(facts) {
+    if (!shouldExtract()) return facts;
+    const source = facts.join(" ");
+    try {
+      const out = await raceTimeout(extract(source), extractTimeout());
+      const next = acceptExtract(out, source);
+      if (!next || !next.length) return facts;
+      const cleaned = [];
+      for (const f of next) {
+        const g = guardSecrets(f);
+        if (!g.ok) continue;          // drop a hallucinated secret; don't refuse the write
+        cleaned.push(f);
+      }
+      return cleaned.length ? cleaned : facts;
+    } catch {
+      return facts;                   // timeout / throw / hang → Tier 0/1 stands
+    }
+  }
+
   async function save(content, opts) {
     // RM-01.b Tier 0/1: always-on, deterministic, no LLM. String ops only;
     // extra embeds come from a legitimate multi-fact split (in-scope), never
-    // from the guard. Tier 2 (opt-in local LLM) is 01.c — off, not built here.
+    // from the guard. PII refusal is FIRST — a secret is never sent to Tier 2.
+    // RM-01.c Tier 2: opt-in, best-effort, ADD-only. Off by default. Any
+    // failure degrades silently to the Tier 0/1 facts; save never throws.
     const prepared = prepareWrite(content);
     if (!prepared.ok) return prepared.message;
     if (!prepared.facts.length) return "Nothing to save: `content` was empty.";
 
-    if (prepared.facts.length === 1) return saveOne(prepared.facts[0], opts);
+    const facts = await applyTier2(prepared.facts);
+
+    if (facts.length === 1) return saveOne(facts[0], opts);
 
     // Split: each half is its own record / embed. requestId stamps only the
     // first bind so a later fact in the same write is not skipped by the
     // 0.3 LRU (null id = apply normally).
-    for (let i = 0; i < prepared.facts.length; i++) {
+    for (let i = 0; i < facts.length; i++) {
       const factOpts = i === 0 ? opts : Object.assign({}, opts || {}, { requestId: undefined });
-      await saveOne(prepared.facts[i], factOpts);
+      await saveOne(facts[i], factOpts);
     }
-    return "Saved " + prepared.facts.length + " memories. (" + store.current().length + " total.)";
+    return "Saved " + facts.length + " memories. (" + store.current().length + " total.)";
   }
 
   async function recall(query, k = 5, opts) {
