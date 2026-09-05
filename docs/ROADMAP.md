@@ -162,7 +162,7 @@ The one phase in flight. Full spec + metrics + tests: [`phase-0`](phases/phase-0
 | **0.0** | One edge store, two signals; `embedding_version` schema; migrate `.assoc.json` (one-way) | ✅ |
 | **0.1** | Save-time semantic edges + edge timestamps; save-latency cost sweep | ✅ |
 | **0.2** | Lazy wall-clock decay of the learned signal (**I6 held**) | ✅ |
-| **0.3** | Materialize-on-mutation; MCP request-ID idempotency (atomic dedup) | ⬜ |
+| **0.3** | Materialize-on-mutation; MCP request-ID idempotency (atomic dedup) | ✅ |
 | **0.4** | Soft pruning (mirror `vacuum()`); server-side reactivation | ⬜ |
 | **0.5** | Phase 0 tests — every transition row, *reading ≠ decay*, *fails-open* | ⬜ |
 | **0.6** | Threat-model sketch (design only; `RM-16` stays gated to Phase 2) | ⬜ |
@@ -244,7 +244,7 @@ Phase 0.1   save-time semantic edges · edge timestamps · cost sweep   ✅
   ↓
 Phase 0.2   lazy wall-clock decay of the learned signal   (I6 held)   ✅
   ↓
-Phase 0.3   materialize-on-mutation · request-ID idempotency
+Phase 0.3   materialize-on-mutation · request-ID idempotency   ✅
   ↓
 Phase 0.4   soft pruning · server-side reactivation
   ↓

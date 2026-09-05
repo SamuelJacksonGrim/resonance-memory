@@ -17,6 +17,17 @@ Beta-readiness pass:
   "revisit only if hosted resale looms" trigger the backlog pre-registered, now pulled.
 
 ### Added
+- **Materialize-on-mutation + MCP request-ID idempotency (Phase 0.3).** A reinforcing
+  write first stores `effectiveHebbian(edge, now)` as `hebbian.weight`, then applies α,
+  then stamps `hebbian.last_updated` — reinforcement cannot bypass accumulated decay
+  (the "ghost weight" of adding α to an undecayed stored value after a long idle).
+  Provenance is preserved. One MCP JSON-RPC request id = one mutation transaction:
+  `server.js` extracts `req.id` and threads it into the four verbs; EdgeStore keeps a
+  256-entry LRU of processed ids **inside** the sidecar (`processed_ids`) so one
+  `writeFileDurable` commits the dedup record and the weight change together. No id
+  (eval, tests, panel) applies normally. Golden did not move (Δt≈0 materialize is a
+  no-op; eval carries no request ids). See
+  [`docs/phases/phase-0-edge-substrate.md`](docs/phases/phase-0-edge-substrate.md).
 - **Lazy wall-clock Hebbian decay (Phase 0.2 / I6).** Decay applies to `hebbian.weight` only
   (semantic never fades) and is **computed on read** via `effectiveHebbian(edge, now)` —
   `w · 2^(−Δt/H)`, `λ = ln(2)/H`, `Δt = max(0, now − last_updated)` in seconds. It is not

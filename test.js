@@ -540,6 +540,7 @@ const {
   sidecarKind, readLegacyAssoc, migrateAssoc, siblingAssocPath,
   IncompatibleEdgeFormatError,
   SIDECAR_KIND, SIDECAR_VERSION, EdgeStore,
+  DEDUP_LRU_SIZE, canonRequestId,
   effectiveHebbian, lambdaFromHalfLife, halfLifeFor, hebbianDecayType,
   elapsedSeconds, HALF_LIFE_SECONDS, DEFAULT_HALF_LIFE_TYPE, DAY, HOUR,
 } = require("./edges.js");
@@ -1038,6 +1039,147 @@ test("per-type/namespace half-lives: constraint fades slower than fact, fact slo
   assert.strictEqual(wNs, wW, "namespace uses the same table as type");
   // Custom table override.
   assert.strictEqual(effectiveHebbian(e, plusIso(T0, 10), { halfLife: 10 }), 0.5);
+});
+
+// --- Phase 0.3: materialize-on-mutation + request-ID idempotency ----------
+// Fake/injectable clock and injectable ids. Both live on the MUTATION path.
+section("Phase 0.3 materialize-on-mutation + request-ID idempotency");
+
+test("canonRequestId: missing/null/empty are no-id; 0 is a real id; 1 and \"1\" differ", () => {
+  assert.strictEqual(canonRequestId(undefined), null);
+  assert.strictEqual(canonRequestId(null), null);
+  assert.strictEqual(canonRequestId(""), null);
+  assert.strictEqual(canonRequestId(0), "n:0", "JSON-RPC id 0 is valid");
+  assert.strictEqual(canonRequestId(1), "n:1");
+  assert.strictEqual(canonRequestId("1"), "s:1", "number 1 and string \"1\" are distinct requests");
+  assert.strictEqual(canonRequestId("req-abc"), "s:req-abc");
+});
+
+test("reinforce after a long idle materializes decay first (no ghost weight)", () => {
+  // Failure signature: stored becomes original+α instead of decayed+α.
+  let now = T0;
+  const E = new EdgeStore(tmp("m-idle.edges.json"), { now: () => now });
+  const e0 = E.put(makeEdge(1, 2, {
+    origin: "co-activation", now: T0, hebbianWeight: 1.0,
+    semantic: { value: 0.77, src_versions: { a: 1, b: 1 } },
+  }));
+  const originSnap = JSON.parse(JSON.stringify(e0.provenance));
+  const semSnap = JSON.parse(JSON.stringify(e0.semantic));
+  const created = e0.created_at;
+  now = plusIso(T0, HALF_LIFE_SECONDS.fact);   // exactly one fact half-life
+  assert.strictEqual(E.weight(1, 2), 1.0, "stored still original before the mutation");
+  assert.strictEqual(E.effectiveWeight(1, 2), 0.5, "reads already see the fade");
+  E.reinforceRecall(["1", "2"], []);
+  const after = E.get(1, 2);
+  assert.strictEqual(after.hebbian.weight, 0.5 + E.alphaPP,
+    "stored = decayed + α, NOT original + α (ghost weight)");
+  assert.notStrictEqual(after.hebbian.weight, 1.0 + E.alphaPP, "must not bypass decay");
+  assert.strictEqual(after.hebbian.last_updated, now, "stamp last_updated at reinforce");
+  assert.strictEqual(effectiveHebbian(after, now), after.hebbian.weight,
+    "after reinforce, stored and effective coincide");
+  assert.deepStrictEqual(after.semantic, semSnap, "semantic unmoved");
+  assert.deepStrictEqual(after.provenance, originSnap, "provenance preserved");
+  assert.strictEqual(after.created_at, created, "created_at is provenance only");
+  assert.strictEqual(after.pruned_at, null, "pruned_at stays as-is (reactivation is 0.4)");
+});
+
+test("Δt=0 reinforce is byte-identical to the pre-0.3 stored+α rule (why the golden holds)", () => {
+  const E = new EdgeStore(tmp("m-dt0.edges.json"), { now: () => T0 });
+  E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 1.0 }));
+  E.reinforceRecall(["1", "2"], []);
+  assert.strictEqual(E.weight(1, 2), 1.0 + E.alphaPP, "fresh edge: materialize is a no-op");
+  assert.strictEqual(E.get(1, 2).hebbian.last_updated, T0);
+  // Ledger parity at Δt=0: same number the retired path would have written.
+  const L = new Ledger(tmp("m-dt0.assoc.json"));
+  L.edges.set("1:2", 1.0);
+  L.reinforceRecall(["1", "2"], []);
+  assert.strictEqual(E.weight(1, 2), L.weight(1, 2), "Δt=0 matches Ledger.reinforceRecall");
+});
+
+test("same request id retried applies exactly once", () => {
+  const E = new EdgeStore(tmp("m-once.edges.json"), { now: () => T0 });
+  E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 0 }));
+  const first = E.reinforceRecall(["1", "2"], [], "req-1");
+  const w = E.weight(1, 2);
+  assert.strictEqual(first, true);
+  assert.strictEqual(w, E.alphaPP);
+  const retry = E.reinforceRecall(["1", "2"], [], "req-1");
+  assert.strictEqual(retry, false, "duplicate id is a no-op");
+  assert.strictEqual(E.weight(1, 2), w, "weight unmoved on retry");
+  assert.ok(E.hasProcessed("req-1"));
+});
+
+test("two distinct request ids reinforcing the same pair both apply", () => {
+  const E = new EdgeStore(tmp("m-two.edges.json"), { now: () => T0 });
+  E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 0 }));
+  assert.strictEqual(E.reinforceRecall(["1", "2"], [], "req-A"), true);
+  assert.strictEqual(E.reinforceRecall(["1", "2"], [], "req-B"), true);
+  assert.strictEqual(E.weight(1, 2), 2 * E.alphaPP);
+});
+
+test("no-id caller applies every time (eval / non-JSON-RPC must not dedup or crash)", () => {
+  const E = new EdgeStore(tmp("m-noid.edges.json"), { now: () => T0 });
+  E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 0 }));
+  assert.strictEqual(E.reinforceRecall(["1", "2"], []), true);
+  assert.strictEqual(E.reinforceRecall(["1", "2"], [], undefined), true);
+  assert.strictEqual(E.reinforceRecall(["1", "2"], [], { requestId: null }), true);
+  assert.strictEqual(E.weight(1, 2), 3 * E.alphaPP, "three no-id calls → three α");
+  assert.strictEqual(E.processedIds.length, 0, "no-id is never recorded");
+});
+
+test("dedup record and weight land in one durable sidecar write", () => {
+  const file = tmp("m-atomic.edges.json");
+  const E = new EdgeStore(file, { now: () => T0 });
+  E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 0.4 }));
+  E.reinforceRecall(["1", "2"], [], 42);
+  E.save();
+  const j = JSON.parse(fs.readFileSync(file, "utf8"));
+  assert.strictEqual(j.kind, SIDECAR_KIND);
+  assert.deepStrictEqual(j.processed_ids, [42], "id is in the same envelope as the edges");
+  assert.strictEqual(j.edges["1:2"].hebbian.weight, 0.4 + E.alphaPP);
+  // Reload: both facts survive one parse, which is the pair I5 cannot
+  // otherwise make atomic if they were two files.
+  const E2 = new EdgeStore(file, { now: () => T0 });
+  assert.ok(E2.hasProcessed(42));
+  assert.strictEqual(E2.weight(1, 2), 0.4 + E.alphaPP);
+  assert.strictEqual(E2.reinforceRecall(["1", "2"], [], 42), false, "survives process restart");
+});
+
+test("DEDUP_LRU_SIZE bound: the oldest id is evicted and can apply again", () => {
+  assert.strictEqual(DEDUP_LRU_SIZE, 256, "bound is a named constant, not a magic number");
+  const E = new EdgeStore(tmp("m-lru.edges.json"), { now: () => T0 });
+  E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 0 }));
+  for (let i = 0; i < DEDUP_LRU_SIZE; i++) {
+    assert.strictEqual(E.reinforceRecall(["1", "2"], [], "id-" + i), true);
+  }
+  assert.strictEqual(E.processedIds.length, DEDUP_LRU_SIZE);
+  assert.ok(E.hasProcessed("id-0"), "oldest still in the window at capacity");
+  // One more distinct id evicts the oldest.
+  assert.strictEqual(E.reinforceRecall(["1", "2"], [], "id-new"), true);
+  assert.strictEqual(E.processedIds.length, DEDUP_LRU_SIZE, "never grows past the bound");
+  assert.strictEqual(E.hasProcessed("id-0"), false, "oldest evicted");
+  assert.ok(E.hasProcessed("id-new"));
+  const w = E.weight(1, 2);
+  assert.strictEqual(E.reinforceRecall(["1", "2"], [], "id-0"), true, "evicted id applies again");
+  assert.strictEqual(E.weight(1, 2), w + E.alphaPP);
+});
+
+test("materialize uses the caller-supplied half-life class (constraint vs working)", () => {
+  let now = T0;
+  const E = new EdgeStore(tmp("m-type.edges.json"), { now: () => now });
+  E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 1.0 }));
+  now = plusIso(T0, HOUR);
+  E.reinforceRecall(["1", "2"], [], { type: "working" });
+  assert.strictEqual(E.weight(1, 2), 0.5 + E.alphaPP,
+    "working H=1h → one hour fades to half, then +α");
+});
+
+test("numeric 0 is a real request id (not treated as no-id)", () => {
+  const E = new EdgeStore(tmp("m-zero.edges.json"), { now: () => T0 });
+  E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 0 }));
+  assert.strictEqual(E.reinforceRecall(["1", "2"], [], 0), true);
+  assert.strictEqual(E.reinforceRecall(["1", "2"], [], 0), false);
+  assert.strictEqual(E.weight(1, 2), E.alphaPP);
 });
 
 test("decay-to-zero (computed) leaves the edge alive with semantic intact", () => {
@@ -2126,6 +2268,98 @@ async function asyncTests() {
     assert.ok(fs.existsSync(edgesPath), "sidecar write is allowed (I5 protects JSONL, not sidecars)");
     const j = JSON.parse(fs.readFileSync(edgesPath, "utf8"));
     assert.strictEqual(j.kind, SIDECAR_KIND);
+  });
+
+  // ------------------------------------------------ Phase 0.3 live path
+  // Request ids threaded through createCore; I5 (JSONL unmoved on recall)
+  // must stay held. No-id callers (this is also the eval shape) apply.
+  section("Phase 0.3 live path (request-ID through core, I5)");
+
+  await atest("same recall requestId applies once; a different id applies again", async () => {
+    const { core, store, edges, edgesPath } = liveField("c-03-id.jsonl", true);
+    await core.save(DIABETIC);
+    await core.save(LEMON);
+    await core.save(MEETING);
+    const lemonId = store.current().find((m) => m.text === LEMON).id;
+    const diabeticId = store.current().find((m) => m.text === DIABETIC).id;
+    await core.recall(DESSERT_Q, 1, { requestId: "rpc-1" });
+    const w1 = edges().weight(lemonId, diabeticId);
+    assert.ok(w1 > 0, "first request reinforced");
+    await core.recall(DESSERT_Q, 1, { requestId: "rpc-1" });
+    assert.strictEqual(edges().weight(lemonId, diabeticId), w1, "retry of rpc-1 is a no-op");
+    await core.recall(DESSERT_Q, 1, { requestId: "rpc-2" });
+    assert.ok(edges().weight(lemonId, diabeticId) > w1, "rpc-2 is a distinct request");
+    const j = JSON.parse(fs.readFileSync(edgesPath, "utf8"));
+    assert.ok(j.processed_ids.indexOf("rpc-1") >= 0);
+    assert.ok(j.processed_ids.indexOf("rpc-2") >= 0);
+  });
+
+  await atest("no-id recall applies every time (the eval/pipeline shape)", async () => {
+    const { core, store, edges } = liveField("c-03-noid.jsonl", true);
+    await core.save(DIABETIC);
+    await core.save(LEMON);
+    await core.save(MEETING);
+    const lemonId = store.current().find((m) => m.text === LEMON).id;
+    const diabeticId = store.current().find((m) => m.text === DIABETIC).id;
+    await core.recall(DESSERT_Q, 1);                  // no opts
+    const w1 = edges().weight(lemonId, diabeticId);
+    await core.recall(DESSERT_Q, 1, { requestId: null });
+    const w2 = edges().weight(lemonId, diabeticId);
+    assert.ok(w2 > w1, "null requestId is no-id → applies");
+    assert.strictEqual(edges().processedIds.length, 0, "eval-shaped calls leave the LRU empty");
+  });
+
+  await atest("I5: recall with a requestId still writes nothing to the JSONL store", async () => {
+    const { core, store, edgesPath } = liveField("c-03-i5.jsonl", true);
+    await core.save(DIABETIC);
+    await core.save(LEMON);
+    await core.save(MEETING);
+    const jsonlBytes = fs.readFileSync(store.file, "utf8");
+    await core.recall(DESSERT_Q, 1, { requestId: "rpc-i5" });
+    assert.strictEqual(fs.readFileSync(store.file, "utf8"), jsonlBytes,
+      "recall must not rewrite the JSONL store (I5 / BUG-002)");
+    const j = JSON.parse(fs.readFileSync(edgesPath, "utf8"));
+    assert.ok(j.processed_ids.indexOf("rpc-i5") >= 0, "dedup record landed in the SIDECAR");
+    assert.ok(Object.keys(j.edges).length >= 1, "weight change landed in the same sidecar");
+  });
+
+  await atest("edit with a requestId still writes nothing to the edge store", async () => {
+    const { core, store, edgesPath } = liveField("c-03-edit.jsonl", true);
+    await core.save(DIABETIC);
+    await core.save(LEMON);
+    await core.save(MEETING);
+    await core.recall(DESSERT_Q, 1, { requestId: "rpc-pre" });
+    const before = fs.readFileSync(edgesPath, "utf8");
+    const id = store.current().find((m) => m.text === MEETING).id;
+    await core.edit(id, MEETING, { requestId: "rpc-edit" });
+    assert.strictEqual(fs.readFileSync(edgesPath, "utf8"), before,
+      "edit must not stamp a dedup record (transition table: no edge write)");
+  });
+
+  await atest("save-time bind: same requestId does not re-bind; a second id does", async () => {
+    const vecs = { a: [1, 0, 0], b: vecAtCos(0.80), c: vecAtCos(0.70) };
+    const embed = async (texts) => texts.map((t) => vecs[t] || [0, 0, 1]);
+    const { store, core, edges } = saveTimeCore("st-03-id.jsonl", embed);
+    await core.save("a", { requestId: "save-1" });
+    await core.save("b", { requestId: "save-2" });
+    const idA = store.current().find((m) => m.text === "a").id;
+    const idB = store.current().find((m) => m.text === "b").id;
+    const edge = edges().get(idA, idB);
+    assert.ok(edge, "save-2 bound a↔b");
+    const semSnap = JSON.parse(JSON.stringify(edge.semantic));
+    // Retry of save-2: exact-restatement confirm skips bind anyway; force
+    // the bind path by saving a NEW neighbor under the same id — bind must skip.
+    await core.save("c", { requestId: "save-2" });
+    assert.strictEqual(edges().get(idA, idB).semantic.value, semSnap.value,
+      "duplicate save-2 did not mutate the existing edge");
+    const idC = store.current().find((m) => m.text === "c").id;
+    assert.strictEqual(edges().get(idB, idC) == null && edges().get(idA, idC) == null, true,
+      "duplicate id skipped the whole bind (c has no save-time edges)");
+    await core.save("c-again-different", { requestId: "save-3" });
+    // "c-again-different" isn't in vecs → orthogonal vector; may or may not bind.
+    // The point: a fresh id is accepted (not stuck after save-2 was claimed).
+    assert.ok(edges().hasProcessed("save-2"));
+    assert.ok(edges().hasProcessed("save-3"));
   });
 }
 

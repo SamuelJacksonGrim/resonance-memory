@@ -161,9 +161,10 @@ Design: [`proposed/0002`](proposed/0002-temporal-supersession.md).
       the recall-count clock (`ledger.tick`). `reinforceRecall` untouched — **this is where `I6`
       became true.** Not `RM-08` *importance* decay (different object, different law — see there).
       Starting half-lives (parameters, seconds): constraint 30d · fact 7d · working 1h.
-- [ ] **0.3** Materialize-on-mutation + MCP request-ID idempotency. **Dedup record and weight
-      change must commit atomically** (I5 makes each write durable, not the *pair* atomic — keep
-      the dedup LRU inside the sidecar); if not atomic, order dedup-first. Relates to `W-04`.
+- [x] **0.3** Materialize-on-mutation + MCP request-ID idempotency. **Dedup record and weight
+      change commit atomically** (LRU of processed JSON-RPC ids lives inside the sidecar
+      envelope, one `writeFileDurable`). Relates to `W-04` (orthogonal: this is same-process
+      retry, not cross-process last-writer-wins).
 - [ ] **0.4** Soft pruning — an edge whose learned signal hits zero survives if semantic still
       clears the gate. Mirror soft-delete + `vacuum()` (`I8`). **Reactivation is server-side only**
       (I1): revive in place, `created_at` preserved, `prune_count`/`first_pruned_at`/

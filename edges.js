@@ -28,6 +28,12 @@
  * not read the cached semantic signal yet. Phase 0.2 replaced the recall-epoch
  * clock: Hebbian decay is lazy wall-clock via effectiveHebbian (computed on
  * read, never stored). recall() no longer calls tick() — that is I6.
+ * Phase 0.3 materializes that computed weight onto hebbian.weight at the
+ * moment of a reinforcing mutation, THEN applies α, so reinforcement cannot
+ * bypass accumulated decay (the "ghost weight" of adding α to the undecayed
+ * stored value after a long idle). MCP request-ID idempotency lives here too:
+ * a bounded LRU of processed JSON-RPC ids is kept INSIDE this sidecar so one
+ * writeFileDurable commits the dedup record and the weight change together.
  * reinforceRecall is retained. Semantic never fades.
  *
  * The asymmetry is load-bearing (docs/phases/phase-0-edge-substrate.md):
@@ -56,6 +62,14 @@ const SIDECAR_VERSION = 1;
 
 const ORIGINS = { "save-time-neighbor": true, "co-activation": true };
 
+// Bounded LRU of processed MCP/JSON-RPC request ids (Phase 0.3). 256 covers a
+// busy session of four-verb calls (retries are of the in-flight request, not
+// of request 200 ago) at ~10 KB of UUID strings — negligible next to the edge
+// table. After eviction a very-late retry could double-apply; that is the
+// bound's job, and it also lets a client that restarts incrementing ids
+// proceed instead of false-positive skipping. See acceptRequest().
+const DEDUP_LRU_SIZE = 256;
+
 // Must stay byte-identical to ledger.js's edgeKey until Slice C deletes that
 // copy: migrated keys have to match the ones the Hebbian sidecar already wrote.
 function edgeKey(a, b) { return [String(a), String(b)].sort().join(":"); }
@@ -68,6 +82,32 @@ function splitKey(k) {
 }
 
 function isoNow() { return new Date().toISOString(); }
+
+/*
+ * JSON-RPC 2.0 ids are string | number | null. Null/missing means a
+ * notification (or a non-JSON-RPC caller: eval, tests, panel) — those MUST
+ * apply normally, no dedup. 0 is a valid id. Number 1 and string "1" are
+ * distinct (the spec identifies sameness by the id the client sent).
+ */
+function canonRequestId(id) {
+  if (id === undefined || id === null) return null;
+  if (typeof id === "number") {
+    if (!Number.isFinite(id)) return null;
+    return "n:" + String(id);
+  }
+  if (typeof id === "string") {
+    if (id.length === 0) return null;
+    return "s:" + id;
+  }
+  return null;
+}
+
+function normalizeMutationOpts(opts) {
+  if (opts == null) return {};
+  if (typeof opts === "string" || typeof opts === "number") return { requestId: opts };
+  if (typeof opts === "object") return opts;
+  return {};
+}
 
 class IncompatibleEdgeFormatError extends Error {
   constructor(message) {
@@ -189,8 +229,8 @@ function setHebbian(edge, weight, lastUpdated) {
 // Learned-edge decay is a FUNCTION of elapsed time, not a process. There is no
 // background loop and no recall-count clock. Reading computes the faded weight
 // from (now − hebbian.last_updated) and DOES NOT write it (transition table:
-// recall computes decay, does not store it). Materializing that value back
-// onto hebbian.weight is 0.3, on mutation.
+// recall computes decay, does not store it). A reinforcing mutation
+// materializes that value onto hebbian.weight, then applies α (Phase 0.3).
 //
 // Semantic is a structural fact and never fades. Mixing this clock with the
 // retired tick()/decay() epoch math is the dual-clock bug — don't.
@@ -352,7 +392,7 @@ function migrateAssoc(j, now) {
   return out;
 }
 
-function envelope(edges, recalls) {
+function envelope(edges, recalls, processedIds) {
   const obj = {};
   for (const [k, rec] of edges) obj[k] = rec;
   // `recalls` is leftover from the epoch-decay clock (ledger.js tick()).
@@ -360,7 +400,19 @@ function envelope(edges, recalls) {
   // no longer increments this. Kept so a sidecar round-trip does not drop a
   // field old files still carry. Mixing this with wall-clock is the
   // dual-clock bug — do not resume ticking it.
-  return { kind: SIDECAR_KIND, version: SIDECAR_VERSION, recalls: recalls || 0, edges: obj };
+  //
+  // `processed_ids` is the Phase 0.3 dedup LRU (oldest first). It lives in
+  // THIS envelope so one writeFileDurable commits the id and the weight
+  // change together — I5 makes each write durable, not the pair atomic, so
+  // splitting them would be a lost-update window. Backfilled empty on old
+  // files (normalize-on-read); no version bump.
+  return {
+    kind: SIDECAR_KIND,
+    version: SIDECAR_VERSION,
+    recalls: recalls || 0,
+    processed_ids: Array.isArray(processedIds) ? processedIds : [],
+    edges: obj,
+  };
 }
 
 // Live path persists to <store>.edges.json. <store>.assoc.json is legacy /
@@ -402,6 +454,8 @@ class EdgeStore {
     this.legacyFile = opts.legacyFile || null;
     this.edges = new Map();
     this.recalls = 0;
+    this.processedIds = [];  // LRU, oldest first; raw JSON-RPC ids
+    this.processedSet = new Set(); // canonRequestId keys, O(1) lookup
     this.migrated = false;   // true iff this load converted a legacy .assoc.json
     this.load();
     // Lazy one-way persist: if we ingested a sibling .assoc.json because
@@ -415,6 +469,52 @@ class EdgeStore {
     this.edges = new Map();
     this.migrated = false;
     this.recalls = 0;
+    this.processedIds = [];
+    this.processedSet = new Set();
+  }
+
+  _remember(rawId) {
+    const key = canonRequestId(rawId);
+    if (key == null) return;
+    if (this.processedSet.has(key)) return;
+    this.processedIds.push(rawId);
+    this.processedSet.add(key);
+    while (this.processedIds.length > DEDUP_LRU_SIZE) {
+      const evicted = this.processedIds.shift();
+      const ek = canonRequestId(evicted);
+      if (ek) this.processedSet.delete(ek);
+    }
+  }
+
+  _loadProcessedIds(raw) {
+    this.processedIds = [];
+    this.processedSet = new Set();
+    if (!Array.isArray(raw)) return;
+    for (const id of raw) this._remember(id);
+  }
+
+  /*
+   * Dedup gate for one mutation transaction. No id (eval, tests, panel,
+   * notifications) → apply; never recorded. A seen id → skip. A new id is
+   * remembered NOW, in memory, BEFORE the caller mutates — so an in-process
+   * retry cannot double-apply even if save() has not yet run. Persistence
+   * is the subsequent save(): the id and the weight change share one
+   * writeFileDurable. That is the one-write form the spec prefers over
+   * dedup-first-as-a-separate-file (a missed reinforcement decays out;
+   * a doubled one is corrupted learning that never self-corrects — and
+   * splitting the writes would reopen that window).
+   */
+  acceptRequest(requestId) {
+    const key = canonRequestId(requestId);
+    if (key == null) return true;
+    if (this.processedSet.has(key)) return false;
+    this._remember(requestId);
+    return true;
+  }
+
+  hasProcessed(requestId) {
+    const key = canonRequestId(requestId);
+    return key != null && this.processedSet.has(key);
   }
 
   _ingest(j) {
@@ -430,6 +530,7 @@ class EdgeStore {
         this.edges.set(edgeKey(rec.a, rec.b), rec);
       }
       this.recalls = typeof j.recalls === "number" ? j.recalls : 0;
+      this._loadProcessedIds(j.processed_ids);
       return;
     }
     if (kind === "legacy-assoc") {
@@ -464,7 +565,7 @@ class EdgeStore {
 
   save() {
     try {
-      writeFileDurable(this.file, JSON.stringify(envelope(this.edges, this.recalls)));
+      writeFileDurable(this.file, JSON.stringify(envelope(this.edges, this.recalls, this.processedIds)));
     } catch { /* non-fatal: the field must never break recall (I3) */ }
   }
 
@@ -497,8 +598,9 @@ class EdgeStore {
   // ------------------------------------------------ Hebbian (ex-ledger.js)
   // Live-path contract memory-core.js calls: bonus / reinforceRecall / save.
   // bonus uses effectiveHebbian (wall-clock, computed, not stored).
-  // reinforceRecall is the 0.1/2b differentiator — RETAINED, untouched
-  // (materializing decay before applying α is 0.3, not this slice).
+  // reinforceRecall is the 0.1/2b differentiator — RETAINED. Phase 0.3
+  // materializes decay onto the stored weight before applying α, and
+  // gates the whole call on acceptRequest (MCP request-ID idempotency).
   // tick() is retired from the live path (I6); kept below so Ledger-parity
   // tests and eval/decay-probe.js can still replay the epoch math.
 
@@ -532,15 +634,26 @@ class EdgeStore {
     return w > 0 ? this.maxBonus * Math.tanh(w) : 0;
   }
 
-  _bump(a, b, alpha) {
+  _bump(a, b, alpha, opts = {}) {
     if (alpha <= 0 || String(a) === String(b)) return;
     const existing = this.get(a, b);
     const now = this.now();
     if (existing) {
-      // setHebbian leaves semantic bytes alone (two-signal rule). Stamp
-      // last_updated on reinforce only. Do NOT materialize decay first —
-      // that is 0.3; this slice only changes how decay is COMPUTED.
-      setHebbian(existing, (existing.hebbian.weight || 0) + alpha, now);
+      // Materialize decay FIRST, then apply α (transition table `reinforce`
+      // row; Phase 0.3). Adding α to the stored (undecayed) weight after a
+      // long idle is the "ghost weight": reinforcement would bypass the
+      // fade that reads already see via effectiveHebbian. After this
+      // write, stored weight and effective weight coincide at `now`.
+      // setHebbian leaves semantic / provenance / pruned_at alone
+      // (two-signal rule; reactivation is 0.4).
+      const type = typeof opts.typeFn === "function" ? opts.typeFn(a, b) : opts.type;
+      const wEff = effectiveHebbian(existing, now, {
+        type,
+        namespace: opts.namespace,
+        halfLife: opts.halfLife,
+        halfLives: opts.halfLives || this.halfLives,
+      });
+      setHebbian(existing, wEff + alpha, now);
       return;
     }
     this.put(makeEdge(a, b, {
@@ -551,15 +664,23 @@ class EdgeStore {
   }
 
   // Reinforce one recall event given the provenance of the returned ids.
-  // Untouched in 0.2 — co-recall is the differentiator I6 preserves.
-  reinforceRecall(primaryIds, neighborhoodIds) {
+  // Co-recall is the differentiator I6 preserves. Third arg is a request
+  // id (string|number) or `{ requestId, type, typeFn, halfLife }`.
+  // Returns false iff this request id was already applied (caller should
+  // skip save()); true/undefined otherwise so a duck-typed mock that
+  // returns nothing still triggers the existing save().
+  reinforceRecall(primaryIds, neighborhoodIds, opts) {
+    const o = normalizeMutationOpts(opts);
+    if (!this.acceptRequest(o.requestId)) return false;
+    const bumpOpts = { type: o.type, typeFn: o.typeFn, halfLife: o.halfLife };
     for (let i = 0; i < primaryIds.length; i++)
       for (let j = i + 1; j < primaryIds.length; j++)
-        this._bump(primaryIds[i], primaryIds[j], this.alphaPP);
+        this._bump(primaryIds[i], primaryIds[j], this.alphaPP, bumpOpts);
     for (const p of primaryIds)
       for (const n of neighborhoodIds)
-        this._bump(p, n, this.alphaPN);
+        this._bump(p, n, this.alphaPN, bumpOpts);
     // neighborhood <-> neighborhood: alpha 0, intentionally skipped
+    return true;
   }
 
   // RETIRED from the live path in 0.2 (I6). Recall-count, not wall-clock.
@@ -596,6 +717,8 @@ module.exports = {
   SIDECAR_KIND,
   SIDECAR_VERSION,
   EdgeStore,
+  DEDUP_LRU_SIZE,
+  canonRequestId,
   effectiveHebbian,
   lambdaFromHalfLife,
   halfLifeFor,

@@ -179,12 +179,16 @@ const TOOLS = [
   },
 ];
 
-async function callTool(name, args) {
+async function callTool(name, args, requestId) {
   args = args || {};
-  if (name === "save_memory") return await core.save(args.content);
-  if (name === "recall_memory") return await core.recall(args.query);
-  if (name === "edit_memory") return await core.edit(args.id, args.content);
-  if (name === "delete_memory") return core.remove(args.id);
+  // JSON-RPC request id, extracted at this boundary (Phase 0.3). Threaded
+  // into every verb; EdgeStore only *uses* it on mutating ops (save-time
+  // bind, reinforceRecall). Missing/null id → no dedup (eval, panel, tests).
+  const opts = { requestId };
+  if (name === "save_memory") return await core.save(args.content, opts);
+  if (name === "recall_memory") return await core.recall(args.query, 5, opts);
+  if (name === "edit_memory") return await core.edit(args.id, args.content, opts);
+  if (name === "delete_memory") return core.remove(args.id, opts);
   throw new Error("unknown tool: " + name);
 }
 
@@ -205,7 +209,7 @@ async function handle(req) {
   }
   if (method === "tools/call") {
     try {
-      const text = await callTool(params.name, params.arguments || {});
+      const text = await callTool(params.name, params.arguments || {}, id);
       return { jsonrpc: "2.0", id, result: { content: [{ type: "text", text }] } };
     } catch (e) {
       return { jsonrpc: "2.0", id, result: { content: [{ type: "text", text: "Error: " + e.message }], isError: true } };

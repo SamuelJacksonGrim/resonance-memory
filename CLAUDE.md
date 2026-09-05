@@ -45,7 +45,7 @@ roadmap, and per-repo backlog live in the companion repo
 | `store.js` | `JsonlStore` — the flat-JSONL storage backend behind the Store seam. Constructed and testable without the stdio loop; a SQLite/Lantern backend can replace it with the same method surface (see `docs/proposed/0005`). |
 | `field.js` | Associative layer (Phase 2a): a kNN semantic graph over stored vectors, neighborhood expansion, and constraint rescue. No new embedding calls, no LLM extraction — built from vectors already stored at save. |
 | `ledger.js` | Retired Hebbian sidecar (Phase 2b). Off the live recall/reinforce path as of Phase 0 Slice C; kept as the reference implementation of the epoch-decay math so tests can prove EdgeStore produces the same numbers. |
-| `edges.js` | Unified persistent edge store (Phase 0): one undirected record, two independent signals (`semantic` derived cache + `hebbian` source of truth), typed provenance, one-way `.assoc.json` → `.edges.json` migration. **On the live recall path** — Hebbian bonus (via `effectiveHebbian`)/reinforce/save. Decay is lazy wall-clock half-life (I6); `tick()` is retired. Save-time semantic neighbors persist here (K=5, min cosine 0.25, Hebbian weight 0); `field.js` still computes semantic kNN at recall (minSim 0.55). |
+| `edges.js` | Unified persistent edge store (Phase 0): one undirected record, two independent signals (`semantic` derived cache + `hebbian` source of truth), typed provenance, one-way `.assoc.json` → `.edges.json` migration. **On the live recall path** — Hebbian bonus (via `effectiveHebbian`)/reinforce/save. Decay is lazy wall-clock half-life (I6); `tick()` is retired. A reinforcing mutation materializes the effective weight before applying α (0.3). MCP request-ID idempotency: a 256-entry LRU of processed JSON-RPC ids lives in the sidecar so one durable write commits the id and the weight change. Save-time semantic neighbors persist here (K=5, min cosine 0.25, Hebbian weight 0); `field.js` still computes semantic kNN at recall (minSim 0.55). |
 | `panel.js` | The local `127.0.0.1` control panel (largest file): field toggle, Connect/Disconnect, the 3D association-graph view, demo graph, heartbeat auto-shutdown. |
 | `install.js` | Detect + wire into LM Studio / Claude Desktop MCP config. Preserves other configured servers, leaves a `.bak`. |
 | `inspect_sidecar.js` | Dependency-free telemetry for the Hebbian ledger. |
@@ -117,7 +117,10 @@ commit the cache diff.
   - `<store>.edges.json` — unified edge table (`edges.js` EdgeStore). Hebbian weights are
     the source of truth; semantic scores are a derived cache, filled at save-time for
     top-K neighbors (K=5, min cosine 0.25). Discovery bonus uses `effectiveHebbian`
-    (wall-clock half-life, computed on read, not stored). Recall still rebuilds semantic
+    (wall-clock half-life, computed on read, not stored). A reinforcing mutation
+    materializes that computed weight, then applies α (Phase 0.3). Processed MCP
+    request ids live in the same sidecar (`processed_ids`, LRU 256) so a retry
+    cannot double-apply. Recall still rebuilds semantic
     kNN in `field.js` (minSim 0.55) and does not read the cached semantic signal yet. A leftover
     `<store>.assoc.json` from an older build is **legacy / read-only-for-migration**: on
     first load, if `.edges.json` is missing, those weights are copied in one-way and the

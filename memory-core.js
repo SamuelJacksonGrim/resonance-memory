@@ -33,6 +33,7 @@
  *                                  save-time bind. Field toggle needs no restart.
  *                                  Duck-typed: bonus/reinforceRecall/save;
  *                                  save-time bind also needs get/put.
+ *                                  acceptRequest is optional (Phase 0.3 dedup).
  *                                  tick() is retired — I6, Phase 0.2.)
  *   getLedger     () -> same surface as getEdgeStore; kept as a fallback alias so
  *                       a leftover injector still works. Live path uses getEdgeStore.
@@ -270,16 +271,20 @@ function createCore({
   // Save-time semantic bind. Sidecar write (I5 allows it — I5 protects the
   // JSONL store). Wrapped so a missing/corrupt EdgeStore cannot fail save (I3).
   // No vector → nothing to compare; bind later when a real vector exists.
-  function tryBindSaveTime(rec, mems) {
+  // requestId: same MCP request retried must not re-bind (0.3). No id
+  // (eval / tests) applies normally.
+  function tryBindSaveTime(rec, mems, requestId) {
     try {
       if (!Array.isArray(rec && rec.embedding) || rec.embedding.length === 0) return;
       const L = hebbianStore();
       if (!L) return;
+      if (typeof L.acceptRequest === "function" && !L.acceptRequest(requestId)) return;
       bindSaveTimeNeighbors(rec, mems, L);
     } catch { /* save-time bind must never break save */ }
   }
 
-  async function save(content) {
+  async function save(content, opts) {
+    const requestId = opts && opts.requestId;
     content = (content || "").trim();
     if (!content) return "Nothing to save: `content` was empty.";
     const now = new Date().toISOString();
@@ -315,18 +320,21 @@ function createCore({
       store.update(superseded.id, p.old);   // retire the old row (valid_to/superseded_by)
       // Bind against still-current neighbors, not the row we just retired
       // (edge inheritance across supersession is Phase 7, undecided).
-      tryBindSaveTime(rec, mems.filter((m) => String(m.id) !== String(superseded.id)));
+      tryBindSaveTime(rec, mems.filter((m) => String(m.id) !== String(superseded.id)), requestId);
       tryPrimeSave(rec.id);
       return "Saved — updated what I knew, retiring memory " + superseded.id +
              ". (" + store.current().length + " memories total.)";
     }
     store.add(rec);
-    tryBindSaveTime(rec, mems);
+    tryBindSaveTime(rec, mems, requestId);
     tryPrimeSave(rec.id);
     return "Saved. (" + store.current().length + " memories total.)";
   }
 
-  async function recall(query, k = 5) {
+  async function recall(query, k = 5, opts) {
+    // recall(query, { requestId }) — k omitted. Eval/tests pass (query) or (query, k).
+    if (k != null && typeof k === "object") { opts = k; k = 5; }
+    const requestId = opts && opts.requestId;
     query = (query || "").trim();
     if (!query) return "Provide a `query` string to recall.";
     // Answer from what is currently true. Superseded memories surface only when the
@@ -405,8 +413,20 @@ function createCore({
           // Writes the SIDECAR (.edges.json), never the JSONL store (I5 / BUG-002).
           // Decay is NOT ticked here — I6: reading must not drive the decay clock.
           // reinforceRecall is retained (the differentiator); tick() is gone.
-          L.reinforceRecall(ranked.map((m) => m.id), merged.map((e) => e.id));
-          L.save();
+          // Materialize-on-mutation (0.3) happens inside _bump; typeFn picks
+          // the same half-life class bonus() used on this turn. requestId
+          // makes a retried MCP tools/call apply once; no id → apply (eval).
+          const applied = L.reinforceRecall(
+            ranked.map((m) => m.id),
+            merged.map((e) => e.id),
+            {
+              requestId,
+              typeFn: (a, b) => hebbianDecayType(byId.get(String(a)), byId.get(String(b))),
+            }
+          );
+          // Skip the sidecar rewrite on a duplicate request (no new bytes).
+          // A duck-typed mock that returns undefined still saves (`!== false`).
+          if (applied !== false) L.save();
         }
       } catch { /* the field is additive; never let it break recall */ }
     }
@@ -432,7 +452,10 @@ function createCore({
     return out;
   }
 
-  async function edit(id, content) {
+  // opts.requestId is accepted (server threads it into every verb) but
+  // unused: the transition table forbids any edge write on edit, including
+  // a dedup-record stamp. Reactivation-on-edit is 0.4.
+  async function edit(id, content, _opts) {
     if (id === undefined || id === null || id === "") return "Provide the `id` shown in a recall listing.";
     content = (content || "").trim();
     if (!content) return "Provide the new `content`.";
@@ -463,7 +486,7 @@ function createCore({
       : "Edited memory " + id + ", but re-embedding failed - it will match on keywords only until edited again.";
   }
 
-  function remove(id) {
+  function remove(id, _opts) {
     if (id === undefined || id === null || id === "") return "Provide the `id` shown in a recall listing.";
     const ok = store.update(id, { deleted: true, modified: new Date().toISOString() });
     if (ok) {

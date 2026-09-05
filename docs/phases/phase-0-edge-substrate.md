@@ -205,17 +205,24 @@ travel with `RM-07` when it does land, but the *scan* did not force the date.
       The half-life table is the shared surface; `RM-08` *record* importance decay is still
       a separate law on a separate object.
 
-### 0.3 — Materialize on mutation & idempotency
-- [ ] On mutation: materialize effective weight → apply reinforcement to *that* → store → stamp
+### 0.3 — Materialize on mutation & idempotency ✅
+- [x] On mutation: materialize effective weight → apply reinforcement to *that* → store → stamp
       `hebbian.last_updated` → keep provenance. Reinforcement can never bypass accumulated decay.
-- [ ] **One MCP request ID = one mutation transaction.** Extract request IDs at the server
-      boundary; thread into mutations. Two distinct requests reinforcing A↔B both apply; one
-      request retried applies once.
-- [ ] **Dedup record + weight change commit atomically** (I5 makes each write durable, not the
-      *pair* atomic). Cheapest correct form: dedup LRU *inside the sidecar* so one
-      `writeFileDurable` commits both. If not atomic, **order dedup-first** (a missed reinforcement
-      decays out harmlessly; a doubled one is corrupted learning that never self-corrects).
-- [ ] Bounded LRU of processed IDs; apply to **all** mutating ops. Relates to `W-04` ([[BUGS]]).
+      (`edges.js` `_bump`: `w_eff = effectiveHebbian(edge, now)` then `setHebbian(w_eff + α, now)`.
+      Δt=0 is a no-op on the stored value, which is why the golden does not move.)
+- [x] **One MCP request ID = one mutation transaction.** Extract request IDs at the server
+      boundary (`server.js` `handle` → `callTool(..., id)`); thread into mutations as
+      `opts.requestId`. Two distinct requests reinforcing A↔B both apply; one request retried
+      applies once. No id (eval, tests, panel) applies normally — never recorded, never crashes.
+- [x] **Dedup record + weight change commit atomically** (I5 makes each write durable, not the
+      *pair* atomic). Dedup LRU lives *inside the sidecar* (`processed_ids` on the envelope) so
+      one `writeFileDurable` commits both. Claim is in-memory first (`acceptRequest`) so an
+      in-process retry cannot double-apply before `save()`; the durable form is still one write,
+      not a separate dedup-first file.
+- [x] Bounded LRU of processed IDs (`DEDUP_LRU_SIZE = 256`); apply to **all** mutating edge
+      ops (`reinforceRecall` and save-time bind). `edit`/`delete` are not edge writes and must
+      not stamp a dedup record (transition table). Relates to `W-04` ([[BUGS]]) — orthogonal
+      (same-process retry vs cross-process last-writer-wins).
 
 ### 0.4 — Soft pruning
 - [ ] **An edge whose Hebbian signal decays to zero is not pruned if semantic still clears the
@@ -309,8 +316,12 @@ batched through the `AccessLog` pattern. Telemetry does not get to violate an in
       semantic cached with canonical `src_versions`, origin `save-time-neighbor`;
       embedder-down binds nothing; `edit()` bumps version so the incident edge reads
       stale with no invalidation event).
-- [ ] Reinforcement after long inactivity materializes decay first.
+- [x] Reinforcement after long inactivity materializes decay first.
+      *(module-level: one fact half-life idle → stored = decayed+α, not original+α;
+      Δt=0 matches the pre-0.3 / Ledger number. Live path uses the same `_bump`.)*
 - [ ] Soft-pruned edges survive persistence; duplicate reinforcement / request-ID dedup.
+      *(request-ID half is 0.3: same id once, two ids both apply, no-id always applies,
+      LRU eviction, one sidecar write holds id+weight. Soft-prune persistence is 0.4.)*
 - [ ] Interrupted/failed persistence, atomic recovery.
 - [x] **Field fails open (I3):** corrupt sidecar → recall still returns cosine.
 - [x] Negatives: recall writes nothing to the edge store **on the decay account**; edit
