@@ -107,6 +107,10 @@ memory.
   tools are described to it. Smaller models sometimes need a reminder — a simple *"remember
   this"* or *"check your memory"* always works. For weaker models, the app has a built-in
   **system prompt** you can copy in one click to make them do it more reliably.
+- **Already have duplicate memories from an older version?** From a terminal, run
+  `resonance-memory.exe --dedup-existing` (or `npm run dedup-existing`). It **reports**
+  what it would merge and writes nothing. Add `--apply` only when the plan looks right.
+  New saves are already de-duplicated; this is just the cleanup pass.
 
 ## Support the Architect
 

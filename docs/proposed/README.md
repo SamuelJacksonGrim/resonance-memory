@@ -6,7 +6,7 @@ before anyone writes the implementation.
 
 | # | Title | Backlog | Status |
 |---|---|---|---|
-| [0001](0001-write-pipeline.md) | Write pipeline: extraction, guarding, structuring | `RM-01` | proposed |
+| [0001](0001-write-pipeline.md) | Write pipeline: extraction, guarding, structuring | `RM-01` | **Shipped (RM-01.a+01.b+01.c)** |
 | [0002](0002-temporal-supersession.md) | Temporal metadata and supersession | `RM-03`, `RM-04` | **schema shipped** (`RM-04`); logic proposed (`RM-03`) |
 | [0003](0003-hybrid-retrieval.md) | Hybrid retrieval (semantic + keyword + graph) via RRF | `RM-05` | proposed ⚠️ |
 | [0004](0004-scoping.md) | Scoping: multi-user, multi-agent, session vs long-term | `RM-06` | proposed |

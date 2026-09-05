@@ -40,6 +40,8 @@ const {
   writeFileDurable, appendLineDurable,
   normalize, isCurrent, isHistoricalQuery, supersedePatches, AccessLog,
   detectSupersession, hasSupersedeCue,
+  detectNearDuplicate, pickMergeSurvivor,
+  normalizeText, splitFacts, guardSecrets, prepareWrite, isStandaloneFact,
 } = require("./record.js");
 
 let passed = 0, failed = 0;
@@ -181,6 +183,92 @@ test("detectSupersession: honors a custom minSim", () => {
   const cur = [mem(1, "I drink regular coffee", 0.60)];
   assert.strictEqual(detectSupersession(newRec, cur, simStub, { minSim: 0.7 }), null);
   assert.strictEqual(detectSupersession(newRec, cur, simStub, { minSim: 0.5 }), cur[0]);
+});
+
+// ------------------------------------------------ cosine-banded dedup (RM-02.b)
+section("cosine-banded dedup detection (RM-02.b)");
+
+test("detectNearDuplicate: cosine ≥ hi is restatement", () => {
+  const newRec = { id: 2, text: "I am allergic to penicillin", embedding: [1] };
+  const cur = [mem(1, "I'm allergic to penicillin", 0.96)];
+  const d = detectNearDuplicate(newRec, cur, simStub, { hi: 0.95, lo: 0.88 });
+  assert.strictEqual(d.action, "restate");
+  assert.strictEqual(d.match, cur[0]);
+  assert.strictEqual(d.cosine, 0.96);
+});
+
+test("detectNearDuplicate: cosine exactly hi is restatement (≥, not >)", () => {
+  // Equality case is hypothetical on the corpus (tea is 0.9522) but the
+  // spec is ≥ HI: keep the original rather than merge/rewrite.
+  const newRec = { id: 2, text: "paraphrase", embedding: [1] };
+  const cur = [mem(1, "original", 0.95)];
+  const d = detectNearDuplicate(newRec, cur, simStub, { hi: 0.95, lo: 0.88 });
+  assert.strictEqual(d.action, "restate");
+});
+
+test("detectNearDuplicate: lo ≤ cosine < hi is merge", () => {
+  const newRec = { id: 2, text: "I work as a software architect, mostly on games", embedding: [1] };
+  const cur = [mem(1, "I work as a software architect", 0.926)];
+  const d = detectNearDuplicate(newRec, cur, simStub, { hi: 0.95, lo: 0.88 });
+  assert.strictEqual(d.action, "merge");
+  assert.strictEqual(d.match, cur[0]);
+});
+
+test("detectNearDuplicate: cosine < lo is not a duplicate (control)", () => {
+  // dog/cat live pair ~0.69; peanuts/peanut-allergy ~0.67. Must NOT merge.
+  const newRec = { id: 2, text: "I have a cat named Whiskers", embedding: [1] };
+  const cur = [mem(1, "I have a dog named Rex", 0.69)];
+  assert.strictEqual(detectNearDuplicate(newRec, cur, simStub, { hi: 0.95, lo: 0.88 }), null);
+});
+
+test("detectNearDuplicate: cosine exactly lo is merge (≥ lo, < hi)", () => {
+  const newRec = { id: 2, text: "incoming", embedding: [1] };
+  const cur = [mem(1, "existing", 0.88)];
+  const d = detectNearDuplicate(newRec, cur, simStub, { hi: 0.95, lo: 0.88 });
+  assert.strictEqual(d.action, "merge");
+});
+
+test("detectNearDuplicate: a vectorless new memory can't compare (append, don't crash)", () => {
+  const newRec = { id: 2, text: "I am allergic to penicillin", embedding: null };
+  const cur = [mem(1, "I'm allergic to penicillin", 0.99)];
+  assert.strictEqual(detectNearDuplicate(newRec, cur, simStub, { hi: 0.95, lo: 0.88 }), null);
+});
+
+test("detectNearDuplicate: skips vectorless existing rows", () => {
+  const newRec = { id: 3, text: "incoming", embedding: [1] };
+  const cur = [
+    { id: 1, text: "no vector", embedding: null },
+    mem(2, "has vector", 0.96),
+  ];
+  const d = detectNearDuplicate(newRec, cur, simStub, { hi: 0.95, lo: 0.88 });
+  assert.strictEqual(d.match, cur[1], "the vectored row, not the hole");
+});
+
+test("detectNearDuplicate: argmax, not the first above the floor", () => {
+  const newRec = { id: 3, text: "incoming", embedding: [1] };
+  const cur = [mem(1, "control", 0.69), mem(2, "paraphrase", 0.96)];
+  const d = detectNearDuplicate(newRec, cur, simStub, { hi: 0.95, lo: 0.88 });
+  assert.strictEqual(d.action, "restate");
+  assert.strictEqual(d.match, cur[1]);
+});
+
+test("detectNearDuplicate: honors injected thresholds (config, not constants)", () => {
+  const newRec = { id: 2, text: "incoming", embedding: [1] };
+  const cur = [mem(1, "existing", 0.96)];
+  // 0.96 is HI at default 0.95, but below a raised hi=0.99 / lo=0.97 → append
+  assert.strictEqual(detectNearDuplicate(newRec, cur, simStub, { hi: 0.99, lo: 0.97 }), null);
+  const d = detectNearDuplicate(newRec, cur, simStub, { hi: 0.99, lo: 0.90 });
+  assert.strictEqual(d.action, "merge", "same pair is merge when hi is raised past it");
+});
+
+test("pickMergeSurvivor: longer text wins; equal length keeps existing", () => {
+  const short = { id: 1, text: "I have a cat named Koneko" };
+  const longer = { id: 2, text: "I have a black cat named Koneko" };
+  assert.strictEqual(pickMergeSurvivor(short, longer), longer);
+  assert.strictEqual(pickMergeSurvivor(longer, short), longer);
+  const a = { id: 1, text: "same length!!" }; // 13
+  const b = { id: 2, text: "also 13 chars" }; // 13
+  assert.strictEqual(pickMergeSurvivor(a, b), a, "tie keeps the already-stored record");
 });
 
 // ------------------------------------------------------------- historical query
@@ -1559,7 +1647,11 @@ test("transition: vacuum of nothing does not rewrite the sidecar", () => {
 // ------------------------------------------------- ROC/TBR field signals (RM-00)
 section("field signals: ROC / TBR (RM-00)");
 
-const { fieldSignals } = require("./eval/metrics.js");
+const {
+  fieldSignals,
+  register, listMetrics, computeMetric, explainMetric, makeRecallAtK, parsePrimaryHits,
+  isCorrectStored, COVER_MAX_WORDS,
+} = require("./eval/metrics.js");
 
 const relOut =
   "1. [id 1] I'm diabetic, so no sugary desserts for me\n" +
@@ -1583,6 +1675,549 @@ test("fieldSignals: appended counts the field's Related nodes (tangent surface)"
   assert.strictEqual(fieldSignals({ expect: {} }, noRel).appended, 0);
 });
 
+// --------------------------------------- reporting metric registry (RM-02.a)
+section("eval metric registry (RM-02.a)");
+
+const REGISTRY_QUERIES = {
+  queries: [
+    { id: "q1", ranked_ids: ["a", "b", "c"], relevant_ids: ["b"] },  // hit @2, miss @1
+    { id: "q2", ranked_ids: ["x", "y"], relevant_ids: ["z"] },        // miss
+    { id: "q3", ranked_ids: ["p"], relevant_ids: ["p"] },              // hit @1
+  ],
+};
+
+test("recall_at_k on a hand-built result set (success@k)", () => {
+  assert.strictEqual(computeMetric("recall_at_k", REGISTRY_QUERIES, null, { k: 5 }), 2 / 3);
+  assert.strictEqual(computeMetric("recall_at_k", REGISTRY_QUERIES, null, { k: 2 }), 2 / 3);
+  assert.strictEqual(computeMetric("recall_at_k", REGISTRY_QUERIES, null, { k: 1 }), 1 / 3);
+  const expl = explainMetric("recall_at_k", REGISTRY_QUERIES, null, { k: 1 });
+  assert.deepStrictEqual(expl.misses, ["q1", "q2"]);
+  assert.strictEqual(expl.hits, 1);
+});
+
+test("recall_at_k skips unlabeled queries and defaults k=5", () => {
+  const mixed = { queries: [
+    { ranked_ids: ["a"], relevant_ids: ["a"] },
+    { ranked_ids: ["b"], relevant_ids: [] },          // unlabeled
+    { ranked_ids: ["c"] },                            // unlabeled
+  ] };
+  assert.strictEqual(computeMetric("recall_at_k", mixed, null), 1);
+  assert.strictEqual(explainMetric("recall_at_k", mixed, null).n, 1);
+});
+
+test("duplicate_rate on a known-labeled set", () => {
+  const records = [{ text: "a1" }, { text: "a2" }, { text: "b1" }, { text: "c1" }];
+  const corpus = { groups: { A: ["a1", "a2"], B: ["b1"], C: ["c1"] } };
+  assert.strictEqual(computeMetric("duplicate_rate", { records }, corpus), 0.25);
+  const expl = explainMetric("duplicate_rate", { records }, corpus);
+  assert.strictEqual(expl.n, 4);
+  assert.strictEqual(expl.gStar, 3);
+  assert.strictEqual(expl.extras, 1);
+  assert.strictEqual(expl.byGroup.A.extras, 1);
+  assert.strictEqual(expl.byGroup.B.extras, 0);
+});
+
+test("duplicate_rate: collapsed exact pair is not redundant; unmatched is not either", () => {
+  const collapsed = { records: [{ text: "same" }] };
+  const coffee = { groups: { coffee: ["same", "same"] } };
+  assert.strictEqual(computeMetric("duplicate_rate", collapsed, coffee), 0);
+  const withMystery = { records: [{ text: "a1" }, { text: "mystery" }] };
+  const labeled = { groups: { A: ["a1"] } };
+  assert.strictEqual(computeMetric("duplicate_rate", withMystery, labeled), 0,
+    "unmatched records count as their own singleton, not as extras");
+  assert.strictEqual(computeMetric("duplicate_rate", { records: [] }, labeled), 0);
+});
+
+test("registering a new metric works; duplicate names throw", () => {
+  register({ name: "rm02a_always_half", compute() { return 0.5; } });
+  assert.strictEqual(computeMetric("rm02a_always_half", {}, {}), 0.5);
+  assert.ok(listMetrics().some((m) => m.name === "rm02a_always_half"));
+  assert.throws(() => register({ name: "rm02a_always_half", compute() { return 0; } }),
+    /duplicate name/);
+  assert.throws(() => register({ name: "nope" }), /compute/);
+  register(makeRecallAtK(1));
+  assert.strictEqual(computeMetric("recall@1", REGISTRY_QUERIES, null), 1 / 3);
+});
+
+test("parsePrimaryHits reads the cosine list and ignores Related:", () => {
+  const out = "1. [id 12] I'm allergic to penicillin\n2. [id 7] I live in Texas\n\nRelated:\n- [id 99] junk";
+  const hits = parsePrimaryHits(out);
+  assert.strictEqual(hits.length, 2);
+  assert.strictEqual(hits[0].id, "12");
+  assert.strictEqual(hits[1].id, "7");
+});
+
+test("duplicates corpus loads with all three RM-02 bands plus queries", () => {
+  const { loadScenarios } = require("./eval/measure.js");
+  const scenarios = loadScenarios(path.join(__dirname, "eval", "corpora", "duplicates.jsonl"));
+  assert.strictEqual(scenarios.length, 1);
+  const s = scenarios[0];
+  const bands = new Set(s.writes.map((w) => w.band));
+  assert.ok(bands.has("hi") && bands.has("mid") && bands.has("control") && bands.has("exact"),
+    "corpus covers hi / mid / control / exact");
+  assert.ok(s.queries.length >= 8, "enough queries for recall@k");
+  const gids = new Set(s.writes.map((w) => w.dup_group));
+  for (const q of s.queries) {
+    assert.ok(Array.isArray(q.relevant_groups) && q.relevant_groups.length, q.id + " needs relevant_groups");
+    for (const g of q.relevant_groups) assert.ok(gids.has(g), q.id + " group " + g + " missing from writes");
+  }
+  const multi = [...gids].filter((g) => s.writes.filter((w) => w.dup_group === g).length > 1);
+  assert.ok(multi.length >= 3, "several multi-member dup groups");
+});
+
+test("extraction_precision on a tiny hand-labeled set with a known answer", () => {
+  const results = { cases: [
+    { stored: [{ text: "I have a dog named Rex" }], refused: false },
+    { stored: [{ text: "Samuel prefers concise answers" }], refused: false },
+    { stored: [{ text: "I think you should know that I live in Texas" }], refused: false },
+  ] };
+  const corpus = { cases: [
+    { gold_facts: ["I have a dog named Rex"], noise: [] },
+    { gold_facts: ["Samuel prefers concise answers"], noise: ["I think you should know that"] },
+    { gold_facts: ["I live in Texas"], noise: ["I think you should know that"] },
+  ] };
+  assert.strictEqual(computeMetric("extraction_precision", results, corpus), 2 / 3);
+  const expl = explainMetric("extraction_precision", results, corpus);
+  assert.strictEqual(expl.n_stored, 3);
+  assert.strictEqual(expl.n_correct, 2);
+  assert.strictEqual(expl.n_noise, 1);
+  assert.strictEqual(expl.n_labeled, 3);
+});
+
+test("extraction_precision: a stored-noise item lowers precision", () => {
+  const clean = { cases: [
+    { stored: [{ text: "I have a dog named Rex" }], refused: false },
+    { stored: [{ text: "My name is Samuel" }], refused: false },
+  ] };
+  const gold = { cases: [
+    { gold_facts: ["I have a dog named Rex"], noise: [] },
+    { gold_facts: ["My name is Samuel"], noise: [] },
+  ] };
+  assert.strictEqual(computeMetric("extraction_precision", clean, gold), 1);
+  const withNoise = { cases: clean.cases.concat([
+    { stored: [{ text: "make sure you remind me about the standup" }], refused: false },
+  ]) };
+  const goldNoise = { cases: gold.cases.concat([
+    { gold_facts: ["The Friday standup is at 10am"], noise: ["make sure you"] },
+  ]) };
+  const lowered = computeMetric("extraction_precision", withNoise, goldNoise);
+  assert.strictEqual(lowered, 2 / 3);
+  assert.ok(lowered < 1, "noise in the store must drop precision");
+});
+
+test("extraction_precision: a refused-PII item counts correctly", () => {
+  const refused = { cases: [
+    { stored: [{ text: "My name is Samuel" }], refused: false },
+    { stored: [], refused: true },
+  ] };
+  const corpus = { cases: [
+    { gold_facts: ["My name is Samuel"], noise: [] },
+    { gold_facts: [], noise: ["sk-abcdefghijklmnopqrstuvwxyz123456"], expect_refusal: true },
+  ] };
+  assert.strictEqual(computeMetric("extraction_precision", refused, corpus), 1,
+    "a correct refusal stores nothing, so it does not dilute precision");
+  const expl = explainMetric("extraction_precision", refused, corpus);
+  assert.strictEqual(expl.n_pii, 1);
+  assert.strictEqual(expl.n_pii_refused, 1);
+  assert.strictEqual(expl.pii_refusal_rate, 1);
+  assert.strictEqual(expl.n_stored, 1);
+
+  const leaked = { cases: [
+    { stored: [{ text: "My name is Samuel" }], refused: false },
+    { stored: [{ text: "my API key is sk-abcdefghijklmnopqrstuvwxyz123456" }], refused: false },
+  ] };
+  assert.strictEqual(computeMetric("extraction_precision", leaked, corpus), 0.5,
+    "storing PII is a false positive");
+  const leakedExpl = explainMetric("extraction_precision", leaked, corpus);
+  assert.strictEqual(leakedExpl.pii_refusal_rate, 0);
+  assert.strictEqual(leakedExpl.n_pii_refused, 0);
+});
+
+test("extraction_precision is registered; unlabeled input does not crash", () => {
+  assert.ok(listMetrics().some((m) => m.name === "extraction_precision"));
+  assert.ok(listMetrics().some((m) => m.name === "extraction_recall"),
+    "extraction_recall ships with 01.b as the anti-cheat for vacuous precision");
+  assert.strictEqual(computeMetric("extraction_precision", { records: [{ text: "x" }] }, { groups: {} }), 0,
+    "duplicates-shaped input has no gold_facts, so it is unlabeled");
+  assert.strictEqual(computeMetric("extraction_recall", { records: [{ text: "x" }] }, { groups: {} }), 0);
+  assert.strictEqual(computeMetric("recall_at_k", REGISTRY_QUERIES, null, { k: 5 }), 2 / 3);
+  const records = [{ text: "a1" }, { text: "a2" }, { text: "b1" }, { text: "c1" }];
+  const dupCorpus = { groups: { A: ["a1", "a2"], B: ["b1"], C: ["c1"] } };
+  assert.strictEqual(computeMetric("duplicate_rate", { records }, dupCorpus), 0.25);
+});
+
+test("extraction_recall is the anti-cheat for vacuous precision", () => {
+  const gold = { cases: [
+    { gold_facts: ["Samuel prefers concise answers"], noise: ["I think you should know that"] },
+    { gold_facts: ["I live in Texas"], noise: [] },
+  ] };
+  const perfect = { cases: [
+    { stored: [{ text: "Samuel prefers concise answers" }] },
+    { stored: [{ text: "I live in Texas" }] },
+  ] };
+  assert.strictEqual(computeMetric("extraction_recall", perfect, gold), 1);
+  assert.strictEqual(computeMetric("extraction_precision", perfect, gold), 1);
+
+  const missed = { cases: [
+    { stored: [{ text: "Samuel prefers concise answers" }] },
+    { stored: [] },
+  ] };
+  assert.strictEqual(computeMetric("extraction_recall", missed, gold), 0.5);
+  assert.strictEqual(computeMetric("extraction_precision", missed, gold), 1,
+    "storing only correct facts keeps precision at 1 even when a gold is dropped");
+
+  const refusedAll = { cases: [{ stored: [], refused: true }, { stored: [], refused: true }] };
+  assert.strictEqual(computeMetric("extraction_precision", refusedAll, gold), 1,
+    "refuse-everything is vacuous precision 1.0");
+  assert.strictEqual(computeMetric("extraction_recall", refusedAll, gold), 0,
+    "…and extraction_recall craters, which is the point");
+});
+
+test("messy corpus loads; every write has gold_facts + noise labels", () => {
+  const { loadScenarios } = require("./eval/measure.js");
+  const scenarios = loadScenarios(path.join(__dirname, "eval", "corpora", "messy.jsonl"));
+  assert.strictEqual(scenarios.length, 1);
+  const s = scenarios[0];
+  assert.ok(s.writes.length >= 15, "enough writes to cover the Tier-0/1 shapes");
+  assert.ok(s.queries.length >= 8, "enough queries for a later recall@5 A/B");
+  const bands = new Set(s.writes.map((w) => w.band));
+  for (const need of ["filler", "imperative", "multi", "pii", "control"]) {
+    assert.ok(bands.has(need), "corpus missing band " + need);
+  }
+  assert.ok(bands.has("multi-nosplit"), "over-split trap (and also with a non-standalone half)");
+  const writeIds = new Set(s.writes.map((w) => w.id));
+  for (const w of s.writes) {
+    assert.ok(Array.isArray(w.gold_facts), w.id + " needs gold_facts (empty array = refuse)");
+    assert.ok(Array.isArray(w.noise), w.id + " needs noise (empty array = none)");
+    if (w.band === "pii") {
+      assert.ok(w.expect_refusal, w.id + " PII must expect_refusal");
+      assert.strictEqual(w.gold_facts.length, 0, w.id + " PII gold is store-nothing");
+    } else {
+      assert.ok(w.gold_facts.length >= 1, w.id + " non-PII needs at least one gold fact");
+    }
+  }
+  for (const q of s.queries) {
+    assert.ok(Array.isArray(q.relevant_writes) && q.relevant_writes.length, q.id + " needs relevant_writes");
+    for (const id of q.relevant_writes) {
+      assert.ok(writeIds.has(id), q.id + " write " + id + " missing from writes");
+    }
+  }
+  const pii = s.writes.filter((w) => w.expect_refusal);
+  assert.ok(pii.length >= 4, "a few secret/PII shapes");
+});
+
+test("messy-hard corpus loads; every write is a long blob with gold facts", () => {
+  const { loadScenarios } = require("./eval/measure.js");
+  const scenarios = loadScenarios(path.join(__dirname, "eval", "corpora", "messy-hard.jsonl"));
+  assert.strictEqual(scenarios.length, 1);
+  const s = scenarios[0];
+  assert.strictEqual(s.extract_match, "cover");
+  assert.ok(s.writes.length >= 8, "enough hard cases");
+  assert.ok(s.queries.length >= 12, "enough queries for recall@5");
+  const writeIds = new Set(s.writes.map((w) => w.id));
+  const bands = new Set(s.writes.map((w) => w.band));
+  for (const need of ["implicit", "narrative", "coreference", "multi-and"]) {
+    assert.ok(bands.has(need), "messy-hard missing band " + need);
+  }
+  for (const w of s.writes) {
+    assert.ok(Array.isArray(w.gold_facts) && w.gold_facts.length >= 1, w.id + " needs gold");
+    assert.ok(w.text.trim().split(/\s+/).length > COVER_MAX_WORDS,
+      w.id + " blob must exceed COVER_MAX_WORDS so Tier 0 fails cover-match");
+    assert.strictEqual(w.extract_match, "cover");
+    assert.ok(!w.expect_refusal, w.id + " is not a PII case");
+    // Tier 0 cannot emit these gold facts: no '; '/ 'and also' split, and
+    // the gold string is not the blob.
+    const prepared = prepareWrite(w.text);
+    assert.ok(prepared.ok && prepared.facts.length === 1, w.id + " Tier 0 keeps one blob");
+    assert.strictEqual(prepared.facts[0], w.text.replace(/\s+/g, " ").trim());
+    for (const g of w.gold_facts) {
+      assert.ok(!isCorrectStored(prepared.facts[0], [g], w.noise || [], "cover"),
+        w.id + " Tier 0 blob must not cover gold " + JSON.stringify(g));
+    }
+  }
+  for (const q of s.queries) {
+    assert.ok(Array.isArray(q.relevant_writes) && q.relevant_writes.length, q.id);
+    assert.ok(Array.isArray(q.relevant_facts) && q.relevant_facts.length, q.id);
+    for (const id of q.relevant_writes) assert.ok(writeIds.has(id), q.id + " missing write " + id);
+  }
+});
+
+test("messy corpus: current-save simulation is the pre-extraction baseline", () => {
+  const { loadScenarios } = require("./eval/measure.js");
+  const s = loadScenarios(path.join(__dirname, "eval", "corpora", "messy.jsonl"))[0];
+  const results = { cases: s.writes.map((w) => ({
+    id: w.id, stored: [{ text: w.text }], refused: false,
+  })) };
+  const expl = explainMetric("extraction_precision", results, { cases: s.writes });
+  assert.strictEqual(expl.n_labeled, s.writes.length);
+  assert.strictEqual(expl.n_stored, s.writes.length, "today save() stores one blob per write");
+  // 5 controls + 1 should-not-split compound pass through as-is; filler,
+  // imperative, to-split multi, and PII blobs are not gold.
+  assert.strictEqual(expl.n_correct, 6);
+  assert.strictEqual(expl.rate, 6 / 23);
+  assert.strictEqual(expl.n_pii, s.writes.filter((w) => w.expect_refusal).length);
+  assert.strictEqual(expl.pii_refusal_rate, 0);
+});
+
+// ------------------------------------------------- RM-01.b write-side extraction
+// Tier 0 (normalize/strip/split) + Tier 1 (PII refusal). Pure, so these
+// assert against corpus gold without an embedder. save() wiring + embed
+// counts live in asyncTests.
+
+section("RM-01.b write-side extraction (Tier 0/1)");
+
+test("filler: 'I think you should know that' strips to the inner proposition, not a half-opener", () => {
+  const r = prepareWrite("I think you should know that Samuel prefers concise answers");
+  assert.deepStrictEqual(r.facts, ["Samuel prefers concise answers"]);
+  assert.ok(!/^you should know that/i.test(r.facts[0]),
+    "0001's /^(i think )/ would leave 'You should know that…' — that is the bug");
+});
+
+test("filler: 'just so you're aware' strips to the inner proposition", () => {
+  assert.deepStrictEqual(
+    prepareWrite("just so you're aware, I usually code late at night").facts,
+    ["I usually code late at night"]);
+});
+
+test("filler: 'just so you know' strips to the inner proposition", () => {
+  assert.deepStrictEqual(
+    prepareWrite("Just so you know, I prefer tea over coffee").facts,
+    ["I prefer tea over coffee"]);
+});
+
+test("filler: 'It's worth noting that' strips to the inner proposition", () => {
+  assert.deepStrictEqual(
+    prepareWrite("It's worth noting that I'm allergic to penicillin").facts,
+    ["I'm allergic to penicillin"]);
+});
+
+test("filler: FYI strips and recases the leftover", () => {
+  assert.deepStrictEqual(
+    prepareWrite("FYI, the Friday standup is at 10am").facts,
+    ["The Friday standup is at 10am"]);
+});
+
+test("filler: stacked FYI + just so you know both come off", () => {
+  assert.deepStrictEqual(
+    prepareWrite("FYI, just so you know, I have a cat named Koneko").facts,
+    ["I have a cat named Koneko"]);
+});
+
+test("imperative: 'remember to remind me' keeps the embedded fact", () => {
+  assert.deepStrictEqual(
+    prepareWrite("remember to remind me that my sister's birthday is March 3rd").facts,
+    ["My sister's birthday is March 3rd"]);
+});
+
+test("imperative: 'make sure you' keeps the embedded fact", () => {
+  assert.deepStrictEqual(
+    prepareWrite("make sure you never give me peanuts").facts,
+    ["Never give me peanuts"]);
+});
+
+test("imperative: 'Please remember that' keeps the embedded fact", () => {
+  assert.deepStrictEqual(
+    prepareWrite("Please remember that I have a peanut allergy").facts,
+    ["I have a peanut allergy"]);
+});
+
+test("imperative: 'don't forget to' / 'be sure to' strip framing", () => {
+  assert.deepStrictEqual(
+    prepareWrite("don't forget to note that I live in Texas").facts,
+    ["I live in Texas"]);
+  assert.deepStrictEqual(
+    prepareWrite("be sure to remember that I prefer tea over coffee").facts,
+    ["I prefer tea over coffee"]);
+});
+
+test("imperative with no payload drops the write (empty gold)", () => {
+  const r = prepareWrite("remember that");
+  assert.strictEqual(r.ok, true);
+  assert.deepStrictEqual(r.facts, []);
+});
+
+test("multi: 'and also' splits only when both halves stand alone", () => {
+  assert.deepStrictEqual(
+    prepareWrite("I have a dog named Rex and also I work as a software architect, mostly on games").facts,
+    ["I have a dog named Rex", "I work as a software architect, mostly on games"]);
+});
+
+test("multi: '; ' splits two standalone facts", () => {
+  assert.deepStrictEqual(
+    prepareWrite("My coffee order is an oat-milk cortado, no sugar; I live in Texas").facts,
+    ["My coffee order is an oat-milk cortado, no sugar", "I live in Texas"]);
+});
+
+test("multi-nosplit: 'and also with honey' is NOT split", () => {
+  const text = "I like tea more than coffee and also with honey";
+  assert.strictEqual(isStandaloneFact("with honey"), false, "the second half is not a proposition");
+  assert.deepStrictEqual(splitFacts(text), [text]);
+  assert.deepStrictEqual(prepareWrite(text).facts, [text]);
+});
+
+test("PII shapes refuse: store nothing, return a refusal string", () => {
+  const cases = [
+    ["my API key is sk-abcdefghijklmnopqrstuvwxyz123456", "API key"],
+    ["password: hunter2secret", "credential"],
+    ["my card number is 4242424242424242", "card"],
+    ["the AWS key is AKIAIOSFODNN7EXAMPLE", "AWS"],
+    ["keep this -----BEGIN RSA PRIVATE KEY-----", "private key"],
+    ["my GitHub token is ghp-abcdefghijklmnopqrstuvwx", "API key"],
+  ];
+  for (const [text, kind] of cases) {
+    const r = prepareWrite(text);
+    assert.strictEqual(r.ok, false, kind + " must refuse");
+    assert.deepStrictEqual(r.facts, [], kind + " stores nothing");
+    assert.ok(/not saved/i.test(r.message), kind + " message: " + r.message);
+    assert.ok(/secrets don't belong/i.test(r.message), kind + " names the policy");
+  }
+});
+
+test("PII mixed with a real fact is store-nothing, not redaction", () => {
+  const r = prepareWrite("I live in Texas; my API key is sk-abcdefghijklmnopqrstuvwxyz123456");
+  assert.strictEqual(r.ok, false, "contaminated write refuses the whole payload");
+  assert.deepStrictEqual(r.facts, [], "must not salvage the Texas fact");
+});
+
+test("digit-trap controls survive the card guard (4821, 1500mg)", () => {
+  assert.strictEqual(guardSecrets("The garage code is 4821").ok, true);
+  assert.strictEqual(guardSecrets("I take 1500mg of metformin daily").ok, true);
+  assert.deepStrictEqual(prepareWrite("The garage code is 4821").facts, ["The garage code is 4821"]);
+  assert.deepStrictEqual(prepareWrite("I take 1500mg of metformin daily").facts,
+    ["I take 1500mg of metformin daily"]);
+});
+
+test("clean control passes through byte-identical", () => {
+  const clean = "My name is Samuel";
+  const r = prepareWrite(clean);
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.facts.length, 1);
+  assert.strictEqual(r.facts[0], clean);
+  assert.strictEqual(normalizeText(clean), clean);
+});
+
+test("whitespace collapse is the only transform on a clean fact", () => {
+  assert.deepStrictEqual(
+    prepareWrite("  I'm diabetic - no sugary recipes  ").facts,
+    ["I'm diabetic - no sugary recipes"]);
+});
+
+test("0001's short 'I think ' opener is NOT used (would half-strip the gold case)", () => {
+  // A genuine leading "I think " without the longer phrase stays put.
+  // The corpus gold is the LONG opener; stripping "I think " alone is the bug.
+  const kept = prepareWrite("I think Samuel likes dogs named Rex");
+  assert.ok(kept.facts[0].toLowerCase().startsWith("i think "),
+    "short 'I think ' must not fire; got " + kept.facts[0]);
+});
+
+// ------------------------------------------------- RM-01.c Tier 2 (pure)
+section("RM-01.c Tier 2 extraction (pure, no network)");
+
+const {
+  parseExtractJson, sanityCheckExtract, acceptExtract, pickChatModel,
+  isEmbeddingModel, clientSupportsSampling, readExtractEnabled,
+  chatCompletionsUrl, modelsUrl, EXTRACT_MAX_FACTS,
+} = require("./extract.js");
+
+test("parseExtractJson: minified object, fenced, think-stripped", () => {
+  assert.deepStrictEqual(
+    parseExtractJson('{"facts":["I have a dog named Rex"],"skip":false}'),
+    { facts: ["I have a dog named Rex"], skip: false }
+  );
+  assert.deepStrictEqual(
+    parseExtractJson("```json\n{\"facts\":[\"A\"],\"skip\":false}\n```"),
+    { facts: ["A"], skip: false }
+  );
+  assert.deepStrictEqual(
+    parseExtractJson("<think>planning</think>{\"facts\":[\"B\"],\"skip\":false}"),
+    { facts: ["B"], skip: false }
+  );
+  assert.throws(() => parseExtractJson("not json at all"), /no JSON|malformed/);
+  assert.throws(() => parseExtractJson("{\"facts\":\"nope\"}"), /facts is not an array/);
+});
+
+test("sanityCheckExtract rejects skip, empty, too many, too long, prompt echo", () => {
+  const src = "short source text";
+  assert.strictEqual(sanityCheckExtract({ facts: ["ok fact here"], skip: false }, src).ok, true);
+  assert.strictEqual(sanityCheckExtract({ facts: [], skip: true }, src).ok, false);
+  assert.strictEqual(sanityCheckExtract({ facts: [], skip: false }, src).ok, false);
+  const many = [];
+  for (let i = 0; i < EXTRACT_MAX_FACTS + 1; i++) many.push("fact number " + i);
+  assert.strictEqual(sanityCheckExtract({ facts: many, skip: false }, src).reason, "too-many");
+  assert.strictEqual(sanityCheckExtract({
+    facts: ["this extracted fact is way longer than the source by a large margin xx"],
+    skip: false,
+  }, src).reason, "too-long");
+  const longSrc = "I have a dog named Rex and I live in Texas now as of last spring really";
+  assert.strictEqual(sanityCheckExtract({
+    facts: ["Extract durable facts"],
+    skip: false,
+  }, longSrc).reason, "prompt-echo");
+});
+
+test("acceptExtract: garbage degrades to null (keep Tier 0)", () => {
+  const src = "I have a dog named Rex and I live in Texas now as of last spring";
+  assert.deepStrictEqual(
+    acceptExtract({ facts: ["I have a dog named Rex"], skip: false }, src),
+    ["I have a dog named Rex"]
+  );
+  assert.strictEqual(acceptExtract({ facts: [], skip: true }, src), null);
+  assert.strictEqual(acceptExtract("hello", src), null);
+  assert.strictEqual(acceptExtract({ facts: "nope" }, src), null);
+  assert.strictEqual(acceptExtract(null, src), null);
+  assert.strictEqual(acceptExtract({ facts: [1, 2] }, src), null);
+});
+
+test("pickChatModel skips embedding ids; sampling capability is the initialize flag", () => {
+  assert.ok(isEmbeddingModel("text-embedding-nomic-embed-text-v1.5"));
+  assert.ok(!isEmbeddingModel("qwen3.6-35b-a3b"));
+  const body = { data: [
+    { id: "text-embedding-nomic-embed-text-v1.5" },
+    { id: "openai/gpt-oss-20b" },
+    { id: "qwen3.8-27b" },
+  ] };
+  assert.strictEqual(pickChatModel(body), "openai/gpt-oss-20b");
+  assert.strictEqual(pickChatModel(body, "qwen3.8-27b"), "qwen3.8-27b");
+  assert.strictEqual(pickChatModel({ data: [{ id: "text-embedding-nomic-embed-text-v1.5" }] }), null);
+  assert.ok(clientSupportsSampling({ capabilities: { sampling: {} } }));
+  assert.ok(!clientSupportsSampling({ capabilities: { tools: {} } }));
+  assert.ok(!clientSupportsSampling(null));
+});
+
+test("readExtractEnabled: live-config wins over env, default off", () => {
+  const prev = process.env.RESONANCE_EXTRACT_LLM;
+  try {
+    delete process.env.RESONANCE_EXTRACT_LLM;
+    assert.strictEqual(readExtractEnabled(null), false, "off by default");
+    assert.strictEqual(readExtractEnabled({ extract_llm: true }), true);
+    process.env.RESONANCE_EXTRACT_LLM = "1";
+    assert.strictEqual(readExtractEnabled(null), true, "env when no config");
+    assert.strictEqual(readExtractEnabled({ extract_llm: false }), false, "config wins");
+  } finally {
+    if (prev === undefined) delete process.env.RESONANCE_EXTRACT_LLM;
+    else process.env.RESONANCE_EXTRACT_LLM = prev;
+  }
+});
+
+test("chat URL is derived from the embed endpoint, not a second config", () => {
+  assert.strictEqual(
+    chatCompletionsUrl("http://localhost:1234/v1/embeddings"),
+    "http://localhost:1234/v1/chat/completions"
+  );
+  assert.strictEqual(modelsUrl("http://localhost:1234/v1/embeddings"), "http://localhost:1234/v1/models");
+});
+
+test("cover-match: a short paraphrase hits gold; a long blob does not", () => {
+  const gold = ["I have a thyroid condition"];
+  assert.ok(isCorrectStored("I have a thyroid condition", gold, [], "cover"));
+  assert.ok(isCorrectStored("The user has a thyroid condition", gold, [], "cover"));
+  const blob = "Stopped by the clinic after work and had a great chat with Dr. Chen about my thyroid. She wants me back in 3 months and said to keep taking the same dose until then. Felt better just having a plan.";
+  assert.ok(blob.trim().split(/\s+/).length > COVER_MAX_WORDS, "fixture blob must exceed the atomic-length gate");
+  assert.ok(!isCorrectStored(blob, gold, [], "cover"), "Tier 0 blob is not an extracted fact");
+  assert.ok(!isCorrectStored("The user has a thyroid condition", gold, [], "exact"),
+    "exact match (messy.jsonl) still rejects paraphrase");
+});
+
 // ------------------------------------------------- warm field (Phase 1 / PR1)
 // Tests construct WarmField DIRECTLY. Pre-declared Phase 1 metrics from the
 // warm-field design: A→B raises E, stronger sim → higher E, thisTurn-only
@@ -1595,6 +2230,8 @@ const {
 const {
   createCore, defaultGetEdges, cosine: coreCosine,
   bindSaveTimeNeighbors, SAVE_TIME_K, SAVE_TIME_MIN_COS,
+  DEDUP_HI, DEDUP_LO, readDedupThresholds,
+  dedupExisting,
 } = require("./memory-core.js");
 
 const LAMBDA_TURN = 0.357;
@@ -1794,6 +2431,734 @@ test("emitWarmTrace is callable and does not throw (hot path is `if (warmTrace()
 // createCore already required above (warm-field section)
 
 async function asyncTests() {
+  section("eval measure runner (RM-02.a)");
+
+  await atest("duplicates corpus: both metrics compute via pipeline.js (cached embed)", async () => {
+    const { loadScenarios, runScenario } = require("./eval/measure.js");
+    const scenarios = loadScenarios(path.join(__dirname, "eval", "corpora", "duplicates.jsonl"));
+    const r = await runScenario(scenarios[0], { k: 5 });
+    assert.ok(r.metrics.duplicate_rate >= 0 && r.metrics.duplicate_rate <= 1);
+    assert.ok(r.metrics.recall_at_k >= 0 && r.metrics.recall_at_k <= 1);
+    assert.strictEqual(r.queries.length, scenarios[0].queries.length);
+    assert.ok(r.queries.every((q) => Array.isArray(q.ranked_ids)), "each query has ranked_ids from recall output");
+    assert.ok(r.exact_restatements_caught >= 1,
+      "byte-identical coffee-order pair is confirmed, not appended");
+    assert.ok(r.n_stored_current >= 1 && r.n_stored_current <= r.n_writes);
+    assert.ok(r.queries.every((q) => q.relevant_ids.length >= 1),
+      "every query resolved to a stored id via group text (merge must keep an original text)");
+    assert.ok(r.extraction_precision == null,
+      "duplicates writes have no gold_facts; extraction_precision is not a duplicates number");
+  });
+
+  await atest("messy-hard corpus: Tier 0 baseline is low (cached embed, no LLM)", async () => {
+    const { loadScenarios, runScenario } = require("./eval/measure.js");
+    const scenarios = loadScenarios(path.join(__dirname, "eval", "corpora", "messy-hard.jsonl"));
+    const r = await runScenario(scenarios[0], { k: 5 });
+    assert.ok(r.extraction_precision, "messy-hard writes are labeled");
+    assert.strictEqual(scenarios[0].extract_match, "cover");
+    assert.strictEqual(r.extraction_recall.rate, 0, "Tier 0 cannot recover implicit gold");
+    assert.strictEqual(r.extraction_precision.n_correct, 0, "narrative blobs are not atomic facts");
+    assert.strictEqual(r.metrics.recall_at_k, 0, "facts_only relevant ids miss on the blob");
+  });
+
+  await atest("messy corpus: extraction_precision via pipeline.js (current save, cached embed)", async () => {
+    const { loadScenarios, runScenario } = require("./eval/measure.js");
+    const scenarios = loadScenarios(path.join(__dirname, "eval", "corpora", "messy.jsonl"));
+    const r = await runScenario(scenarios[0], { k: 5 });
+    assert.ok(r.extraction_precision, "messy writes are labeled");
+    assert.ok(r.metrics.extraction_precision >= 0 && r.metrics.extraction_precision <= 1);
+    assert.ok(r.metrics.duplicate_rate >= 0 && r.metrics.duplicate_rate <= 1);
+    assert.ok(r.metrics.recall_at_k >= 0 && r.metrics.recall_at_k <= 1);
+    assert.strictEqual(r.queries.length, scenarios[0].queries.length);
+    const expl = r.extraction_precision;
+    assert.strictEqual(expl.n_labeled, scenarios[0].writes.length);
+    assert.strictEqual(expl.n_correct, expl.n_stored, "Tier 0/1 stores only gold facts");
+    assert.ok(expl.rate >= 0.9, "pre-declared RM-01.b bar: extraction_precision ≥ 0.9");
+    assert.strictEqual(expl.pii_refusal_rate, 1, "every PII write refused");
+    assert.strictEqual(expl.n_pii_refused, expl.n_pii);
+    assert.ok(r.extraction_recall, "extraction_recall is the anti-cheat");
+    assert.strictEqual(r.extraction_recall.rate, 1, "every gold fact has a matching stored record");
+    assert.strictEqual(r.metrics.recall_at_k, 1, "recall@5 must not drop");
+    assert.ok(r.queries.every((q) => Array.isArray(q.ranked_ids) && q.ranked_ids.length >= 1),
+      "each messy query resolved to a stored origin id");
+  });
+
+  section("RM-01.b save() wiring (Tier 0/1 on the live path)");
+
+  function extractCore(file) {
+    let embedCalls = 0;
+    const seen = [];
+    const store = new JsonlStore(tmp(file));
+    const embed = async (texts) => {
+      embedCalls += texts.length;
+      // Distinct vectors per distinct string so a split's second half is
+      // not a cosine-1.0 restatement of the first (the dummy [1,0] trap).
+      return texts.map((t) => {
+        let i = seen.indexOf(t);
+        if (i < 0) { i = seen.length; seen.push(t); }
+        const v = new Array(8).fill(0);
+        v[i % 8] = 1;
+        v[(i * 3 + 1) % 8] = 0.2;
+        return v;
+      });
+    };
+    return {
+      store,
+      core: createCore({ store, embed }),
+      embeds: () => embedCalls,
+      resetEmbeds() { embedCalls = 0; },
+    };
+  }
+
+  await atest("save() strips filler and stores the inner proposition", async () => {
+    const { store, core } = extractCore("rm01-filler.jsonl");
+    const msg = await core.save("I think you should know that Samuel prefers concise answers");
+    assert.ok(/Saved/.test(msg));
+    assert.strictEqual(store.current().length, 1);
+    assert.strictEqual(store.current()[0].text, "Samuel prefers concise answers");
+  });
+
+  await atest("save() splits a standalone multi-fact into two records (two embeds)", async () => {
+    const { store, core, embeds, resetEmbeds } = extractCore("rm01-split.jsonl");
+    resetEmbeds();
+    const msg = await core.save("I have a dog named Rex and also I work as a software architect, mostly on games");
+    assert.ok(/Saved 2 memories/.test(msg), msg);
+    const texts = store.current().map((r) => r.text).sort();
+    assert.deepStrictEqual(texts, [
+      "I have a dog named Rex",
+      "I work as a software architect, mostly on games",
+    ].sort());
+    assert.strictEqual(embeds(), 2, "a legitimate split is two embeds — the in-scope cost");
+  });
+
+  await atest("save() does not split the honey trap", async () => {
+    const { store, core, embeds, resetEmbeds } = extractCore("rm01-nosplit.jsonl");
+    resetEmbeds();
+    await core.save("I like tea more than coffee and also with honey");
+    assert.strictEqual(store.current().length, 1);
+    assert.strictEqual(store.current()[0].text, "I like tea more than coffee and also with honey");
+    assert.strictEqual(embeds(), 1, "no-split is one embed, same as a clean fact");
+  });
+
+  await atest("save() refuses each PII shape: stores nothing, returns a refusal", async () => {
+    const payloads = [
+      "my API key is sk-abcdefghijklmnopqrstuvwxyz123456",
+      "password: hunter2secret",
+      "my card number is 4242424242424242",
+      "the AWS key is AKIAIOSFODNN7EXAMPLE",
+      "keep this -----BEGIN RSA PRIVATE KEY-----",
+      "my GitHub token is ghp-abcdefghijklmnopqrstuvwx",
+    ];
+    for (let i = 0; i < payloads.length; i++) {
+      const text = payloads[i];
+      const { store, core, embeds, resetEmbeds } = extractCore("rm01-pii-" + i + ".jsonl");
+      resetEmbeds();
+      const msg = await core.save(text);
+      assert.ok(/not saved/i.test(msg), text + " → " + msg);
+      assert.strictEqual(store.current().length, 0, text + " must not land in the store");
+      assert.strictEqual(store.all().length, 0, text + " must not land even as superseded");
+      assert.strictEqual(embeds(), 0, "refusal is string-ops only; no embed");
+    }
+  });
+
+  await atest("save() digit traps and a clean control: one embed, byte-identical text", async () => {
+    const { store, core, embeds, resetEmbeds } = extractCore("rm01-control.jsonl");
+    resetEmbeds();
+    await core.save("My name is Samuel");
+    await core.save("The garage code is 4821");
+    await core.save("I take 1500mg of metformin daily");
+    const texts = store.current().map((r) => r.text);
+    assert.deepStrictEqual(texts, [
+      "My name is Samuel",
+      "The garage code is 4821",
+      "I take 1500mg of metformin daily",
+    ]);
+    assert.strictEqual(embeds(), 3, "clean facts: one embed each, no extra");
+  });
+
+  await atest("save() mixed fact+secret stores nothing (refusal, not redaction)", async () => {
+    const { store, core } = extractCore("rm01-mixed.jsonl");
+    const msg = await core.save("I live in Texas; my API key is sk-abcdefghijklmnopqrstuvwxyz123456");
+    assert.ok(/not saved/i.test(msg));
+    assert.strictEqual(store.current().length, 0);
+  });
+
+  section("RM-01.c save() wiring (Tier 2, mock LLM)");
+
+  function tier2Core(file, extra) {
+    let embedCalls = 0;
+    const seen = [];
+    const store = new JsonlStore(tmp(file));
+    const embed = async (texts) => {
+      embedCalls += texts.length;
+      return texts.map((t) => {
+        let i = seen.indexOf(t);
+        if (i < 0) { i = seen.length; seen.push(t); }
+        const v = new Array(8).fill(0);
+        v[i % 8] = 1;
+        v[(i * 3 + 1) % 8] = 0.2;
+        return v;
+      });
+    };
+    const sent = [];
+    const opts = Object.assign({ store, embed }, extra || {});
+    if (typeof opts.extract === "function") {
+      const inner = opts.extract;
+      opts.extract = async (text) => { sent.push(text); return inner(text); };
+    }
+    return { store, core: createCore(opts), embeds: () => embedCalls, sent };
+  }
+
+  await atest("toggle off: extract is never called; byte-identical to 01.b", async () => {
+    let called = 0;
+    const { store, core } = tier2Core("rm01c-off.jsonl", {
+      extractEnabled: () => false,
+      extract: async () => { called++; return { facts: ["SHOULD NOT STORE"], skip: false }; },
+    });
+    await core.save("I think you should know that Samuel prefers concise answers");
+    assert.strictEqual(called, 0);
+    assert.strictEqual(store.current()[0].text, "Samuel prefers concise answers");
+  });
+
+  await atest("toggle on + mock facts: ADD-only, those facts are what is stored", async () => {
+    const { store, core, sent } = tier2Core("rm01c-on.jsonl", {
+      extractEnabled: () => true,
+      extract: async () => ({ facts: ["I have a green parrot named Mango", "I go to the gym at 5am"], skip: false }),
+    });
+    const msg = await core.save("Life at home is loud in a good way. Between the parrot (Mango, the green one) and getting up for the gym at 5am, quiet evenings are rare and I would not trade it.");
+    assert.ok(/Saved 2 memories/.test(msg), msg);
+    const texts = store.current().map((r) => r.text).sort();
+    assert.deepStrictEqual(texts, ["I go to the gym at 5am", "I have a green parrot named Mango"]);
+    assert.strictEqual(sent.length, 1, "one extraction call");
+    assert.ok(!/Life at home is loud/.test(store.current().map((r) => r.text).join(" ")),
+      "the narrative blob is not stored alongside the facts (extraction replaces, ADD-only vs existing memories)");
+  });
+
+  await atest("mock throws / times out / returns garbage: silent degrade to Tier 0/1", async () => {
+    const src = "I think you should know that Samuel prefers concise answers";
+    const { store: s1, core: c1 } = tier2Core("rm01c-throw.jsonl", {
+      extractEnabled: () => true,
+      extract: async () => { throw new Error("boom"); },
+    });
+    const m1 = await c1.save(src);
+    assert.ok(/Saved/.test(m1), m1);
+    assert.strictEqual(s1.current()[0].text, "Samuel prefers concise answers");
+
+    const { store: s2, core: c2 } = tier2Core("rm01c-timeout.jsonl", {
+      extractEnabled: () => true,
+      extractTimeoutMs: () => 30,
+      extract: () => new Promise(() => {}),
+    });
+    const t0 = Date.now();
+    const m2 = await c2.save(src);
+    assert.ok(Date.now() - t0 < 2000, "timeout must not hang save");
+    assert.ok(/Saved/.test(m2), m2);
+    assert.strictEqual(s2.current()[0].text, "Samuel prefers concise answers");
+
+    const { store: s3, core: c3 } = tier2Core("rm01c-garbage.jsonl", {
+      extractEnabled: () => true,
+      extract: async () => ({ facts: "not-an-array", skip: false }),
+    });
+    await c3.save(src);
+    assert.strictEqual(s3.current()[0].text, "Samuel prefers concise answers");
+  });
+
+  await atest("PII is refused BEFORE any LLM call (secret is never sent)", async () => {
+    const { store, core, sent } = tier2Core("rm01c-pii.jsonl", {
+      extractEnabled: () => true,
+      extract: async (t) => ({ facts: ["leaked: " + t], skip: false }),
+    });
+    const msg = await core.save("my API key is sk-abcdefghijklmnopqrstuvwxyz123456");
+    assert.ok(/not saved/i.test(msg), msg);
+    assert.strictEqual(store.current().length, 0);
+    assert.strictEqual(sent.length, 0, "extract must not see a secret");
+  });
+
+  await atest("capability-detect false: toggle on still no-ops (extract never called)", async () => {
+    let called = 0;
+    const { store, core } = tier2Core("rm01c-incapable.jsonl", {
+      extractEnabled: () => true,
+      extractCapable: () => false,
+      extract: async () => { called++; return { facts: ["SHOULD NOT STORE"], skip: false }; },
+    });
+    await core.save("I think you should know that Samuel prefers concise answers");
+    assert.strictEqual(called, 0);
+    assert.strictEqual(store.current()[0].text, "Samuel prefers concise answers");
+  });
+
+  await atest("default createCore: Tier 2 off, no extract injector, 01.b path", async () => {
+    const { store, core } = extractCore("rm01c-default.jsonl");
+    await core.save("FYI, the Friday standup is at 10am");
+    assert.strictEqual(store.current()[0].text, "The Friday standup is at 10am");
+  });
+
+  section("RM-02.b cosine-banded dedup at save");
+
+  // Unit vectors: cosine([1,0], [c, sqrt(1-c²)]) = c. Lets a test dial an
+  // exact band without a live embedder.
+  function vecAt(cos) {
+    const c = Number(cos);
+    return [c, Math.sqrt(Math.max(0, 1 - c * c))];
+  }
+  const ORIGIN = [1, 0];
+
+  function dedupCore(file, table, thresholds) {
+    const store = new JsonlStore(tmp(file));
+    const embed = async (texts) => texts.map((t) => {
+      if (table[t]) return table[t].slice();
+      return ORIGIN.slice();
+    });
+    const opts = { store, embed };
+    if (thresholds) opts.dedupThresholds = () => thresholds;
+    return { store, core: createCore(opts) };
+  }
+
+  await atest("HI restatement bumps last_confirmed + access_count and does NOT append", async () => {
+    const table = {
+      "I prefer tea over coffee": ORIGIN,
+      "I like tea more than coffee": vecAt(0.9522),
+    };
+    const { store, core } = dedupCore("dedup-hi.jsonl", table);
+    await core.save("I prefer tea over coffee");
+    const id = store.current()[0].id;
+    store.update(id, { last_confirmed: "2020-01-01T00:00:00.000Z", access_count: 0 });
+    const msg = await core.save("I like tea more than coffee");
+    assert.ok(/Already remembered/.test(msg));
+    assert.strictEqual(store.current().length, 1, "HI paraphrase must not append");
+    assert.strictEqual(store.active().length, 1, "and must not persist a superseded copy either");
+    const rec = store.get(id);
+    assert.strictEqual(rec.text, "I prefer tea over coffee", "original text kept");
+    assert.notStrictEqual(rec.last_confirmed, "2020-01-01T00:00:00.000Z", "last_confirmed bumped");
+    assert.strictEqual(rec.access_count, 1, "access_count bumped");
+  });
+
+  await atest("mid-band merge keeps the longer original text, sets superseded_by, unions metadata", async () => {
+    const short = "I have a cat named Koneko";
+    const longer = "I have a black cat named Koneko";
+    const table = { [short]: ORIGIN, [longer]: vecAt(0.9435) };
+    const { store, core } = dedupCore("dedup-mid.jsonl", table);
+    await core.save(short);
+    const oldId = store.current()[0].id;
+    store.update(oldId, { is_constraint: true, access_count: 4, source: "user_stated" });
+    const msg = await core.save(longer);
+    assert.ok(/merged/i.test(msg), "merge is reported, not a silent restatement");
+    assert.strictEqual(store.current().length, 1, "one current survivor");
+    const survivor = store.current()[0];
+    assert.strictEqual(survivor.text, longer, "longer original text kept (not a blend)");
+    assert.notStrictEqual(survivor.id, oldId, "incoming was longer → new row is current");
+    assert.strictEqual(survivor.supersedes, oldId);
+    assert.strictEqual(survivor.is_constraint, true, "union: constraint flag carried onto survivor");
+    assert.ok(survivor.access_count >= 5, "union: access_count inherited + confirmation bump");
+    const loser = store.get(oldId);
+    assert.ok(loser.valid_to, "loser is superseded, not deleted");
+    assert.strictEqual(loser.superseded_by, survivor.id);
+    assert.strictEqual(loser.text, short, "loser original text is recoverable");
+    assert.strictEqual(store.active().length, 2, "both rows kept (I8)");
+  });
+
+  await atest("mid-band merge: existing longer text stays current, incoming is the superseded loser", async () => {
+    const longer = "I work as a software architect, mostly on games";
+    const short = "I work as a software architect";
+    const table = { [longer]: ORIGIN, [short]: vecAt(0.9261) };
+    const { store, core } = dedupCore("dedup-mid-keep.jsonl", table);
+    await core.save(longer);
+    const keepId = store.current()[0].id;
+    await core.save(short);
+    assert.strictEqual(store.current().length, 1);
+    assert.strictEqual(store.current()[0].id, keepId);
+    assert.strictEqual(store.current()[0].text, longer);
+    const loser = store.active().find((r) => String(r.id) !== String(keepId));
+    assert.ok(loser, "shorter incoming was persisted as superseded");
+    assert.strictEqual(loser.text, short);
+    assert.strictEqual(loser.superseded_by, keepId);
+    assert.ok(loser.valid_to);
+  });
+
+  await atest("control pair (~0.69, distinct) is NOT merged", async () => {
+    const dog = "I have a dog named Rex";
+    const cat = "I have a cat named Whiskers";
+    const table = { [dog]: ORIGIN, [cat]: vecAt(0.69) };
+    const { store, core } = dedupCore("dedup-control.jsonl", table);
+    await core.save(dog);
+    await core.save(cat);
+    assert.strictEqual(store.current().length, 2, "both current — dog/cat must not collapse");
+    assert.ok(store.current().every((r) => !r.valid_to && r.superseded_by == null));
+  });
+
+  await atest("a save below DEDUP_LO appends normally", async () => {
+    const table = {
+      "My name is Samuel": ORIGIN,
+      "The garage code is 4821": vecAt(0.20),
+    };
+    const { store, core } = dedupCore("dedup-below-lo.jsonl", table);
+    await core.save("My name is Samuel");
+    const msg = await core.save("The garage code is 4821");
+    assert.ok(/^Saved\./.test(msg), "plain append, not merge/restate");
+    assert.strictEqual(store.current().length, 2);
+  });
+
+  await atest("thresholds are read from the injected config getter", async () => {
+    const table = {
+      "I prefer tea over coffee": ORIGIN,
+      "I like tea more than coffee": vecAt(0.9522),
+    };
+    // Raise HI past the tea pair so the default restatement becomes an append.
+    const { store, core } = dedupCore("dedup-cfg.jsonl", table, { hi: 0.99, lo: 0.97 });
+    await core.save("I prefer tea over coffee");
+    await core.save("I like tea more than coffee");
+    assert.strictEqual(store.current().length, 2, "pair that is HI at 0.95 appends when config hi=0.99");
+  });
+
+  await atest("readDedupThresholds: live config wins over env, env over defaults", async () => {
+    assert.deepStrictEqual(readDedupThresholds(null), { hi: DEDUP_HI, lo: DEDUP_LO });
+    assert.strictEqual(DEDUP_HI, 0.95);
+    assert.strictEqual(DEDUP_LO, 0.88);
+    assert.deepStrictEqual(
+      readDedupThresholds({ dedup_hi: 0.99, dedup_lo: 0.90 }),
+      { hi: 0.99, lo: 0.90 },
+      "config keys dedup_hi / dedup_lo"
+    );
+    const prevHi = process.env.RESONANCE_DEDUP_HI;
+    const prevLo = process.env.RESONANCE_DEDUP_LO;
+    process.env.RESONANCE_DEDUP_HI = "0.97";
+    process.env.RESONANCE_DEDUP_LO = "0.91";
+    try {
+      assert.deepStrictEqual(readDedupThresholds(null), { hi: 0.97, lo: 0.91 }, "env when no config");
+      assert.deepStrictEqual(
+        readDedupThresholds({ dedup_hi: 0.93 }),
+        { hi: 0.93, lo: 0.91 },
+        "config hi wins; env lo fills the other"
+      );
+    } finally {
+      if (prevHi === undefined) delete process.env.RESONANCE_DEDUP_HI;
+      else process.env.RESONANCE_DEDUP_HI = prevHi;
+      if (prevLo === undefined) delete process.env.RESONANCE_DEDUP_LO;
+      else process.env.RESONANCE_DEDUP_LO = prevLo;
+    }
+  });
+
+  await atest("dedup degrades to append when the new record has no vector", async () => {
+    const store = new JsonlStore(tmp("dedup-novec.jsonl"));
+    let live = true;
+    const embed = async (texts) => {
+      if (!live) throw new Error("embedder down");
+      return texts.map(() => ORIGIN.slice());
+    };
+    const core = createCore({ store, embed });
+    await core.save("I'm allergic to penicillin");
+    live = false;
+    const msg = await core.save("I am allergic to penicillin");
+    assert.ok(/^Saved\./.test(msg) || /Saved/.test(msg), "save still succeeds");
+    assert.strictEqual(store.current().length, 2, "can't compare → append, don't crash or drop");
+    assert.strictEqual(store.current()[1].embedding, null);
+  });
+
+  await atest("exact byte-identical restatement still confirms (and now bumps access_count)", async () => {
+    const { store, core } = dedupCore("dedup-exact.jsonl", { "I drink tea": ORIGIN });
+    await core.save("I drink tea");
+    const id = store.current()[0].id;
+    const msg = await core.save("I drink tea");
+    assert.ok(/Already remembered/.test(msg));
+    assert.strictEqual(store.current().length, 1);
+    assert.strictEqual(store.get(id).access_count, 1);
+  });
+
+  await atest("RM-02.b A/B bar on the duplicates corpus: dup_rate ≤ 0.1591 and recall@5 = 1", async () => {
+    const { loadScenarios, runScenario } = require("./eval/measure.js");
+    const scenarios = loadScenarios(path.join(__dirname, "eval", "corpora", "duplicates.jsonl"));
+    const r = await runScenario(scenarios[0], { k: 5 });
+    assert.ok(r.metrics.duplicate_rate <= 0.1591,
+      "duplicate_rate " + r.metrics.duplicate_rate + " must drop ≥50% from 0.3182");
+    assert.strictEqual(r.metrics.recall_at_k, 1,
+      "recall@5 must hold (controls not over-merged); misses=" + (r.recall_at_k.misses || []).join(","));
+  });
+
+  section("RM-02.c --dedup-existing backfill");
+
+  // Independent 3-D unit axes so tea/cat/dog groups cannot cosine-bleed.
+  function axisAt(axis, cos) {
+    const c = Number(cos);
+    const s = Math.sqrt(Math.max(0, 1 - c * c));
+    if (axis === 0) return [c, s, 0];
+    if (axis === 1) return [0, c, s];
+    return [0, 0, 1];
+  }
+  const TEA_A = "I prefer tea over coffee";
+  const TEA_B = "I like tea more than coffee";
+  const CAT_A = "I have a cat named Koneko";
+  const CAT_B = "I have a black cat named Koneko";
+  const DOG = "I have a dog named Rex";
+  const FIXTURE_TABLE = {
+    [TEA_A]: [1, 0, 0],
+    [TEA_B]: axisAt(0, 0.9522),
+    [CAT_A]: [0, 1, 0],
+    [CAT_B]: axisAt(1, 0.9435),
+    [DOG]: [0, 0, 1],
+  };
+  const FIXTURE_TEXTS = [TEA_A, TEA_B, CAT_A, CAT_B, DOG];
+  const T_BACKFILL = "2026-09-05T12:00:00.000Z";
+
+  function seedRaw(file, rows) {
+    const store = new JsonlStore(tmp(file));
+    const t0 = "2026-01-01T00:00:00.000Z";
+    for (const row of rows) {
+      store.add(normalize({
+        id: store.nextId(),
+        created: t0, modified: t0, text: row.text,
+        embedding: row.embedding != null ? row.embedding : null,
+        valid_from: t0, last_confirmed: t0,
+        access_count: row.access_count || 0,
+      }));
+    }
+    return store;
+  }
+  function seedFixture(file, texts) {
+    return seedRaw(file, (texts || FIXTURE_TEXTS).map((t) => ({
+      text: t, embedding: FIXTURE_TABLE[t] ? FIXTURE_TABLE[t].slice() : null,
+    })));
+  }
+  function currentTexts(store) {
+    return store.current().map((r) => r.text).sort();
+  }
+
+  await atest("dry-run mutates NOTHING (bytes + mtime) and reports the known plan", async () => {
+    const store = seedFixture("dedup-ex-dry.jsonl");
+    const before = fs.readFileSync(store.file, "utf8");
+    const mtime = fs.statSync(store.file).mtimeMs;
+    const plan = await dedupExisting({ store, apply: false, now: T_BACKFILL });
+    assert.strictEqual(plan.wrote, false, "dry-run must not apply");
+    assert.strictEqual(fs.readFileSync(store.file, "utf8"), before, "store bytes unchanged");
+    assert.strictEqual(fs.statSync(store.file).mtimeMs, mtime, "mtime unchanged");
+    assert.strictEqual(plan.restatements.length, 1, "tea paraphrase is a restatement");
+    assert.strictEqual(plan.restatements[0].incomingText, TEA_B);
+    assert.strictEqual(plan.restatements[0].matchText, TEA_A);
+    assert.strictEqual(plan.merges.length, 1, "cat pair is a mid-band merge");
+    assert.strictEqual(plan.merges[0].survivorText, CAT_B, "longer original survives");
+    assert.strictEqual(plan.merges[0].loserText, CAT_A);
+    assert.ok(!plan.restatements.some((r) => r.incomingText === DOG || r.matchText === DOG));
+    assert.ok(!plan.merges.some((m) => m.survivorText === DOG || m.loserText === DOG),
+      "control dog must not enter the plan");
+    assert.strictEqual(plan.beforeCount, 5);
+    assert.strictEqual(plan.afterCount, 3);
+    assert.strictEqual(plan.skipped.length, 0);
+    const { formatPlan } = require("./dedup-existing.js");
+    const out = formatPlan(plan, { apply: false, storePath: store.file });
+    assert.ok(/dry-run/i.test(out));
+    assert.ok(/Nothing written/i.test(out));
+    assert.ok(/Restatements \(1\)/.test(out));
+    assert.ok(/Merges \(1\)/.test(out));
+  });
+
+  await atest("apply end state matches sequential save() through 02.b (current texts)", async () => {
+    const embed = async (texts) => texts.map((t) => (FIXTURE_TABLE[t] || [0, 0, 1]).slice());
+    const online = new JsonlStore(tmp("dedup-ex-online.jsonl"));
+    const core = createCore({ store: online, embed });
+    for (const t of FIXTURE_TEXTS) await core.save(t);
+
+    const offline = seedFixture("dedup-ex-offline.jsonl");
+    const seeded = offline.all().length;
+    const plan = await dedupExisting({ store: offline, apply: true, now: T_BACKFILL });
+    assert.strictEqual(plan.wrote, true);
+    assert.deepStrictEqual(currentTexts(offline), currentTexts(online),
+      "offline backfill current() must match one-by-one save()");
+    assert.strictEqual(offline.current().length, 3, "tea + cat + dog");
+    assert.strictEqual(offline.all().length, seeded, "I8: backfill never hard-deletes");
+    const tea = offline.current().find((r) => r.text === TEA_A);
+    assert.ok(tea, "HI restatement keeps the earlier original");
+    const cat = offline.current().find((r) => r.text === CAT_B);
+    assert.ok(cat, "mid merge keeps the longer original");
+    const catLoser = offline.active().find((r) => r.text === CAT_A);
+    assert.ok(catLoser && catLoser.superseded_by === cat.id && catLoser.valid_to,
+      "merge loser is superseded, not deleted");
+    const teaLoser = offline.active().find((r) => r.text === TEA_B);
+    assert.ok(teaLoser && teaLoser.superseded_by === tea.id,
+      "already-stored restatement is superseded (I8) rather than dropped");
+  });
+
+  await atest("second --apply is a no-op; clean store reports nothing to do", async () => {
+    const store = seedFixture("dedup-ex-idem.jsonl");
+    await dedupExisting({ store, apply: true, now: T_BACKFILL });
+    const before = fs.readFileSync(store.file, "utf8");
+    const mtime = fs.statSync(store.file).mtimeMs;
+    const again = await dedupExisting({ store, apply: true, now: T_BACKFILL });
+    assert.ok(again.nothingToDo, "nothing left to merge");
+    assert.strictEqual(again.wrote, false, "second apply must not rewrite");
+    assert.strictEqual(again.restatements.length, 0);
+    assert.strictEqual(again.merges.length, 0);
+    assert.strictEqual(fs.readFileSync(store.file, "utf8"), before);
+    assert.strictEqual(fs.statSync(store.file).mtimeMs, mtime);
+
+    const clean = seedRaw("dedup-ex-clean.jsonl", [
+      { text: "alpha", embedding: [1, 0, 0] },
+      { text: "beta", embedding: [0, 1, 0] },
+    ]);
+    const p = await dedupExisting({ store: clean, apply: true });
+    assert.ok(p.nothingToDo);
+    assert.strictEqual(p.wrote, false);
+    assert.strictEqual(clean.current().length, 2);
+  });
+
+  await atest("vectorless row is skipped, not merged (embedder down)", async () => {
+    const store = seedRaw("dedup-ex-novec.jsonl", [
+      { text: TEA_A, embedding: [1, 0, 0] },
+      { text: TEA_B, embedding: null },
+    ]);
+    const before = fs.readFileSync(store.file, "utf8");
+    const embed = async () => { throw new Error("embedder down"); };
+    const plan = await dedupExisting({ store, embed, apply: true, now: T_BACKFILL });
+    assert.strictEqual(plan.skipped.length, 1);
+    assert.strictEqual(plan.skipped[0].reason, "no vector");
+    assert.strictEqual(plan.restatements.length, 0, "must not merge blind");
+    assert.strictEqual(plan.merges.length, 0);
+    assert.strictEqual(store.current().length, 2, "both still current");
+    assert.strictEqual(fs.readFileSync(store.file, "utf8"), before,
+      "apply with nothing to patch must not rewrite");
+  });
+
+  await atest("vectorless row re-embeds then restates when the embedder is up", async () => {
+    const store = seedRaw("dedup-ex-fill.jsonl", [
+      { text: TEA_A, embedding: [1, 0, 0] },
+      { text: TEA_B, embedding: null },
+    ]);
+    const embed = async (texts) => texts.map((t) => (FIXTURE_TABLE[t] || [1, 0, 0]).slice());
+    const plan = await dedupExisting({ store, embed, apply: true, now: T_BACKFILL });
+    assert.strictEqual(plan.skipped.length, 0);
+    assert.strictEqual(plan.vectorBackfills, 1);
+    assert.strictEqual(plan.restatements.length, 1);
+    assert.strictEqual(store.current().length, 1);
+    const loser = store.active().find((r) => r.text === TEA_B);
+    assert.ok(loser && Array.isArray(loser.embedding) && loser.embedding.length,
+      "filled vector is persisted on the superseded row too");
+  });
+
+  await atest("apply is one durable rewrite (I5) and loses no memory (I8)", async () => {
+    const store = seedFixture("dedup-ex-i5.jsonl");
+    const nSeeded = store.all().length;
+    let many = 0, one = 0;
+    const origMany = store.updateMany.bind(store);
+    const origOne = store.update.bind(store);
+    store.updateMany = function () { many++; return origMany.apply(this, arguments); };
+    store.update = function () { one++; return origOne.apply(this, arguments); };
+    await dedupExisting({ store, apply: true, now: T_BACKFILL });
+    assert.strictEqual(many, 1, "one updateMany → one writeFileDurable");
+    assert.strictEqual(one, 0, "never a per-pair store.update");
+    const dir = path.dirname(store.file);
+    const marker = "." + path.basename(store.file) + ".";
+    const tmps = fs.readdirSync(dir).filter((n) => n.indexOf(marker) === 0 && n.slice(-4) === ".tmp");
+    assert.strictEqual(tmps.length, 0, "writeFileDurable leaves no temp files");
+    const raw = fs.readFileSync(store.file, "utf8");
+    const lines = raw.split("\n").filter(Boolean);
+    assert.ok(raw.endsWith("\n"));
+    for (const line of lines) JSON.parse(line);  // every line parseable — not truncated
+    assert.strictEqual(store.all().length, nSeeded, "I8: survivors + superseded both present");
+    assert.ok(store.active().every((r) => !r.deleted), "no hard/soft-delete of losers");
+  });
+
+  await atest("CLI --dedup-existing (entry.js) dry-run default; --apply required to mutate", async () => {
+    const { spawnSync } = require("child_process");
+    const store = seedFixture("dedup-ex-cli.jsonl");
+    const before = fs.readFileSync(store.file, "utf8");
+    const entry = path.join(__dirname, "entry.js");
+    const env = Object.assign({}, process.env);
+    delete env.RESONANCE_DEDUP_HI;
+    delete env.RESONANCE_DEDUP_LO;
+    delete env.RESONANCE_MEMORY_CONFIG;
+    const dry = spawnSync(process.execPath, [entry, "--dedup-existing", "--json", store.file], {
+      encoding: "utf8", timeout: 15000, env,
+    });
+    assert.strictEqual(dry.status, 0, "dry-run exit: " + (dry.stderr || dry.stdout));
+    const report = JSON.parse(dry.stdout);
+    assert.strictEqual(report.applied, false);
+    assert.strictEqual(report.wrote, false);
+    assert.strictEqual(report.restatements.length, 1);
+    assert.strictEqual(report.merges.length, 1);
+    assert.strictEqual(fs.readFileSync(store.file, "utf8"), before, "CLI dry-run mutates nothing");
+
+    const applied = spawnSync(process.execPath, [entry, "--dedup-existing", "--apply", "--json", store.file], {
+      encoding: "utf8", timeout: 15000, env,
+    });
+    assert.strictEqual(applied.status, 0, "apply exit: " + (applied.stderr || applied.stdout));
+    const after = JSON.parse(applied.stdout);
+    assert.strictEqual(after.applied, true);
+    assert.strictEqual(after.wrote, true);
+    assert.strictEqual(after.afterCount, 3);
+    assert.notStrictEqual(fs.readFileSync(store.file, "utf8"), before);
+    assert.strictEqual(new JsonlStore(store.file).current().length, 3);
+  });
+
+  await atest("duplicates corpus backfill: plan matches groups; dup_rate 0.3182→0; recall@5 holds", async () => {
+    const { embed } = require("./eval/embed-cache.js");
+    const { loadScenarios, resolveRelevant } = require("./eval/measure.js");
+    const { groupsFromWrites, explainMetric, parsePrimaryHits } = require("./eval/metrics.js");
+    const scenarios = loadScenarios(path.join(__dirname, "eval", "corpora", "duplicates.jsonl"));
+    const writes = scenarios[0].writes;
+    const groups = groupsFromWrites(writes);
+    const textToGroup = {};
+    for (const w of writes) textToGroup[w.text] = w.dup_group;
+
+    // Pre-02.b shape: exact restatement already existed, so drop the second
+    // byte-identical coffee-order write. 22 current, 7 extras (4 HI + 3 mid).
+    const seenExact = new Set();
+    const pre02b = [];
+    for (const w of writes) {
+      if (w.band === "exact") {
+        if (seenExact.has(w.text)) continue;
+        seenExact.add(w.text);
+      }
+      pre02b.push(w);
+    }
+    const vecs = await embed(pre02b.map((w) => w.text));
+    const store = new JsonlStore(tmp("dedup-ex-corpus.jsonl"));
+    for (let i = 0; i < pre02b.length; i++) {
+      store.add(normalize({
+        id: i + 1,
+        text: pre02b[i].text,
+        embedding: vecs[i],
+        created: "2026-01-01T00:00:00.000Z",
+      }));
+    }
+    const beforeBytes = fs.readFileSync(store.file, "utf8");
+    const beforeDup = explainMetric("duplicate_rate", { records: store.current() }, { groups });
+    assert.strictEqual(beforeDup.extras, 7);
+    assert.ok(Math.abs(beforeDup.rate - 7 / 22) < 1e-9, "pre-02.b baseline 0.3182");
+
+    const dry = await dedupExisting({ store, apply: false, now: T_BACKFILL });
+    assert.strictEqual(fs.readFileSync(store.file, "utf8"), beforeBytes, "corpus dry-run is a no-write");
+    const restateGroups = new Set(dry.restatements.map((r) => textToGroup[r.incomingText]));
+    const mergeGroups = new Set(dry.merges.map((m) => textToGroup[m.loserText] || textToGroup[m.survivorText]));
+    assert.ok(restateGroups.has("penicillin") && restateGroups.has("tea") && restateGroups.has("peanuts"),
+      "HI groups are restatements");
+    assert.ok(!restateGroups.has("coffee-order"), "exact pair already collapsed in this fixture");
+    assert.ok(mergeGroups.has("job") && mergeGroups.has("cat") && mergeGroups.has("diabetic"),
+      "mid groups are merges");
+    for (const g of ["dog", "peanut-allergy", "standup", "mechanic", "name", "night-owl", "sister-bday", "garage"]) {
+      assert.ok(!restateGroups.has(g) && !mergeGroups.has(g), "control " + g + " must not collapse");
+    }
+    assert.strictEqual(dry.restatements.length, 4, "4 HI extras");
+    assert.strictEqual(dry.merges.length, 3, "3 mid extras");
+    assert.strictEqual(dry.afterCount, 15);
+
+    const applied = await dedupExisting({ store, apply: true, now: T_BACKFILL });
+    assert.strictEqual(applied.wrote, true);
+    const recs = store.current();
+    const afterDup = explainMetric("duplicate_rate", { records: recs }, { groups });
+    assert.strictEqual(afterDup.rate, 0, "duplicate_rate dropped to 0");
+    assert.strictEqual(recs.length, 15);
+
+    const core = createCore({ store, embed });
+    let hits = 0;
+    const misses = [];
+    for (const q of scenarios[0].queries) {
+      const output = await core.recall(q.query, 5);
+      const ranked = parsePrimaryHits(output).map((h) => String(h.id));
+      const relevant = resolveRelevant(q, recs, groups).map(String);
+      if (relevant.some((id) => ranked.indexOf(id) >= 0)) hits++;
+      else misses.push(q.id);
+    }
+    assert.strictEqual(hits, scenarios[0].queries.length,
+      "recall@5 held; misses=" + misses.join(","));
+  });
+
   section("edit() embedding safety");
 
   const makeCore = (file, liveRef) => {
@@ -2385,6 +3750,11 @@ async function asyncTests() {
       embed: embedFn,
       fieldEnabled: () => !!opts.fieldOn,
       getEdgeStore,
+      // Phase 0.1/0.3 bind tests construct many collinear vecAtCos()
+      // neighbors whose pairwise cosine is ≥ DEDUP_LO even though the
+      // texts are distinct labels ("n90" vs "n80"). Dedup is RM-02.b's
+      // job; these tests isolate bind. Bands above 1 disable it.
+      dedupThresholds: opts.dedupThresholds || (() => ({ hi: 2, lo: 2 })),
     });
     return { store, core, edgesPath, edges: () => getEdgeStore() };
   }

@@ -158,12 +158,13 @@ first, and why these cases are the cheapest first thing to run.
 
 | Metric | Definition | Why |
 |---|---|---|
-| `recall@k` | fraction of cases whose expected memory is in top-k | baseline quality |
+| `recall@k` | fraction of cases whose expected memory is in top-k | baseline quality. **Shipped (RM-02.a)** as reporting metric `recall_at_k` (success@k; registry in `eval/metrics.js`). |
 | `MRR` | mean reciprocal rank of first correct hit | ranking quality, not just presence |
 | **`staleness_rate`** | answers drawn from a superseded fact | **our differentiating axis** |
 | `false_supersession` | still-true facts wrongly invalidated | **hard gate — must be 0** |
-| `duplicate_rate` | near-identical stored pairs (cos > 0.95) | store hygiene |
-| `extraction_precision` | stored facts that are genuinely durable | `RM-01` guard |
+| `duplicate_rate` | extras beyond one-per-ground-truth-group / current stored count | store hygiene. **Shipped (RM-02.a)** as a labeled reporting metric, *not* "pairs with cos > 0.95" (that would be circular for cosine-dedup). |
+| `extraction_precision` | stored facts that are genuinely durable | `RM-01` guard. **Shipped (RM-01.a)** as reporting metric (exact gold-fact match, not containment; PII refusal is a separate explain readout). |
+| `extraction_recall` | gold facts that actually landed as a stored record | `RM-01` anti-cheat. **Shipped (RM-01.b)**. Vacuous precision (refuse everything → 1.0) craters this. |
 | `constraint_surfacing` | constraints appearing on topically-related recalls | `RM-08` |
 | `write_latency_p95` | ms per save | guards against LLM-on-write creep |
 | `store_growth` | bytes per 100 writes | supersession must not balloon the file |

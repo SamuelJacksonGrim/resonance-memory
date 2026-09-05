@@ -43,6 +43,24 @@
  *   saveSeed      () -> boolean   (production may pass true; eval MUST pass false)
  *   warmTrace     () -> boolean   (RESONANCE_WARM_TRACE; default off, zero-cost)
  *   warmEdgeCap   () -> number    (RESONANCE_WARM_EDGE_CAP; default 512)
+ *   dedupThresholds () -> { hi, lo }  (RM-02.b cosine bands. Production reads
+ *                                  live config + env; eval/tests use defaults
+ *                                  or inject. Never read CONFIG_PATH here —
+ *                                  that would make the golden depend on the
+ *                                  user's panel file.)
+ *   extractEnabled  () -> boolean  (RM-01.c Tier 2. Default off. Production
+ *                                  reads live-config extract_llm / env
+ *                                  RESONANCE_EXTRACT_LLM. Eval/tests inject.)
+ *   extractCapable  () -> boolean  (capability probe. If a function and it
+ *                                  returns false, Tier 2 no-ops even when
+ *                                  the toggle is on. Omitted = don't check
+ *                                  — an injected extract is trusted.)
+ *   extract         async (text) -> { facts, skip } | string | throw
+ *                                  (the LLM call. Mock in tests; chat or
+ *                                  MCP sampling in production. Never reached
+ *                                  for from here.)
+ *   extractTimeoutMs () -> number  (backstop so a hanging extract cannot
+ *                                  stall save. Default EXTRACT_TIMEOUT_MS.)
  *
  * Ranking is COSINE ONLY (see server.js's invariants); the field is additive and
  * never allowed to throw into the recall path. Warmth in PR1 is the same: seed
@@ -54,8 +72,10 @@ const {
   WarmField, shouldSpread, WARM_EDGE_CAP, emitWarmTrace,
 } = require("./warm.js");
 const {
-  normalize, isHistoricalQuery, detectSupersession, supersedePatches,
+  normalize, isCurrent, isHistoricalQuery, detectSupersession, supersedePatches,
+  detectNearDuplicate, pickMergeSurvivor, prepareWrite, guardSecrets,
 } = require("./record.js");
+const { acceptExtract, EXTRACT_TIMEOUT_MS } = require("./extract.js");
 const { makeEdge, setSemantic, semanticValid, hebbianDecayType, reactivateEdge } = require("./edges.js");
 
 // Reciprocal-kNN edge construction (RM-00 field experiment, 2026-08-01). Directional
@@ -101,6 +121,54 @@ const SAVE_TIME_K = 5;
 const SAVE_TIME_MIN_COS = 0.25;
 
 /*
+ * Cosine-banded dedup at save (RM-02.b). Thresholds are CONFIG, not
+ * constants — env `RESONANCE_DEDUP_HI` / `RESONANCE_DEDUP_LO` plus the
+ * live-config keys `dedup_hi` / `dedup_lo` (same pattern as the field
+ * toggle). These defaults are the tuned values.
+ *
+ * Tuned on eval/duplicates (nomic-embed-text-v1.5, eval/RESULTS.md
+ * RM-02.a geometry, confirmed RM-02.b A/B):
+ *   HI paraphrases  0.9522–0.9883  (tea 0.9522 is the tightest HI)
+ *   mid (same fact, more specific)  0.9261–0.9435
+ *   controls  ≤ ~0.69  (dog/cat ~0.69, peanuts/peanut-allergy ~0.67)
+ *
+ * 0.95 / 0.88 separate those three bands. HI-only restatement leaves
+ * the three mid extras and misses the pre-declared 50% bar (0.1667
+ * vs ≤ 0.1591) — the mid merge is what acceptance actually demands.
+ * 0.88 sits well above the control ceiling, so dog/cat cannot merge
+ * (that would drop recall@5 below 1.0, a FAIL even if dup_rate looks
+ * great).
+ *
+ * ≥ hi (not >): the spec is "cosine ≥ DEDUP_HI". Tea at 0.9522 clears
+ * 0.95 with margin, so the equality case is hypothetical; if a pair
+ * sat exactly on 0.95 we treat it as restatement (keep the original,
+ * don't rewrite) rather than merge. That's the conservative I8 choice
+ * for near-identity.
+ *
+ * The scan is O(N) cosine, same cost class as the 0.1 save-time bind
+ * (eval/save-time-cost.js: p95 77.1 ms at N=100k). Not a reason to
+ * force RM-07 from this slice.
+ */
+const DEDUP_HI = 0.95;
+const DEDUP_LO = 0.88;
+
+function envNumber(name, fallback) {
+  const raw = process.env[name];
+  if (raw == null || raw === "") return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function readDedupThresholds(config) {
+  const hiEnv = envNumber("RESONANCE_DEDUP_HI", DEDUP_HI);
+  const loEnv = envNumber("RESONANCE_DEDUP_LO", DEDUP_LO);
+  const c = config && typeof config === "object" ? config : {};
+  const hi = typeof c.dedup_hi === "number" && Number.isFinite(c.dedup_hi) ? c.dedup_hi : hiEnv;
+  const lo = typeof c.dedup_lo === "number" && Number.isFinite(c.dedup_lo) ? c.dedup_lo : loEnv;
+  return { hi, lo };
+}
+
+/*
  * Default edge source for warmth (and, later, a Phase 0 swap). ALWAYS returns a
  * Map (possibly empty). NEVER null — null-as-sentinel would disable field
  * neighborhood on large stores (WARM_EDGE_CAP gates spread(), not Related:).
@@ -126,6 +194,251 @@ function cosine(a, b) {
   let dot = 0, na = 0, nb = 0;
   for (let i = 0; i < a.length; i++) { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; }
   return na && nb ? dot / (Math.sqrt(na) * Math.sqrt(nb)) : 0;
+}
+
+function hasVector(r) {
+  return r && Array.isArray(r.embedding) && r.embedding.length > 0;
+}
+
+/*
+ * Shared mid-band merge payload (RM-02.b save + RM-02.c backfill).
+ * One helper so the online path and `--dedup-existing` cannot disagree
+ * on survivor/loser, union metadata, or the supersedePatches shape.
+ * Survivor text is one of the two originals (pickMergeSurvivor); the
+ * loser is linked, never hard-deleted (I8).
+ */
+function mergeBandPatches(incoming, existing, now) {
+  const survivor = pickMergeSurvivor(existing, incoming);
+  const loser = survivor === incoming ? existing : incoming;
+  const p = supersedePatches(loser, survivor, now);
+  const union = {
+    last_confirmed: now,
+    is_constraint: !!(existing.is_constraint || incoming.is_constraint),
+    access_count: (existing.access_count || 0) + (incoming.access_count || 0) + 1,
+  };
+  if (existing.source === "user_stated" || incoming.source === "user_stated") {
+    union.source = "user_stated";
+  }
+  return {
+    survivor, loser, union,
+    oldPatch: p.old,
+    newPatch: Object.assign({}, p.new, union),
+  };
+}
+
+function restateSurvivorPatch(existing, now) {
+  return {
+    last_confirmed: now,
+    access_count: (existing.access_count || 0) + 1,
+  };
+}
+
+/*
+ * Offline banded-dedup plan (RM-02.c `--dedup-existing`).
+ *
+ * Pass order: FILE ORDER (JSONL insertion). Each current record is treated
+ * as an incoming `save()` against the survivors of earlier records, using
+ * the SAME detectNearDuplicate + pickMergeSurvivor + mergeBandPatches
+ * decision as the live write path. That is why a second `--apply` is a
+ * no-op: after one pass every remaining current pair is below DEDUP_LO
+ * (or vectorless, which we refuse to merge blind).
+ *
+ * Restatement difference vs save(): the incoming row already exists on
+ * disk, so we supersede it (valid_to + superseded_by) instead of never
+ * appending it. current() matches sequential save; all() keeps the loser
+ * (I8 — backfill never hard-deletes). Exact-text match is free and does
+ * not need a vector (same as save()'s first guard).
+ *
+ * Pure: returns a plan. Caller owns persistence (applyDedupExisting /
+ * store.updateMany → one writeFileDurable).
+ */
+function planDedupExisting(records, opts = {}) {
+  const hi = typeof opts.hi === "number" ? opts.hi : DEDUP_HI;
+  const lo = typeof opts.lo === "number" ? opts.lo : DEDUP_LO;
+  const cosineFn = opts.cosineFn || cosine;
+  const now = opts.now || new Date().toISOString();
+  const current = (records || []).filter(isCurrent);
+  const survivors = [];
+  const restatements = [];
+  const merges = [];
+  const skipped = [];
+  const patches = Object.create(null);
+  const state = new Map();
+
+  function working(rec) {
+    const k = String(rec.id);
+    if (!state.has(k)) state.set(k, Object.assign({}, rec));
+    return state.get(k);
+  }
+  function patch(id, p) {
+    const k = String(id);
+    patches[k] = Object.assign(patches[k] || {}, p);
+    const w = state.get(k);
+    if (w) Object.assign(w, p);
+  }
+
+  for (const rec of current) {
+    const w = working(rec);
+    if (w.valid_to) continue;
+
+    // Byte-identical confirm (save()'s free first guard). Does not need
+    // a vector — identity is not a blind merge.
+    const same = survivors.find((s) => s.text === w.text && !s.valid_to);
+    if (same) {
+      const sw = working(same);
+      restatements.push({
+        action: "restate",
+        incomingId: w.id,
+        incomingText: w.text,
+        matchId: sw.id,
+        matchText: sw.text,
+        cosine: 1,
+      });
+      patch(sw.id, restateSurvivorPatch(sw, now));
+      patch(w.id, supersedePatches(w, sw, now).old);
+      continue;
+    }
+
+    if (!hasVector(w)) {
+      skipped.push({ id: w.id, text: w.text, reason: "no vector" });
+      survivors.push(w);
+      continue;
+    }
+
+    const dup = detectNearDuplicate(w, survivors, cosineFn, { hi, lo });
+    if (dup && dup.action === "restate") {
+      const sw = working(dup.match);
+      restatements.push({
+        action: "restate",
+        incomingId: w.id,
+        incomingText: w.text,
+        matchId: sw.id,
+        matchText: sw.text,
+        cosine: dup.cosine,
+      });
+      patch(sw.id, restateSurvivorPatch(sw, now));
+      patch(w.id, supersedePatches(w, sw, now).old);
+      continue;
+    }
+
+    if (dup && dup.action === "merge") {
+      const existing = working(dup.match);
+      const incoming = w;
+      const m = mergeBandPatches(incoming, existing, now);
+      merges.push({
+        action: "merge",
+        survivorId: m.survivor.id,
+        survivorText: m.survivor.text,
+        loserId: m.loser.id,
+        loserText: m.loser.text,
+        cosine: dup.cosine,
+      });
+      if (m.survivor === incoming) {
+        patch(incoming.id, m.newPatch);
+        patch(existing.id, m.oldPatch);
+        const idx = survivors.findIndex((s) => String(s.id) === String(existing.id));
+        if (idx >= 0) survivors.splice(idx, 1);
+        survivors.push(working(incoming));
+      } else {
+        patch(incoming.id, m.oldPatch);
+        patch(existing.id, m.newPatch);
+      }
+      continue;
+    }
+
+    survivors.push(w);
+  }
+
+  const beforeCount = current.length;
+  const afterCount = survivors.filter((s) => !s.valid_to).length;
+  const extras = restatements.length + merges.length;
+  return {
+    passOrder: "file-order (insertion); each record vs survivors of earlier records (same as save())",
+    hi, lo, now,
+    beforeCount,
+    afterCount,
+    restatements,
+    merges,
+    skipped,
+    patches,
+    extras,
+    duplicateRateBefore: beforeCount ? extras / beforeCount : 0,
+    duplicateRateAfter: 0,
+    nothingToDo: restatements.length === 0 && merges.length === 0,
+  };
+}
+
+/*
+ * Persist a plan in ONE durable rewrite (I5). Never a per-pair
+ * store.update — that would be N atomic windows and a crash could
+ * leave a half-applied pass. extraPatches (e.g. first-time vector
+ * backfill on legacy rows) merge into the same write.
+ *
+ * Nothing to patch → no write (second --apply is a no-op, mtime
+ * unchanged).
+ */
+function applyDedupExisting(store, plan, extraPatches) {
+  const merged = Object.create(null);
+  for (const src of [extraPatches || {}, (plan && plan.patches) || {}]) {
+    for (const id of Object.keys(src)) {
+      merged[id] = Object.assign(merged[id] || {}, src[id]);
+    }
+  }
+  if (!Object.keys(merged).length) return { wrote: false };
+  store.updateMany(merged);
+  return { wrote: true };
+}
+
+/*
+ * Full RM-02.c pass: optionally (re)embed vectorless current rows,
+ * plan against the same bands as save(), apply only when asked.
+ * Embedder down → skip those rows (report "no vector"), don't crash,
+ * don't merge blind. Successfully computed vectors are included in
+ * the apply write so a second pass does not re-embed.
+ *
+ * Dry-run (apply=false, the DEFAULT) mutates NOTHING — embeddings
+ * are used in-memory for the plan only.
+ */
+async function dedupExisting({ store, embed, apply = false, now, thresholds } = {}) {
+  if (!store || typeof store.all !== "function") {
+    throw new Error("dedupExisting: store is required");
+  }
+  const all = store.all();
+  const embedPatches = Object.create(null);
+  const vectorless = all.filter((r) => isCurrent(r) && !hasVector(r));
+  if (vectorless.length && typeof embed === "function") {
+    try {
+      const vecs = await embed(vectorless.map((r) => r.text));
+      vectorless.forEach((r, i) => {
+        const v = vecs[i];
+        if (Array.isArray(v) && v.length) {
+          r.embedding = v;
+          embedPatches[String(r.id)] = { embedding: v };
+        }
+      });
+    } catch { /* planner will skip remaining vectorless rows */ }
+  }
+
+  let bands = { hi: DEDUP_HI, lo: DEDUP_LO };
+  try {
+    const t = typeof thresholds === "function" ? thresholds() : thresholds;
+    if (t && typeof t.hi === "number" && typeof t.lo === "number") bands = t;
+  } catch { /* injected getter must never break the backfill */ }
+
+  const plan = planDedupExisting(all, {
+    cosineFn: cosine,
+    hi: bands.hi,
+    lo: bands.lo,
+    now: now || new Date().toISOString(),
+  });
+  plan.vectorBackfills = Object.keys(embedPatches).length;
+  if (apply) {
+    const result = applyDedupExisting(store, plan, embedPatches);
+    plan.wrote = result.wrote;
+  } else {
+    plan.wrote = false;
+  }
+  return plan;
 }
 
 /*
@@ -233,6 +546,11 @@ function createCore({
   getEdges,
   warmTrace = () => false,
   warmEdgeCap = () => WARM_EDGE_CAP,
+  dedupThresholds = () => readDedupThresholds(null),
+  extractEnabled = () => false,
+  extractCapable,
+  extract,
+  extractTimeoutMs = () => EXTRACT_TIMEOUT_MS,
 }) {
 
   // Lazy fallback so a test can pass warmEnabled without getWarm. Production
@@ -306,23 +624,67 @@ function createCore({
     } catch { /* save-time bind must never break save */ }
   }
 
-  async function save(content, opts) {
+  // Restatement (byte-identical OR cosine ≥ DEDUP_HI): bump confirmation +
+  // access_count, do not append. access_count is a retention signal (I2:
+  // never rank). The original text stays; nothing is lost (I8).
+  function confirmRestatement(existing, now) {
+    store.update(existing.id, restateSurvivorPatch(existing, now));
+    tryReactivateIncident(existing.id);  // save touching an existing endpoint (0.4)
+    tryPrimeSave(existing.id);
+    return "Already remembered — confirmed it's still current. (" + store.current().length + " memories total.)";
+  }
+
+  // Mid-band merge. Shared mergeBandPatches so `--dedup-existing` cannot
+  // diverge from save() (RM-02.c). Loser is linked with superseded_by,
+  // never hard-deleted (I8). Survivor text is one of the two originals.
+  function commitMerge(incoming, existing, mems, now, requestId) {
+    const m = mergeBandPatches(incoming, existing, now);
+
+    if (m.survivor === incoming) {
+      Object.assign(incoming, m.newPatch);
+      store.add(incoming);
+      store.update(existing.id, m.oldPatch);
+      tryBindSaveTime(incoming, mems.filter((m2) => String(m2.id) !== String(existing.id)), requestId);
+      tryPrimeSave(incoming.id);
+      return "Saved — merged a near-duplicate, retiring memory " + existing.id +
+             ". (" + store.current().length + " memories total.)";
+    }
+
+    // Existing text is longer or equal: keep it current, persist the
+    // incoming as already-superseded so the shorter wording is recoverable.
+    Object.assign(incoming, m.oldPatch);
+    store.add(incoming);
+    store.update(existing.id, m.newPatch);
+    tryReactivateIncident(existing.id);
+    tryPrimeSave(existing.id);
+    return "Saved — merged a near-duplicate into memory " + existing.id +
+           ". (" + store.current().length + " memories total.)";
+  }
+
+  function resolveDedupBands() {
+    try {
+      const t = typeof dedupThresholds === "function" ? dedupThresholds() : dedupThresholds;
+      if (t && typeof t.hi === "number" && typeof t.lo === "number") return t;
+    } catch { /* injected getter must never break save */ }
+    return { hi: DEDUP_HI, lo: DEDUP_LO };
+  }
+
+  /*
+   * Persist one already-extracted fact. The previous save() body, unchanged
+   * except it no longer trims/guards — prepareWrite did that. One fact = one
+   * embed (the in-scope cost of a legitimate split).
+   */
+  async function saveOne(content, opts) {
     const requestId = opts && opts.requestId;
-    content = (content || "").trim();
-    if (!content) return "Nothing to save: `content` was empty.";
     const now = new Date().toISOString();
 
     // Exact restatement of a memory that is still true: confirm it rather than
-    // storing a second copy. Near-duplicate detection (cosine-banded) is RM-02;
-    // this is only the free, unambiguous case.
+    // storing a second copy. Free (no embed). Cosine-banded HI restatement
+    // below generalizes this to semantic near-identity (RM-02.b). Compared
+    // against the extracted fact, so "FYI, I prefer tea" confirms "I prefer tea".
     const mems = store.current();
     const same = mems.find((r) => r.text === content);
-    if (same) {
-      store.update(same.id, { last_confirmed: now });
-      tryReactivateIncident(same.id);  // save touching an existing endpoint (0.4)
-      tryPrimeSave(same.id);
-      return "Already remembered — confirmed it's still current. (" + store.current().length + " memories total.)";
-    }
+    if (same) return confirmRestatement(same, now);
 
     let embedding = null;
     try { embedding = (await embed([content]))[0]; } catch { embedding = null; }
@@ -331,6 +693,18 @@ function createCore({
       embedding, valid_from: now, valid_to: null, last_confirmed: now,
       embedding_version: 1,   // first generation, even if this save's embed failed
     });
+
+    // RM-02.b: cosine-banded dedup against already-stored vectors.
+    // No vector (embedder down) → can't compare → fall through to append,
+    // don't crash. Dedup before RM-03: a near-identical restatement is the
+    // same fact, not a correction. Scan is O(N) cosine, same class as the
+    // 0.1 save-time bind — not a reason to force RM-07 from this slice.
+    let dup = null;
+    try {
+      dup = detectNearDuplicate(rec, mems, cosine, resolveDedupBands());
+    } catch { dup = null; }
+    if (dup && dup.action === "restate") return confirmRestatement(dup.match, now);
+    if (dup && dup.action === "merge") return commitMerge(rec, dup.match, mems, now, requestId);
 
     // RM-03: does this correct a fact we already hold? A save carrying an explicit
     // correction cue ("moved", "now", "no longer"...) retires the single most-similar
@@ -353,6 +727,81 @@ function createCore({
     tryBindSaveTime(rec, mems, requestId);
     tryPrimeSave(rec.id);
     return "Saved. (" + store.current().length + " memories total.)";
+  }
+
+  function extractTimeout() {
+    try {
+      const t = typeof extractTimeoutMs === "function" ? extractTimeoutMs() : extractTimeoutMs;
+      if (typeof t === "number" && Number.isFinite(t) && t > 0) return t;
+    } catch { /* injected getter must never break save */ }
+    return EXTRACT_TIMEOUT_MS;
+  }
+
+  function raceTimeout(promise, ms) {
+    let timer;
+    return Promise.race([
+      Promise.resolve(promise).finally(() => { if (timer) clearTimeout(timer); }),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error("extract timeout")), ms);
+      }),
+    ]);
+  }
+
+  /*
+   * RM-01.c: toggle on AND a callable extract AND (if a capable-probe was
+   * injected) that probe saying yes. A false probe is an honest no-op, not
+   * a throw — the user flipped a lever that cannot run on this host.
+   */
+  function shouldExtract() {
+    try { if (!extractEnabled()) return false; } catch { return false; }
+    if (typeof extract !== "function") return false;
+    if (typeof extractCapable === "function") {
+      try { if (!extractCapable()) return false; } catch { return false; }
+    }
+    return true;
+  }
+
+  async function applyTier2(facts) {
+    if (!shouldExtract()) return facts;
+    const source = facts.join(" ");
+    try {
+      const out = await raceTimeout(extract(source), extractTimeout());
+      const next = acceptExtract(out, source);
+      if (!next || !next.length) return facts;
+      const cleaned = [];
+      for (const f of next) {
+        const g = guardSecrets(f);
+        if (!g.ok) continue;          // drop a hallucinated secret; don't refuse the write
+        cleaned.push(f);
+      }
+      return cleaned.length ? cleaned : facts;
+    } catch {
+      return facts;                   // timeout / throw / hang → Tier 0/1 stands
+    }
+  }
+
+  async function save(content, opts) {
+    // RM-01.b Tier 0/1: always-on, deterministic, no LLM. String ops only;
+    // extra embeds come from a legitimate multi-fact split (in-scope), never
+    // from the guard. PII refusal is FIRST — a secret is never sent to Tier 2.
+    // RM-01.c Tier 2: opt-in, best-effort, ADD-only. Off by default. Any
+    // failure degrades silently to the Tier 0/1 facts; save never throws.
+    const prepared = prepareWrite(content);
+    if (!prepared.ok) return prepared.message;
+    if (!prepared.facts.length) return "Nothing to save: `content` was empty.";
+
+    const facts = await applyTier2(prepared.facts);
+
+    if (facts.length === 1) return saveOne(facts[0], opts);
+
+    // Split: each half is its own record / embed. requestId stamps only the
+    // first bind so a later fact in the same write is not skipped by the
+    // 0.3 LRU (null id = apply normally).
+    for (let i = 0; i < facts.length; i++) {
+      const factOpts = i === 0 ? opts : Object.assign({}, opts || {}, { requestId: undefined });
+      await saveOne(facts[i], factOpts);
+    }
+    return "Saved " + facts.length + " memories. (" + store.current().length + " total.)";
   }
 
   async function recall(query, k = 5, opts) {
@@ -528,4 +977,7 @@ function createCore({
 module.exports = {
   createCore, cosine, keywordScore, defaultGetEdges, asEdgeMap,
   bindSaveTimeNeighbors, SAVE_TIME_K, SAVE_TIME_MIN_COS,
+  DEDUP_HI, DEDUP_LO, readDedupThresholds,
+  planDedupExisting, applyDedupExisting, dedupExisting,
+  mergeBandPatches, restateSurvivorPatch,
 };

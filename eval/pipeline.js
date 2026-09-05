@@ -23,17 +23,25 @@
 const { EdgeStore } = require("../edges.js");
 const { createCore, cosine } = require("../memory-core.js");
 
-function createMemory({ store, embed, fieldEnabled = false, edgesPath, ledgerPath }) {
+function createMemory({
+  store, embed, fieldEnabled = false, edgesPath, ledgerPath,
+  extractEnabled = false, extractCapable, extract, extractTimeoutMs,
+}) {
   // Lazy EdgeStore, exactly as server.js does it, so a field-off run never touches disk.
   // ledgerPath is a leftover alias: `.assoc.json` is rewritten to `.edges.json` so
   // diagnose/probe callers that haven't moved still land on the new filename, and
   // EdgeStore migrates a sibling `.assoc.json` one-way if one is sitting there.
+  // extract* default off so eval/run.js (golden) never invokes Tier 2.
   const file = edgesPath || (ledgerPath
     ? String(ledgerPath).replace(/\.assoc\.json$/, ".edges.json")
     : undefined);
   let _edges = null;
   const getEdgeStore = () => { if (!_edges) _edges = new EdgeStore(file); return _edges; };
-  const core = createCore({ store, embed, fieldEnabled: () => fieldEnabled, getEdgeStore });
+  const core = createCore({
+    store, embed, fieldEnabled: () => fieldEnabled, getEdgeStore,
+    extractEnabled: () => !!extractEnabled,
+    extractCapable, extract, extractTimeoutMs,
+  });
   return { save: core.save, recall: core.recall };
 }
 

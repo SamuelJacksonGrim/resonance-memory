@@ -96,7 +96,7 @@ and the eval harness can never drift.
 
 ---
 
-## 3. The three run modes
+## 3. The run modes
 
 The shipped binary is one file that dispatches on `process.argv[2]` (`entry.js`):
 
@@ -105,20 +105,21 @@ The shipped binary is one file that dispatches on `process.argv[2]` (`entry.js`)
 | `memory --mcp` | **MCP server** | `server.js` | The JSON-RPC 2.0 stdio loop an AI client talks to. The product's core. |
 | `memory` (double-click) | **Control panel** | `panel.js` | A local `127.0.0.1:9090` web UI: field toggle, Connect/Disconnect, the 3D association graph, one-click embedder setup. |
 | `memory --install` / `--uninstall` | **Installer** | `install.js` | Wires the exe into LM Studio / Claude Desktop MCP config (or removes it). |
+| `memory --dedup-existing` [`--apply`] | **Backfill** | `dedup-existing.js` | RM-02.c: report (or apply) cosine-banded restatements/merges on a store written before 02.b. Dry-run default. Not a fifth verb. |
 
-All three share the same substrate modules, so a memory saved through the MCP server is the
-same record the panel renders and the installer's target reads.
+All four share the same substrate modules, so a memory saved through the MCP server is the
+same record the panel renders, the installer targets, and `--dedup-existing` scans.
 
 ```
                          entry.js  (argv dispatch)
-              ┌───────────────┼────────────────────┐
-          --mcp            (default)            --install/--uninstall
-              │                │                        │
-          server.js        panel.js                install.js
-              │                │
-              └──────┬─────────┘
-                     ▼
-              memory-core.js   ← the four verbs, ONE implementation
+         ┌───────────────┬────────────┼────────────────────┐
+      --mcp          (default)   --install/--uninstall  --dedup-existing
+         │                │              │                    │
+     server.js        panel.js      install.js         dedup-existing.js
+         │                │                                   │
+         └──────┬─────────┴───────────────────────────────────┘
+                ▼
+         memory-core.js   ← the four verbs + the 02.c planner, ONE implementation
                      │
         ┌────────────┼────────────┬──────────────┐
         ▼            ▼            ▼              ▼
@@ -137,15 +138,17 @@ same record the panel renders and the installer's target reads.
 
 | File | Role | Depends on |
 |---|---|---|
-| `entry.js` | Mode dispatch on `argv`. | server / panel / install |
-| `server.js` | MCP server. Declares the four tool schemas + descriptions, wires the *environment* (network embedder, live field toggle, lazy EdgeStore) into the shared core, runs the stdio JSON-RPC loop, vacuums soft-deletes and `pruneSweep`s faded+weak edges at startup. Reads the version from `package.json` so `serverInfo` can't drift. | `memory-core`, `store`, `edges`, `package.json` |
-| `memory-core.js` | **The four cognitive verbs, as one implementation.** `createCore({ store, embed, fieldEnabled, getEdgeStore })` → `{ save, recall, edit, remove }`. Everything environment-specific is *injected*. This is the code both `server.js` and `eval/pipeline.js` run — the RM-00 golden is the proof they never diverge. | `field`, `record` |
-| `record.js` | The shared record schema (`normalize()`), durable atomic writes (`writeFileDurable()`), the access sidecar (`AccessLog`), and the lexical heuristics (constraint typing, historical-query detection, supersession cues). Owned here so server and panel agree on a record byte-for-byte. | stdlib only |
+| `entry.js` | Mode dispatch on `argv`. | server / panel / install / dedup-existing |
+| `server.js` | MCP server. Declares the four tool schemas + descriptions, wires the *environment* (network embedder, live field toggle, live extract toggle, lazy EdgeStore) into the shared core, runs the stdio JSON-RPC loop, vacuums soft-deletes and `pruneSweep`s faded+weak edges at startup. Reads the version from `package.json` so `serverInfo` can't drift. Outbound `sampling/createMessage` is the Tier 2 path when the client advertised sampling. | `memory-core`, `store`, `edges`, `extract`, `package.json` |
+| `memory-core.js` | **The four cognitive verbs, as one implementation.** `createCore({ store, embed, fieldEnabled, getEdgeStore, dedupThresholds, extractEnabled, extract })` → `{ save, recall, edit, remove }`. Also `dedupExisting` / `planDedupExisting` (RM-02.c) so `--dedup-existing` cannot fork the 02.b bands. Everything environment-specific is *injected*. This is the code both `server.js` and `eval/pipeline.js` run — the RM-00 golden is the proof they never diverge. | `field`, `record`, `extract` |
+| `extract.js` | RM-01.c Tier 2: opt-in LLM extraction (prompt, parser, sanity gate, `/v1/chat/completions`, MCP sampling, capability detect). Off by default. `save()` is the only caller. | stdlib + `fetch` |
+| `dedup-existing.js` | RM-02.c CLI. Dry-run default; `--apply` is one durable rewrite. Thin wrapper over `dedupExisting()` — no second decision. | `memory-core`, `store` |
+| `record.js` | The shared record schema (`normalize()`), durable atomic writes (`writeFileDurable()`), the access sidecar (`AccessLog`), and the lexical heuristics (constraint typing, historical-query detection, supersession cues, cosine-banded `detectNearDuplicate`). Owned here so server and panel agree on a record byte-for-byte. | stdlib only |
 | `store.js` | `JsonlStore` — the flat-JSONL backend behind the Store seam. Constructible and testable without the stdio loop; a SQLite backend can replace it with the same method surface. | `record` |
 | `field.js` | Associative layer (Phase 2a): a kNN semantic graph over stored vectors, neighborhood expansion, and constraint rescue. No new embedding calls, no LLM extraction. | stdlib only |
 | `ledger.js` | Retired Hebbian sidecar (Phase 2b). Off the live path as of Slice C; kept so tests can compare EdgeStore bonuses against the shipped epoch-decay math. | `record` |
 | `edges.js` | Unified persistent edge store (Phase 0 / `RM-21`): one undirected record, two independent signals (`semantic` derived cache validated by version comparison, `hebbian` source of truth), typed provenance, one-way `.assoc.json` → `.edges.json` migration (`kind: "resonance-edges"`). **On the live recall path** — Hebbian bonus (via `effectiveHebbian`)/reinforce/save. Decay is lazy wall-clock (I6); `tick()` is retired. A reinforcing mutation materializes `effectiveHebbian` before applying α (0.3). MCP request-ID idempotency: a 256-entry LRU of processed JSON-RPC ids (`processed_ids`) lives in the sidecar envelope so one `writeFileDurable` commits the dedup record and the weight change together. Soft prune (0.4 / I8): `pruneSweep()` marks `pruned_at` only when *both* unreinforced and semantically weak (`SEMANTIC_PRUNE_GATE` 0.25); hard drop is `vacuum()`, explicit. Reactivation is in-place on save/edit/reinforce of an endpoint. `field.js` still builds the semantic kNN at recall. | `record` |
-| `panel.js` | The `127.0.0.1` control panel (largest file): field toggle, Connect/Disconnect, the 3D association-graph view, demo graph, heartbeat auto-shutdown. | `install`, `field`, `engine`, `edges`, `record`, `embedded-assets` |
+| `panel.js` | The `127.0.0.1` control panel (largest file): field toggle, LLM-extraction toggle (surfaced when a capable model is detected), Connect/Disconnect, the 3D association-graph view, demo graph, heartbeat auto-shutdown. | `install`, `field`, `engine`, `edges`, `record`, `extract`, `embedded-assets` |
 | `install.js` | Detect + wire into LM Studio / Claude Desktop MCP config. Preserves other configured servers, leaves a `.bak`. | stdlib only |
 | `engine.js` | One-click embedder setup for the panel: drives LM Studio's bundled `lms` CLI to start the server, download the Nomic embedder, load it, and verify the endpoint answers. Pure convenience — the MCP server never needs it. | stdlib + `fetch` |
 | `inspect_sidecar.js` | Dependency-free telemetry for the Hebbian ledger. | stdlib |
@@ -167,7 +170,7 @@ same record the panel renders and the installer's target reads.
 | Path | Role |
 |---|---|
 | `test.js` | The dependency-free unit/regression suite (`npm test`). **57 tests, <1s.** |
-| `eval/` | **RM-00**, the evaluation harness (§8). `eval/pipeline.js` wires `memory-core.js` to a cached embedder; `eval/run.js` runs the corpora and gates against `golden.json`. |
+| `eval/` | **RM-00**, the evaluation harness (§8). `eval/pipeline.js` wires `memory-core.js` to a cached embedder; `eval/run.js` runs the corpora and gates against `golden.json`. Reporting metrics (`eval/measure.js`) are a separate A/B path. |
 | `docs/` | `ARCHITECTURE.md` (this file), `ROADMAP.md`, `phases/` (buildable phase specs), `BACKLOG.md`, `BUGS.md`, `COMPETITIVE-ANALYSIS.md`, `proposed/` RFCs. |
 
 ---
@@ -179,23 +182,58 @@ argument is always the smallest possible thing (`content`, `query`, or `id`).
 
 ### `save_memory({ content })`
 
-1. **Exact restatement guard.** If a current memory has byte-identical `text`, bump its
-   `last_confirmed` and confirm — don't store a second copy. (Near-duplicate/cosine-banded
-   dedup is `RM-02`, still open; this is only the free, unambiguous case.) A confirm
-   also revives that id's pruned incident edges (Phase 0.4 — save touching an endpoint).
-2. **Embed once.** POST `content` to the OpenAI-compatible `/v1/embeddings` endpoint (LM Studio
-   default, `text-embedding-nomic-embed-text-v1.5`, 768-dim). If the embedder is down, the
-   record is stored **without** a vector and backfilled on a later recall — a save never fails
-   because the embedder is unreachable.
-3. **Normalize** into a record (`record.js` `normalize()` — the one schema definition).
-4. **Supersession check (RM-03 v1).** `detectSupersession()` fires only when the new text
+1. **Tier 0 extraction (RM-01.b, always on, no LLM).** Collapse whitespace; strip leading
+   filler openers and assistant-aimed imperative framing (longest-first, stacked);
+   split on `; ` / ` and also ` only when every half is a standalone proposition.
+   Clean facts are byte-identical. Implemented in `record.js` (`normalizeText` /
+   `splitFacts` / `prepareWrite`) — not `normalize()`, which is the record schema.
+   Extra embeds from a legitimate split are in-scope; the rest is string ops.
+2. **Tier 1 secret/PII guard (RM-01.b, always on).** Refuse API-key / password / 13–16
+   digit card / AWS key / PEM / GitHub-token shapes. Store nothing; return
+   `Not saved — that looks like … Secrets don't belong in memory.` Refusal, not
+   redaction: a payload mixing a fact with a secret is store-nothing. Digit traps
+   (`4821`, `1500mg`) do not match `\b[0-9]{13,16}\b`.
+3. **Tier 2 optional LLM extraction (RM-01.c, off by default).** One ADD-only
+   call against the already-normalized, already-guarded text. Off by default is
+   a deliberate identity choice: RM does the work; a weak local model can extract
+   worse than Tier 0/1, so this is a conditional bonus, never a silent default.
+   Capable path: MCP client `sampling`, or a non-embedding chat model at the
+   configured endpoint (`GET /v1/models`). If neither, Tier 2 cannot run. The
+   panel surfaces the toggle when a capable model is detected. Any failure /
+   timeout / malformed output degrades silently to the Tier 0/1 facts — a save
+   never fails or hangs because extraction did. PII still refused first: a
+   secret is never sent to the LLM.
+4. **Exact restatement guard.** If a current memory has byte-identical `text` (compared
+   against the extracted fact), bump its `last_confirmed` + `access_count` and confirm —
+   don't store a second copy. Free (no embed). A confirm also revives that id's pruned
+   incident edges (Phase 0.4 — save touching an endpoint).
+5. **Embed once per fact.** POST the extracted text to the OpenAI-compatible `/v1/embeddings`
+   endpoint (LM Studio default, `text-embedding-nomic-embed-text-v1.5`, 768-dim). If the
+   embedder is down, the record is stored **without** a vector and backfilled on a later
+   recall — a save never fails because the embedder is unreachable.
+6. **Normalize** into a record (`record.js` `normalize()` — the one schema definition).
+7. **Cosine-banded dedup (RM-02.b).** Against already-stored vectors, argmax. Cosine ≥
+   `DEDUP_HI` (0.95) is a restatement (same confirm path as step 4 — keep the original,
+   don't append). Band `DEDUP_LO..HI` (0.88–0.95) is a candidate merge: keep the longer
+   original text (never a blend — the `duplicate_rate` metric maps stored text back to
+   its labeled group), union metadata, link the loser with `superseded_by` via
+   `supersedePatches` (recoverable, never a hard delete). Below `DEDUP_LO`: fall through.
+   No vector → skip, append, don't crash. Thresholds are config (`RESONANCE_DEDUP_HI` /
+   `RESONANCE_DEDUP_LO` + live-config `dedup_hi` / `dedup_lo`), tuned on `eval/duplicates`
+   (tea 0.9522 is the tightest HI; controls ≤ ~0.69). Scan is O(N) cosine, same cost
+   class as the 0.1 save-time bind. Dedup runs *before* RM-03: a near-identical
+   restatement is the same fact, not a correction. Stores written before this
+   slice: `--dedup-existing` (dry-run default; `--apply` mutates) walks the
+   current store in file order with the **same** decision (`planDedupExisting`
+   in `memory-core.js`). One `updateMany` / `writeFileDurable`. Not a fifth verb.
+8. **Supersession check (RM-03 v1).** `detectSupersession()` fires only when the new text
    carries an explicit correction cue ("actually", "now", "no longer", "moved"…) *and* it is
    the argmax-similar current memory above a floor. On a hit, the old row is retired
    (`valid_to`, `superseded_by`) and the new one appended, as one logical change — history is
    kept, never deleted. The cue is the precision gate; cosine only picks *which* memory the cue
    targets. Worst case: it retires nothing.
-5. **Append** the record to the JSONL store.
-6. **Save-time semantic bind (Phase 0.1).** If the record got a real vector, find its top-K=5
+9. **Append** the record to the JSONL store.
+10. **Save-time semantic bind (Phase 0.1).** If the record got a real vector, find its top-K=5
    neighbors among existing stored vectors above cosine **0.25** and persist them on the
    EdgeStore: measured `semantic.value` + `src_versions` tagged to the canonical endpoints,
    `hebbian.weight = 0` (no seeded baseline), `provenance.origin = "save-time-neighbor"`.
@@ -409,7 +447,11 @@ it reads `eval/embeddings.cache.json` and never touches the network or an API ke
   `adversarial`, `field-noise`, `field-stress`) with the field **off and on**, reports the
   **ROC** (did the apex constraint surface?) and **TBR** (did forbidden junk bleed in?) split,
   and gates against `golden.json`. `--filter <id>` runs a subset; `--accept` locks the current
-  scorecard as the new golden.
+  scorecard as the new golden. Measurement corpora (`duplicates`) are skipped here.
+- `eval/measure.js` runs reporting metrics from the registry in `eval/metrics.js`
+  (`recall_at_k`, `duplicate_rate`; add more with `register(...)`). A/B numbers, not the
+  golden gate. See `eval/RESULTS.md` (RM-02.a baseline, RM-02.b A/B and RM-02.c
+  backfill: dup_rate 0.3182 → 0.0000, recall@5 held at 1.0000).
 - Current scorecard: **27/31 checks**, field lifts 3 cases fail→pass and the golden gate holds.
 
 `npm test` (57 tests) covers the substrate directly; `npm run eval` covers recall behavior.
@@ -447,7 +489,7 @@ All environment variables, read at startup:
 | Variable | Default | Effect |
 |---|---|---|
 | `MEMORY_FILE_PATH` | `~/.lmstudio/resonance-memory.jsonl` | the store (sidecars derive from it) |
-| `RESONANCE_MEMORY_CONFIG` | beside the store | live field-toggle config file |
+| `RESONANCE_MEMORY_CONFIG` | beside the store | live field / extract-toggle config file |
 | `EMBED_ENDPOINT` | `http://localhost:1234/v1/embeddings` | OpenAI-compatible embeddings endpoint |
 | `EMBED_MODEL` | `text-embedding-nomic-embed-text-v1.5` | embedding model name |
 | `RESONANCE_MEMORY_FIELD` | off | default field state when no config file exists |
@@ -455,12 +497,17 @@ All environment variables, read at startup:
 | `RESONANCE_FIELD_KSEARCH` | 15 | internal search radius for constraint rescue |
 | `RESONANCE_CONSTRAINT_GATE` | 0.45 | min cosine for a constraint↔seed bridge |
 | `RESONANCE_MEMORY_PANEL_PORT` | 9090 | control-panel port (127.0.0.1 only) |
+| `RESONANCE_EXTRACT_LLM` | off | default Tier 2 state when no config file exists |
+| `RESONANCE_EXTRACT_MODEL` | auto (first non-embed) | preferred chat model id for Tier 2 |
+| `RESONANCE_EXTRACT_TIMEOUT_MS` | 8000 | interactive extract bound; degrade to Tier 0/1 |
 
 The embedder is **not bundled** — we depend on the `/v1/embeddings` *interface*, not a specific
 model, so any compatible embedding model can be swapped in.
 
-The panel's HTTP surface (`127.0.0.1` only): `GET /`, `GET /api/state`, `GET /api/graph`,
-`GET /api/clients`, `GET /api/engine`, `GET /api/system-prompt`, `POST /api/toggle`,
+The panel's HTTP surface (`127.0.0.1` only): `GET /`, `GET /api/state` (includes
+`extract_llm` / `extract_capable` / `extract_model`), `GET /api/graph`,
+`GET /api/clients`, `GET /api/engine`, `GET /api/system-prompt`, `POST /api/toggle`
+(`field` and/or `extract_llm`; extract-on is refused if no capable model),
 `POST /api/connect|disconnect`, `POST /api/engine/setup`, `POST /api/ping` (heartbeat). This is
 not yet a documented stable API (`RM-12`), and has no CSRF/`Origin` check today (watch-item
 `W-02`) — worth settling before it becomes a public surface.

@@ -50,8 +50,8 @@ compete on **reproducibility**, which hosted vendors structurally cannot match. 
 
 | Area | Position | Owned by |
 |---|---|---|
-| Evaluation | **No longer a gap.** `RM-00` shipped: offline, deterministic, golden-gated. IR metrics (recall@k, MRR, staleness, dup-rate) not built — Phase 2.5. | `RM-00`, `eval/` |
-| Write path | **The real gap.** `RM-04` + `RM-03` v1 landed; `RM-01`/`RM-02` have not. | `RM-01`–`RM-04` |
+| Evaluation | **No longer a gap.** `RM-00` shipped: offline, deterministic, golden-gated. Reporting metrics: `recall@k` + `duplicate_rate` shipped (RM-02.a registry); MRR / staleness still open — Phase 2.5. | `RM-00`, `eval/` |
+| Write path | **The real gap, closing.** `RM-04` + `RM-03` v1 + `RM-02` landed; `RM-01` done (Tier 0/1 + opt-in Tier 2). | `RM-01`–`RM-04` |
 | Substrate | **Unified.** One edge table, two signals (semantic derived, Hebbian source-of-truth). Phase 0 exit met (0.6). | Phase 0 ✅, `ARCHITECTURE.md` |
 | Distribution | **Ahead.** Single file, zero terminal, no API key. | `DEVELOPERS.md` |
 
@@ -191,8 +191,8 @@ Not substrate work; what makes it runnable by anyone. Scope + acceptance: `BACKL
 
 | Item | What | Status |
 |---|---|---|
-| `RM-01` | Write-side extraction (heuristics first; local LLM optional, off by default, never blocks save) | ⬜ |
-| `RM-02` | Near-duplicate detection + merge | ⬜ |
+| `RM-01` | Write-side extraction (heuristics first; local LLM optional, off by default, never blocks save) | ✅ 01.a+01.b+01.c (messy precision 0.26→1.00; messy-hard live Tier 2 A/B in RESULTS.md) |
+| `RM-02` | Near-duplicate detection + merge | ✅ 02.a+02.b+02.c (A/B + backfill: dup_rate 0.3182→0.0000, recall@5 held) |
 | `RM-07` | SQLite backend behind the Store seam (`sqlite-vec` + FTS5) | ⬜ |
 | `RM-11` | Cross-platform builds + signing | ⬜ |
 | `RM-12` | SDKs against a documented local HTTP API | ⬜ |

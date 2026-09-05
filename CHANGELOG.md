@@ -17,6 +17,68 @@ Beta-readiness pass:
   "revisit only if hosted resale looms" trigger the backlog pre-registered, now pulled.
 
 ### Added
+- **RM-01.c Tier 2 opt-in LLM extraction.** Off by default (RM does the work; a
+  weak local model can extract worse than Tier 0/1). Capability-detect: MCP
+  sampling **or** a non-embedding chat model at the configured endpoint. Visible
+  panel toggle, surfaced when a capable model is detected. One ADD-only call on
+  the already-guarded text; any failure/timeout/garbage degrades silently to
+  Tier 0/1 — a save never fails or hangs because extraction did. PII is refused
+  before any LLM call. `eval/corpora/messy-hard.jsonl` is the stick (`eval/messy`
+  is already maxed by 01.b). Live A/B (`openai/gpt-oss-20b`, temperature 0) in
+  [`eval/RESULTS.md`](eval/RESULTS.md). Golden unmoved (Tier 2 is off on that
+  path). RM-01 is done.
+- **RM-01.b write-side extraction (Tier 0 + Tier 1, no LLM).** Always-on at
+  `save()`: collapse whitespace, strip leading filler openers and assistant-aimed
+  imperatives (full phrases, not 0001's short `^(i think )`), split on `; ` /
+  ` and also ` only when both halves stand alone, refuse secret/PII shapes
+  (store nothing — refusal, not redaction). Clean facts pass through
+  byte-identical. `extraction_recall` added to the reporting registry (anti-cheat
+  for vacuous precision). **A/B vs the 01.a bar:** `extraction_precision`
+  0.2609 → **1.0000**, `extraction_recall` **1.0000**, `recall@5` held at
+  **1.0000**, `pii_refusal_rate` 0 → **1.0000**. Golden unmoved. See
+  [`eval/RESULTS.md`](eval/RESULTS.md) RM-01.b.
+- **RM-01.a measurement seed (write-side extraction).** `extraction_precision`
+  in the reporting-metric registry plus `eval/corpora/messy.jsonl` (filler
+  openers, assistant-aimed imperatives, multi-fact splits, PII/secret
+  refusals, clean controls). Distinct from the golden gate —
+  `node eval/run.js` is unchanged ("No regressions vs golden"); `save()` /
+  `memory-core.js` untouched. Pre-extraction baseline and the pre-declared
+  RM-01.b bar (`extraction_precision ≥ 0.9` with Tier 2 off, recall@5 not
+  lowered, write-latency p95 unchanged when Tier 2 off) live in
+  [`eval/RESULTS.md`](eval/RESULTS.md).
+- **RM-02.c `--dedup-existing` backfill.** Offline pass for stores written
+  before 02.b. Dry-run is the default (`node entry.js --dedup-existing` /
+  `npm run dedup-existing`); `--apply` performs it as one durable rewrite.
+  Same `detectNearDuplicate` / `pickMergeSurvivor` / `mergeBandPatches` as
+  `save()` — file-order, each record vs earlier survivors — so the offline
+  pass and the write path cannot disagree. Restatement losers already on
+  disk are superseded, not deleted (I8); vectorless rows are skipped if
+  the embedder is down. Second `--apply` is a no-op. Measured on a pre-02.b
+  `eval/duplicates` fixture: `duplicate_rate` 0.3182 → **0.0000**, `recall@5`
+  held at **1.0000**. Golden unmoved. RM-02 is done. See
+  [`eval/RESULTS.md`](eval/RESULTS.md).
+- **RM-02.b cosine-banded dedup/merge at save.** First measured A/B in the
+  project. After embed, `save()` compares the new vector to already-stored
+  ones: cosine ≥ `DEDUP_HI` (0.95) is a restatement (bump `last_confirmed` +
+  `access_count`, don't append — generalizes today's byte-identical confirm);
+  band `DEDUP_LO..HI` (0.88–0.95) is a merge (keep the longer original text,
+  union metadata, link the loser with `superseded_by` via `supersedePatches`;
+  never a blend, never a hard delete). Below LO: append as before. No vector
+  → append, don't crash. Thresholds are config (`RESONANCE_DEDUP_HI`/`LO` +
+  live-config `dedup_hi`/`dedup_lo`), tuned on `eval/duplicates` (tea 0.9522
+  is the tightest HI; controls ≤ ~0.69). **A/B vs the pre-declared bar:**
+  `duplicate_rate` 0.3182 → **0.0000** (100% drop, bar was ≤ 0.1591) AND
+  `recall@5` held at **1.0000** (controls not over-merged). Golden unmoved
+  ("No regressions vs golden."). See [`eval/RESULTS.md`](eval/RESULTS.md).
+- **RM-02.a measurement seed (write-path gap).** A reporting-metric registry in
+  `eval/metrics.js` (`recall_at_k`, `duplicate_rate`) plus `eval/measure.js` and
+  `eval/corpora/duplicates.jsonl`. Distinct from the golden contains/excludes
+  gate — `node eval/run.js` is unchanged ("No regressions vs golden"); these
+  numbers are the A/B 02.b compares against. Pre-dedup baseline:
+  `duplicate_rate` 0.3182 (7/22 extras; the shipping exact-restatement path
+  catches 1 byte-identical pair and zero paraphrases), `recall@5` 1.0000
+  (17/17). Pre-declared RM-02 pass bar (before 02.b runs): dup-rate ≥50% down
+  (→ ≤ 0.1591) AND recall@5 not lower. Product behaviour untouched.
 - **Phase 0.6 threat-model sketch (design only).** On-paper analysis of the
   unified edge substrate: what can mint an edge, raise Hebbian weight, make a
   memory a constraint-rescue bridge, or survive indefinitely. The load-bearing

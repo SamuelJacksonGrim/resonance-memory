@@ -21,13 +21,16 @@ the substrate. If an item seems to need a fifth verb, the design is wrong.
 Build `eval/` with seeded, offline, reproducible scoring.
 
 - [x] Fixture corpora in `eval/corpora/*.jsonl`: `basic`, `contradictions`, `constraints`,
-      `adversarial`, plus `field-noise` / `field-stress`. *(`duplicates` / `temporal` / `messy`
-      land with the features they test — RM-02 / RM-04 / RM-01.)*
+      `adversarial`, plus `field-noise` / `field-stress`. *(`duplicates` landed with RM-02.a
+      as a measurement corpus — skipped by the golden runner. `messy` landed with RM-01.a.
+      `temporal` still lands with a later RM-04 expansion.)*
 - [ ] ≥50 contradiction/update cases — **the axis LOCOMO and LongMemEval both under-test.**
       *(4 today; expand as RM-03 detection matures.)*
-- [~] Metrics: `recall@k` shipped, plus the field-experiment **ROC / TBR** split.
-      *(`staleness_rate`, `false_supersession`, `duplicate_rate`, `extraction_precision/recall`
-      land with RM-01 / RM-02 / RM-03.)*
+- [~] Metrics: `recall@k`, `duplicate_rate`, `extraction_precision`, and
+      `extraction_recall` shipped as **reporting** metrics (registry in
+      `eval/metrics.js`; `node eval/measure.js`; not folded into `golden.json`),
+      plus the field-experiment **ROC / TBR** split.
+      *(`staleness_rate`, `false_supersession` still land with RM-03.)*
 - [x] Constraint cases run with the field **off and on**; report both and the gap.
 - [x] Repeated cases (`repeat` / `contains_by_turn`) keep one store across turns and report
       `first_hit_turn`, so a constraint that lands by turn 4 isn't scored as a miss.
@@ -53,7 +56,7 @@ Build `eval/` with seeded, offline, reproducible scoring.
       change**. Covered by tests incl. the oldest `ts`-only shape.
 - [x] `save_memory` sets `valid_from = now`, `last_confirmed = now`.
 - [x] Re-saving an *identical* memory bumps `last_confirmed` instead of appending a duplicate.
-      (Near-duplicate detection is still `RM-02`.)
+      (Near-duplicate detection shipped in `RM-02.b`.)
 - [x] `store.current()` excludes superseded; `active()` keeps history.
 - [x] Recall answers from current facts; superseded surface only on explicitly historical
       queries and are labelled "no longer current".
@@ -71,40 +74,71 @@ Design: [`proposed/0002`](proposed/0002-temporal-supersession.md).
 
 ---
 
-### `RM-01` — Write-side extraction and summarization · **L** · `todo`
+### `RM-01` — Write-side extraction and summarization · **L** · ✅ `done` — 01.a + 01.b + 01.c shipped
 
 A **tiered** pipeline. Cheap deterministic work first; the LLM pass is optional, local,
 off by default, and never blocks the save.
 
-- [ ] **Tier 0 (always on, no LLM):** trim, normalize whitespace, strip filler openers
+- [x] **01.a measurement seed**: `extraction_precision` registry, `eval/corpora/messy.jsonl`,
+      pre-extraction baseline + pre-declared 0.9 bar in
+      [`eval/RESULTS.md`](../eval/RESULTS.md). Product behaviour unchanged.
+- [x] **Tier 0 (always on, no LLM):** trim, normalize whitespace, strip filler openers
       ("I think you should know that…"), drop imperatives aimed at the assistant, split
       multi-fact runs on `; ` / ` and also ` when both halves stand alone.
-- [ ] **Tier 1 (always on):** secret/PII guard — refuse to store anything matching
-      API-key/password/card shapes; return a clear refusal string.
-- [ ] **Tier 2 (opt-in, local):** a single-pass extraction prompt against the *already
-      configured local endpoint*, emitting `{facts: [...], skip: bool}`. One call, ADD-only,
-      conflict resolution deferred to `RM-03` — mirroring Mem0's 2026 move that cut write-time
-      LLM calls 60–70%.
-- [ ] Tier 2 failures degrade silently to Tier 0/1. **A save never fails because extraction did.**
-- [ ] Panel toggle, same live-config pattern as the associative field.
+      Implemented against corpus gold, not 0001's regexes as-is (long openers;
+      `make sure you` / `remember to remind me`; conservative no-split on the honey trap).
+- [x] **Tier 1 (always on):** secret/PII guard — refuse to store anything matching
+      API-key/password/card shapes; return a clear refusal string. Refusal not
+      redaction; `\b[0-9]{13,16}\b` does not eat `4821` / `1500mg`.
+- [x] **`extraction_recall`** registry (anti-cheat for vacuous precision). A/B in
+      [`eval/RESULTS.md`](../eval/RESULTS.md) RM-01.b: precision 0.2609 → **1.0000**,
+      recall@5 held at **1.0000**, pii_refusal_rate 0 → **1.0000**.
+- [x] **Tier 2 (opt-in, local):** a single-pass extraction prompt against the *already
+      configured local endpoint* (or MCP sampling), emitting `{facts: [...], skip: bool}`.
+      One call, ADD-only, conflict resolution deferred to `RM-03` — mirroring Mem0's 2026
+      move that cut write-time LLM calls 60–70%. Off by default. Capability-detect:
+      sampling **or** a non-embedding chat model at `/v1/models`.
+- [x] Tier 2 failures degrade silently to Tier 0/1. **A save never fails because extraction did.**
+- [x] Panel toggle, same live-config pattern as the associative field. Surfaced when a
+      capable model is detected ("a capable model is available — enable LLM extraction?").
 
 **Acceptance:** `extraction_precision ≥ 0.9` on `eval/messy` with Tier 2 off; Tier 2 improves
 recall@5 without lowering precision; write latency p95 unchanged when Tier 2 off.
+**Met (01.b):** messy precision 0.2609 → **1.0000**, recall@5 held, pii_refusal 1.0.
+**Met (01.c):** messy-hard A/B in [`eval/RESULTS.md`](../eval/RESULTS.md) —
+`openai/gpt-oss-20b` temp 0: `extraction_recall` 0 → **0.5833**, `recall@5`
+0 → **0.5833**, precision 0 → 0.3023 (did not drop; the extra 0.70
+anti-flood floor missed because the model over-extracted unlabeled true
+details, not invented facts).
 
 Design: [`proposed/0001`](proposed/0001-write-pipeline.md).
 
 ---
 
-### `RM-02` — Deduplication and merge · **M** · `todo`
+### `RM-02` — Deduplication and merge · **M** · ✅ `done` — 02.a + 02.b + 02.c shipped
 
-- [ ] Near-duplicate detection at save: cosine ≥ `DEDUP_HI` (~0.95) → treat as restatement.
-- [ ] Restatement → bump `last_confirmed` + `access_count`, do **not** append.
-- [ ] Band `DEDUP_LO..DEDUP_HI` (~0.88–0.95) → candidate merge; keep the longer/more specific
+- [x] **02.a measurement seed**: metric registry (`recall_at_k`, `duplicate_rate`),
+      `eval/corpora/duplicates.jsonl`, pre-dedup baseline + pre-declared 50% bar in
+      [`eval/RESULTS.md`](../eval/RESULTS.md). Product behaviour unchanged.
+- [x] Near-duplicate detection at save: cosine ≥ `DEDUP_HI` (0.95) → treat as restatement.
+- [x] Restatement → bump `last_confirmed` + `access_count`, do **not** append.
+- [x] Band `DEDUP_LO..DEDUP_HI` (0.88–0.95) → candidate merge; keep the longer/more specific
       text, union the metadata, link the loser with `superseded_by`.
-- [ ] Thresholds are config, not constants, and are **tuned on `RM-00`, not vibes**.
-- [ ] Backfill mode: `--dedup-existing` reports what it *would* merge before doing it.
+- [x] Thresholds are config, not constants, and are **tuned on `RM-00`, not vibes**.
+      (`DEDUP_HI` 0.95 / `DEDUP_LO` 0.88; env + live-config; A/B in RESULTS.md.)
+- [x] Backfill mode: `--dedup-existing` reports what it *would* merge before doing it.
+      Dry-run is the default; `--apply` performs one durable rewrite. Same
+      `detectNearDuplicate` / `pickMergeSurvivor` / `mergeBandPatches` as save()
+      (file-order pass, each record vs earlier survivors). Second `--apply` is a
+      no-op. Vectorless rows are skipped, not merged blind.
 
 **Acceptance:** `duplicate_rate` drops ≥50% on `eval/duplicates` with zero recall@5 regression.
+**Met (02.b):** 0.3182 → **0.0000** (100% drop), `recall@5` held at **1.0000**. See
+[`eval/RESULTS.md`](../eval/RESULTS.md) RM-02.b.
+**Met (02.c):** the same 02.a-shaped store (save-time dedup bypassed) backfills
+to the same after-column: dry-run plan is 4 HI restatements + 3 mid merges;
+`--apply` → `duplicate_rate` 0.3182 → **0.0000**, `recall@5` held at **1.0000**.
+See [`eval/RESULTS.md`](../eval/RESULTS.md) RM-02.c.
 
 ---
 

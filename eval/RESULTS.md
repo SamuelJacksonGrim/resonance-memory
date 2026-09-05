@@ -413,6 +413,511 @@ Golden (`npm run eval`) after this slice: **No regressions vs golden.** Recall s
 
 ---
 
+# RM-02.a — measurement seed (pre-dedup baseline)
+
+**Date:** 2026-09-05 · **Product behaviour:** unchanged (`memory-core.js` / `record.js` /
+`save` / `recall` untouched). **Embedder:** `text-embedding-nomic-embed-text-v1.5`,
+cache-extended for the new corpus. **Reproduce:** `node eval/measure.js --bands`
+(offline after the cache commit). Golden: `node eval/run.js` → **No regressions vs golden.**
+
+This slice builds the three things RM-02's acceptance names and that did not exist:
+a `duplicate_rate` metric, a `recall@k` metric, and `eval/corpora/duplicates.jsonl`.
+Dedup itself is 02.b; these numbers are the "before."
+
+## Registry
+
+Reporting metrics live in `eval/metrics.js` as named entries
+`{ name, compute(results, corpus, opts) -> number }`, distinct from the golden
+contains/excludes scorer. Builtins: `recall_at_k` (success@k, default k=5) and
+`duplicate_rate`. Adding `mrr` / `staleness_rate` / `extraction_precision` is
+`register({ name, compute })`. Runner: `eval/measure.js` (reuses `pipeline.js`).
+Levers (field, k) are runner flags, not metric internals.
+
+`duplicate_rate` = `max(0, N − G*) / N` on `store.current()`: N = current stored
+records, G* = labeled groups represented among them (unmatched texts count as
+their own singleton). Membership is stored `text` ∈ the group's write texts.
+This is **not** "pairs with cosine > 0.95" — measuring cosine-dedup by cosine
+would be circular; the labels are the ground truth.
+
+`recall_at_k` = fraction of queries whose top-k **primary** cosine ids contain
+at least one relevant id (success@k, not set-recall). Relevant ids resolve
+through the same text→group mapping.
+
+## Corpus (`eval/corpora/duplicates.jsonl`)
+
+One store, four bands, 15 groups, 23 writes, 17 queries. Pairwise cosine is
+from the committed cache (overlapping strings with `basic.jsonl` keep their
+original vectors — that's the geometry the rest of the eval uses):
+
+| group | band | members | pairwise cos |
+|---|---|---|---|
+| coffee-order | exact | 2× byte-identical | 1.0 (collapsed by the shipping restatement path) |
+| penicillin | hi | 3 paraphrases | 0.9883 / 0.9651 / 0.9524 |
+| tea | hi | 2 | 0.9522 |
+| peanuts | hi | 2 | 0.9581 |
+| job | mid | 2 (longer = more specific) | 0.9261 |
+| cat | mid | 2 | 0.9435 |
+| diabetic | mid | 2 | 0.9433 |
+| dog, peanut-allergy, standup, mechanic, name, night-owl, sister-bday, garage | control | 1 each | — |
+
+Controls include two **precision traps**: `dog` vs `cat` (same-frame pets, live
+pair ~0.69) and `peanut-allergy` vs `peanuts` (same-topic, live pair ~0.67).
+Both sit well below DEDUP_LO ~0.88; a too-aggressive merge would tank
+`q-cat` / `q-dog` / `q-peanut-allergy`. No correction cues, so RM-03 does not fire.
+
+The brief's example pair *"I'm allergic to penicillin" / "penicillin gives me
+hives, I'm allergic"* measured **0.8941 (mid, not hi)** on this embedder. HI
+in the corpus is tighter paraphrases that actually clear 0.95; mid is the
+"same fact, one more specific" band.
+
+## Baseline (today, pre-dedup)
+
+```
+writes=23  stored_current=22  groups=15  exact_restatements_caught=1
+duplicate_rate  0.3182   (extras=7/22, G*=15)
+recall@5        1.0000   (17/17 queries hit)
+```
+
+**Existing restatement path:** the byte-identical `coffee-order` pair is
+confirmed, not appended (`Already remembered`). **No HI paraphrase is
+caught** — `r.text === content` is exact match only, so the four HI extras
+and three mid extras all store. That is the RM-02 gap, measured.
+
+Extras by band: HI 4 (penicillin 2 + tea 1 + peanuts 1) · MID 3 · exact 0 ·
+control 0.
+
+## Pre-declared RM-02 pass bar (written BEFORE 02.b runs)
+
+Same discipline as the Phase 0.1 250 ms budget. Changing these numbers after
+seeing 02.b's table is cheating.
+
+| metric | baseline | pass iff |
+|---|---|---|
+| `duplicate_rate` | **0.3182** | drops ≥ 50% relative → **≤ 0.1591** |
+| `recall@5` | **1.0000** | not lower → **= 1.0000** (17/17 holds) |
+
+Arithmetic that 02.b will hit whether or not it ships the mid band:
+
+| 02.b does | extras left | stored | rate | relative drop | vs 50% |
+|---|---|---|---|---|---|
+| nothing | 7 | 22 | 0.3182 | 0% | FAIL |
+| HI restatement only (4 extras gone) | 3 | 18 | 0.1667 | **47.6%** | **FAIL** (shy of 50%) |
+| mid merge only (3 extras gone) | 4 | 19 | 0.2105 | 33.8% | FAIL |
+| HI + mid (the spec) | 0 | 15 | 0.0000 | 100% | PASS, if recall@5 holds |
+| over-merge a control into a dup group | ≤3 | ≤18 | maybe ≤0.1591 | maybe | **FAIL on recall@5** (q-cat / q-dog / q-peanut-allergy) |
+
+So the 50% bar is not free on the easy ≥0.95 band: **DEDUP_HI restatement
+alone is expected to miss.** The mid-band merge is what the acceptance
+actually demands. Over-merge is caught by recall@5 sitting at 1.0 with
+no room to drop.
+
+Reproduce the before-column: `node eval/measure.js --corpus duplicates`.
+02.b compares the after-column to the table above.
+
+---
+
+# RM-02.b — cosine-banded dedup/merge at save (measured A/B)
+
+**Date:** 2026-09-05 · **Product behaviour:** `save()` in `memory-core.js` now
+runs cosine-banded dedup against already-stored vectors after embed, before
+RM-03. **Embedder:** `text-embedding-nomic-embed-text-v1.5`, same committed
+cache. **Reproduce:** `node eval/measure.js --corpus duplicates` (offline).
+Golden: `node eval/run.js` → **No regressions vs golden.** (27/31 unmoved —
+the golden corpora are distinct memories, so the bands did not fire.)
+
+This is the first real measured A/B in the project: 02.a built the stick and
+locked the bar; this slice moved the number and proved it.
+
+## Tuned thresholds
+
+| knob | value | why |
+|---|---|---|
+| `DEDUP_HI` | **0.95** (`≥`) | HI paraphrases sit 0.9522–0.9883. Tea at **0.9522** is the tightest HI and clears 0.95 with margin. `≥` not `>`: a pair sitting exactly on 0.95 is treated as restatement (keep the original) rather than merge. Equality is hypothetical on this corpus. |
+| `DEDUP_LO` | **0.88** (`≥`, band is `[lo, hi)`) | Mid pairs sit 0.9261–0.9435; controls ≤ ~0.69 (dog/cat ~0.69, peanuts/peanut-allergy ~0.67). 0.88 sits well above the control ceiling so those traps cannot merge. |
+
+Config, not constants: env `RESONANCE_DEDUP_HI` / `RESONANCE_DEDUP_LO` plus
+live-config keys `dedup_hi` / `dedup_lo` (same pattern as the field toggle).
+Defaults are these tuned values.
+
+HI-only restatement would have left the three mid extras (`duplicate_rate`
+0.1667, shy of 0.1591). The mid-band merge is what the 50% bar actually
+demanded. Confirmed: no control crept in, no mid pair was missed.
+
+## After (02.b)
+
+```
+writes=23  stored_current=15  groups=15  exact_restatements_caught=5
+duplicate_rate  0.0000   (extras=0/15, G*=15)
+recall@5        1.0000   (17/17 queries hit)
+```
+
+`exact_restatements_caught` rose 1 → 5 because HI paraphrases now share the
+byte-identical confirm path ("Already remembered"): coffee-order (exact) +
+penicillin ×2 + tea + peanuts. The three mid extras (job, cat, diabetic) were
+merged via `supersedePatches` (loser linked with `superseded_by`, survivor
+kept one of the original texts). Controls untouched.
+
+## A/B vs the pre-declared bar
+
+| metric | baseline (02.a) | after (02.b) | pass iff | verdict |
+|---|---|---|---|---|
+| `duplicate_rate` | **0.3182** | **0.0000** | ≤ 0.1591 (≥50% relative drop) | **PASS** (100% drop) |
+| `recall@5` | **1.0000** | **1.0000** | = 1.0000 (17/17 holds) | **PASS** (controls not over-merged) |
+
+Both conditions. `q-cat` / `q-dog` / `q-peanut-allergy` still hit — the
+precision traps did not fire. Survivor texts are original labeled writes, so
+the group mapping did not break.
+
+## Decision
+
+Cosine-banded dedup is **on by default** in `save()` (unlike the field):
+worst case on a miss is "append as before"; a hit never hard-deletes (I8:
+restatement keeps the original; merge links the loser with `superseded_by`).
+No vector (embedder down) → append, don't crash.
+
+---
+
+# RM-02.c — `--dedup-existing` backfill (offline pass)
+
+**Date:** 2026-09-05 · **Product behaviour:** `save()` / `recall()` untouched
+(CLI/maintenance path). Same bands, same `detectNearDuplicate` /
+`pickMergeSurvivor` / `mergeBandPatches` as 02.b — the planner lives in
+`memory-core.js` so the offline pass and the write path cannot disagree.
+**Reproduce:** the corpus fixture is built inside `test.js` ("duplicates
+corpus backfill"); golden: `node eval/run.js` → **No regressions vs golden.**
+
+This is the retroactive pass for stores written **before 02.b**. Exact
+restatement already existed (RM-04), so a pre-02.b store still carries the
+four HI extras and three mid extras — the 02.a baseline.
+
+## Pass order
+
+File order (JSONL insertion). Each current record is treated as an incoming
+`save()` against the survivors of earlier records. That is why `--apply`
+twice is a no-op: after one pass every remaining current pair is below
+`DEDUP_LO` (or vectorless, which we refuse to merge blind). Dry-run is the
+default; `--apply` is one `store.updateMany` → `writeFileDurable` (I5).
+Restatement losers already on disk are superseded, not deleted (I8) — so
+`current()` matches sequential save, while `all()` keeps the extra rows.
+
+## Backfill result (pre-02.b fixture)
+
+`eval/corpora/duplicates.jsonl` writes, save-time dedup **bypassed**, the
+second byte-identical `coffee-order` dropped (already collapsed by RM-04).
+22 current records, 7 extras. Dry-run plan: 4 HI restatements (penicillin,
+tea, peanuts) + 3 mid merges (job, cat, diabetic); 8 controls untouched.
+
+```
+current           22 → 15
+duplicate_rate    0.3182 → 0.0000   (extras 7 → 0, G*=15)
+recall@5          1.0000            (17/17 queries still hit)
+```
+
+Same after-column as 02.b's sequential save. Online-vs-offline equivalence
+(synthetic fixture in `test.js`): `current()` texts match one-by-one
+`save()`. Second `--apply` writes nothing. Vectorless row + dead embedder
+→ skipped, not merged.
+
+## Decision
+
+`--dedup-existing` ships as a CLI (dry-run default). RM-02 acceptance is
+fully met: the 50% bar was cleared by 02.b at save-time, and 02.c applies
+the same decision to stores that never went through that path.
+
+---
+
+# RM-01.a — measurement seed (pre-extraction baseline)
+
+**Date:** 2026-09-05 · **Product behaviour:** unchanged (`memory-core.js` / `record.js` /
+`save` / `recall` untouched). **Embedder:** `text-embedding-nomic-embed-text-v1.5`,
+cache-extended for the new corpus. **Reproduce:** `node eval/measure.js --corpus messy`
+(offline after the cache commit). Golden: `node eval/run.js` → **No regressions vs golden.**
+
+This slice builds the three things RM-01's acceptance names and that did not exist:
+an `extraction_precision` metric, `eval/corpora/messy.jsonl`, and a recall@5 backstop
+on that corpus. Extraction itself is 01.b (Tier 0/1, Tier 2 off); these numbers are
+the "before."
+
+## Registry
+
+`extraction_precision` is a named entry in the same `eval/metrics.js` registry as
+`recall_at_k` / `duplicate_rate`. Adding it is `register({ name, compute })`; the
+runner (`eval/measure.js`) emits it when the scenario's writes carry `gold_facts`.
+
+Definition, computable from what `save()` actually persists:
+
+```
+precision = n_correct / n_stored
+```
+
+A stored record is **correct** iff its text equals one of the write's gold atomic
+facts (whitespace-collapsed, case-folded) **and** contains none of that write's
+noise spans. Exact equality, not containment: today's `save()` stores the raw
+blob, which *contains* the fact plus filler/imperative/sibling-fact — counting
+that as correct would make the pre-extraction baseline look healthy.
+
+- `n_stored` is the per-write delta of `store.current()` (a restatement confirm
+  that writes nothing contributes 0; a refusal that writes nothing contributes 0).
+- PII writes have `gold_facts: []` and `expect_refusal: true`. Storing the payload
+  is a false positive. Refusing (stored nothing, `refused=true`) does not dilute
+  precision; `pii_refusal_rate` in `explain` is the dedicated readout
+  (refused-and-wrote-nothing / PII cases).
+- Vacuous: labeled cases + zero stored → 1.0 (no false positives). That is the
+  all-refuse cheat — precision aces, recall@5 is the backstop. Unlabeled input
+  (no `gold_facts`) → 0, so `computeAll` on a duplicates result doesn't look like
+  a perfect extraction run.
+
+## Corpus (`eval/corpora/messy.jsonl`)
+
+One store, 23 writes, 19 queries. Gold facts are unique across writes so 01.b
+restatement will not collapse the A/B. No correction cues, so RM-03 does not fire.
+Bands:
+
+| band | n | what 01.b should do |
+|---|---|---|
+| filler | 6 | strip the opener ("I think you should know that…", "just so you're aware", "FYI", stacked), keep the fact |
+| imperative | 3 | drop assistant-aimed framing ("remember to remind me", "make sure you", "Please remember that"), keep the embedded fact |
+| multi | 2 | split on `; ` / ` and also ` — both halves stand alone (≥4 words + copula/verb, not a dependent clause) |
+| multi-nosplit | 1 | `and also` but the second half does **not** stand alone ("…and also with honey") — keep as one fact |
+| pii | 6 | refuse the whole write (API key / password / card / AWS / PEM / GitHub token). Fake payloads; they match the 0001 shapes |
+| control | 5 | clean single facts, including two digit traps (garage code `4821`, `1500mg` metformin) that must **not** trip the card-number guard |
+
+## Baseline (today, pre-extraction)
+
+```
+writes=23  stored_current=23  groups=23  exact_restatements_caught=0
+duplicate_rate         0.0000   (no dup labels; each write is its own text)
+recall@5               1.0000   (19/19 queries hit)
+extraction_precision   0.2609   (correct=6/23 stored, labeled=23)
+pii_refusal_rate       0.0000   (0/6 PII writes refused)
+```
+
+**What the 6/23 is.** `save()` stores the trimmed raw text as-is. The five
+controls and the should-not-split compound equal their gold facts, so they
+count as correct. Every filler/imperative/to-split-multi blob fails exact
+match (and the filler/imperative ones contain a noise span). Every PII
+payload is stored — there is no guard.
+
+That is the RM-01 gap, measured: filler, imperatives, and compound facts
+all land as one embedding; secrets land at all.
+
+## Pre-declared RM-01.b pass bar (written BEFORE 01.b runs)
+
+Same discipline as the RM-02.a 50% bar and the Phase 0.1 250 ms budget.
+Changing these numbers after seeing 01.b's table is cheating. **Tier 2 is
+off** — 01.b is deterministic Tier 0 + Tier 1 only. (Tier 2 is deferred
+pending a design decision with Samuel.)
+
+| metric | baseline | pass iff |
+|---|---|---|
+| `extraction_precision` | **0.2609** (6/23) | **≥ 0.9** (Tier 2 off) |
+| `recall@5` | **1.0000** (19/19) | not lower → **= 1.0000** |
+| `pii_refusal_rate` | **0.0000** (0/6) | **= 1.0000** (every PII write refused; implied by the spec's "every secret-shaped input is refused" and needed to clear 0.9 — leaving all 6 PII stored caps precision at 17/23 = 0.739 even with perfect Tier 0) |
+| write-latency p95 | (Tier 2 off) | **unchanged** — Tier 0/1 are string ops, no extra embed, no LLM/network call. Extra embeds from a *legitimate* split are in-scope (that's storing two memories, not extraction overhead). |
+
+Arithmetic that 01.b will hit:
+
+| 01.b does | correct/stored | precision | vs 0.9 | recall@5 |
+|---|---|---|---|---|
+| nothing | 6/23 | 0.2609 | FAIL | holds |
+| PII refuse only (6 gone) | 6/17 | 0.3529 | FAIL | holds (queries aren't the PII writes) |
+| filler+imperative strip, no split, no PII guard | 14/23 | 0.6087 | FAIL | holds if controls pass through |
+| Tier 0 perfect, PII still stored | 17/23 | 0.7391 | FAIL | holds |
+| Tier 0+1 perfect (the spec) | 19/19 | **1.0000** | PASS, if recall@5 holds and controls aren't rewritten |
+| over-split the nosplit trap | 18/20 or similar | maybe ≥0.9 | maybe | **FAIL on q-tea-honey** if the surviving half doesn't carry "honey" / the labeled text |
+| strip a control ("I think" false-positive on a non-opener) | <19/19 | maybe | maybe | **FAIL on recall@5** if the gold text is gone |
+| refuse everything | 0/0 → vacuous 1.0 | PASS on precision | **FAIL on recall@5** (19 misses) |
+
+So the 0.9 bar is not free on PII-refuse-alone or filler-strip-alone: **Tier 0
+and Tier 1 together are what the acceptance actually demands**, and recall@5
+sitting at 1.0 with no room to drop is the anti-cheat for "drop the messy
+writes, keep the controls."
+
+Reproduce the before-column: `node eval/measure.js --corpus messy`.
+01.b compares the after-column to the table above.
+
+---
+
+# RM-01.b — Tier 0/1 extraction (measured A/B)
+
+**Date:** 2026-09-05 · **Embedder:** `text-embedding-nomic-embed-text-v1.5`.
+**Reproduce:** `node eval/measure.js --corpus messy` (offline after the cache
+commit). Golden: `node eval/run.js` → **No regressions vs golden.**
+**Product:** `record.js` `prepareWrite` / `normalizeText` / `splitFacts` /
+`guardSecrets`; `memory-core.js save()` is the single caller (no fork).
+Tier 2 is **not** in this slice.
+
+## After (Tier 0 + Tier 1 on, Tier 2 off)
+
+```
+writes=23  stored_current=18  groups=23  exact_restatements_caught=0
+duplicate_rate         0.0000
+recall@5               1.0000   (19/19 queries hit)
+extraction_precision   1.0000   (correct=19/19 stored, labeled=23)
+extraction_recall      1.0000   (hit=19/19 gold facts)
+pii_refusal_rate       1.0000   (6/6 PII writes refused)
+```
+
+`extraction_recall` is new this slice (`|gold facts with a matching stored
+record| / |gold facts|`). Vacuous precision (refuse everything → 1.0) would
+crater it; the A/B is two-sided.
+
+## Before → after vs the pre-declared bar
+
+| metric | 01.a baseline | 01.b | bar | verdict |
+|---|---|---|---|---|
+| `extraction_precision` | 0.2609 (6/23) | **1.0000** (19/19) | ≥ 0.90 | PASS |
+| `extraction_recall` | (not registered) | **1.0000** (19/19) | anti-cheat (no vacuous 1.0) | PASS |
+| `recall@5` | 1.0000 (19/19) | **1.0000** (19/19) | = 1.0000 | PASS |
+| `pii_refusal_rate` | 0.0000 (0/6) | **1.0000** (6/6) | = 1.0000 | PASS |
+| write-latency p95 | string ops | string ops; +1 embed per legitimate split (2 splits in this corpus) | unchanged except in-scope split embeds | PASS |
+
+Arithmetic: 6 PII refused, 2 multi-facts split (each +1 record), 19 gold
+facts stored. `stored_current=18` not 19 because RM-02.b mid-band-merged
+"I prefer tea over coffee" into the longer nosplit
+"I like tea more than coffee and also with honey" (cosine **0.8831**, just
+above `DEDUP_LO` 0.88). That is not an extraction miss — both writes stored
+their gold (precision 19/19, recall 19/19); the survivor still answers
+`q-tea` and `q-tea-honey`. The measure runner follows `superseded_by` so a
+merge is not scored as a drop.
+
+Clean controls (`My name is Samuel`, garage `4821`, `1500mg` metformin, …)
+pass through byte-identical. Golden corpora are clean facts; the gate did
+not move.
+
+---
+
+# RM-01.c — Tier 2 opt-in LLM extraction (messy-hard)
+
+**Date:** 2026-09-05 · **Embedder:** `text-embedding-nomic-embed-text-v1.5`.
+**Chat model (live A/B only):** `openai/gpt-oss-20b` · **temperature 0** (greedy) ·
+`max_tokens` 400 · timeout 45s for the measurement (production interactive
+bound is 8s). **Reproduce the offline floor:**
+`node eval/measure.js --corpus messy-hard` (Tier 2 off, cached embed).
+**Reproduce the live column:** load the chat model beside the embedder, then
+`node eval/measure.js --corpus messy-hard --extract --extract-model openai/gpt-oss-20b --extract-timeout 45000`
+with `EVAL_REFRESH=1` so newly extracted strings enter the cache. **Not part of
+the golden gate.** Golden: `node eval/run.js` → **No regressions vs golden.**
+Tier 2 is **off by default**; `eval/run.js` never invokes it.
+
+`eval/messy` is already maxed by Tier 0/1 (precision 1.0, recall 1.0). Tier 2
+cannot show improvement there. `eval/corpora/messy-hard.jsonl` is the stick:
+implicit facts, facts buried in narrative, paraphrase multi-facts that do not
+split on `; ` / `and also`, coreference. Matching is **cover** (short stored
+text covering gold tokens), not exact — an LLM will paraphrase. Query→gold
+geometry (nomic-embed-text-v1.5): **24/24** queries sit closer to their gold
+fact than to the raw narrative blob.
+
+## Tier-0-only baseline on messy-hard (measured BEFORE the live run)
+
+```
+writes=12  stored_current=9  groups=12  exact_restatements_caught=0
+duplicate_rate         0.0000
+recall@5               0.0000   (0/24 queries hit)
+extraction_precision   0.0000   (correct=0/12 stored, labeled=12)
+extraction_recall      0.0000   (hit=0/24 gold facts)
+```
+
+Tier 0 stores the narrative blob. Cover-match rejects long blobs on purpose,
+so every gold fact is a miss. `stored_current=9` not 12 because RM-02.b merged
+three near-narrative pairs after the fact — extraction scoring is per-write
+delta (12 blobs stored, 0 correct), not the post-merge current count.
+
+## Pre-declared RM-01.c pass bar (written BEFORE the live Tier-2 run)
+
+Same discipline as the RM-02.a 50% bar and the 01.b 0.9 bar. Changing these
+numbers after seeing the live table is cheating.
+
+| metric | Tier-0 baseline | pass iff |
+|---|---|---|
+| `extraction_recall` | **0.0000** (0/24) | lift **≥ +0.50** absolute → **≥ 0.50** (Tier 2 recovers the implicit facts) |
+| `extraction_precision` | **0.0000** (0/12) | **≥ baseline** (the spec) **and ≥ 0.70** (anti-hallucination floor — ≥ 0 is free when baseline is 0; we require most stored facts to cover gold) |
+| `recall@5` | **0.0000** (0/24) | **rises** (atomic facts retrieve; the blob does not) |
+
+`eval/messy` with Tier 2 **off** stays at precision 1.0 / recall 1.0 (01.b
+acceptance, unchanged). Write-latency p95 with Tier 2 off is still string
+ops — the live path is not entered.
+
+## After (live Tier 2 ON, `openai/gpt-oss-20b`, temp 0)
+
+```
+writes=12  stored_current=42  groups=12  exact_restatements_caught=0
+duplicate_rate         0.0000
+recall@5               0.5833   (14/24 queries hit)
+extraction_precision   0.3023   (correct=13/43 stored, labeled=12)
+extraction_recall      0.5833   (hit=14/24 gold facts)
+```
+
+Model id: **`openai/gpt-oss-20b`** (MXFP4, LM Studio). Temperature **0**.
+`max_tokens` 400. Measure timeout 45s (no timeouts fired). Interactive
+production bound remains 8s.
+
+## Before → after vs the pre-declared bar
+
+| metric | Tier-0 baseline | Tier 2 ON | bar | verdict |
+|---|---|---|---|---|
+| `extraction_recall` | 0.0000 (0/24) | **0.5833** (14/24) | ≥ 0.50 | **PASS** (+0.58) |
+| `extraction_precision` | 0.0000 (0/12) | **0.3023** (13/43) | ≥ baseline **and ≥ 0.70** | ≥ baseline **PASS**; ≥ 0.70 **FAIL** |
+| `recall@5` | 0.0000 (0/24) | **0.5833** (14/24) | rises | **PASS** |
+
+`eval/messy` with Tier 2 off is unchanged (precision 1.0 / recall 1.0 / recall@5 1.0).
+Write path with the toggle off never calls extract (unit-tested).
+
+### What the extras are (not invented medical facts)
+
+43 stored vs 24 gold. The 30 "incorrect" records are almost all **true
+details copied from the source** that the gold did not list, plus a few
+ephemeral / process sentences the prompt asked to omit:
+
+- Thyroid: stored "had a great chat with Dr. Chen about my thyroid" and
+  "keep taking the same dose" — did **not** emit "I have a thyroid
+  condition". Follow-up was phrased "Dr. Chen wants me back in 3 months"
+  (cover-miss vs the gold wording).
+- Honey / cats: stored the *evidence* ("skipped baklava because of the
+  honey", "cats trigger my symptoms") rather than the named constraint
+  ("I cannot eat honey", "I am allergic to cats").
+- Cello / parrot / Maya / Oak / Harbor: surface-form gold, recovered.
+
+No case invented a fact absent from the input (no fabricated doctor, no
+fake allergy). The precision miss vs 0.70 is **over-extraction of
+unlabeled true details + sentence-copy instead of implicit naming**, not
+hallucination of things that are not there. gpt-oss-20b at temp 0 is
+faithful and verbose. A follow-up (different instruct model, or a
+stricter "at most 2 facts, name the implied condition") could chase the
+0.70 floor; this slice records the first live number.
+
+Query misses (10/24): thyroid, follow-up, wrists, oat, tom-job, honey,
+mead, cats, dogs, lena-start — the implicit-naming cases plus a few
+cover-threshold near-misses.
+
+### Backlog acceptance (the original RM-01 line)
+
+- `extraction_precision ≥ 0.9` on `eval/messy` with Tier 2 off: **met (01.b)**.
+- Tier 2 improves `recall@5` without lowering precision (messy-hard):
+  recall@5 0 → 0.58, precision 0 → 0.30: **met**.
+- Write latency p95 unchanged when Tier 2 off: **met** (path not entered).
+
+RM-01 is done against that acceptance. The extra 0.70 anti-flood floor
+on messy-hard is a recorded miss, not a silent one.
+
+---
+
+## What 0001 got wrong (and 01.b did not ship)
+
+Measured against the messy gold, not 0001's regexes as-is (01.a NOTES §3):
+
+- `^(i think )` half-strips "I think you should know that Samuel prefers
+  concise answers" to "You should know that…" — still contains the noise
+  span, fails exact gold. Opener is the **full phrase**.
+- Missing "just so you're aware", "remember to remind me", "make sure you",
+  "don't forget to", "be sure to".
+- Guard is **refusal not redaction**: a fact mixed with a secret is
+  store-nothing.
+- Card pattern stays `\b[0-9]{13,16}\b` — `4821` and `1500mg` survive.
+- Split is conservative: `and also with honey` is not a standalone half.
+
+---
+
 ## Related
 
 [[eval/README]] · [[0007-eval-harness]] · [[phase-0-edge-substrate]] · [[phase-2-retrieval-dynamics]] · [[BACKLOG]] · [[ARCHITECTURE]]

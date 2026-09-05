@@ -20,7 +20,8 @@
  * panel.js - the zero-terminal control panel for Resonance Memory.
  *
  * A tiny local web server (127.0.0.1 only) that:
- *   - toggles the associative field (writes the shared config.json the MCP server reads live),
+ *   - toggles the associative field and (when a capable model is detected) LLM extraction
+ *     (writes the shared config.json the MCP server reads live),
  *   - connects/disconnects the server from LM Studio / Claude Desktop,
  *   - draws the association graph (your memories, or a synthetic demo), and
  *   - shuts itself down shortly after you close the page (heartbeat), so nothing lingers.
@@ -37,6 +38,7 @@ const field = require("./field.js");
 const engine = require("./engine.js");
 const { EdgeStore } = require("./edges.js");
 const { normalize, isCurrent } = require("./record.js");
+const extract = require("./extract.js");
 
 function baseDir() {
   // In a bundled single-executable, __dirname is virtual; resolve next to the exe.
@@ -62,6 +64,8 @@ try { EMBEDDED = require("./embedded-assets.js"); } catch { }
 function readConfig() { try { return JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8")); } catch { return {}; } }
 function writeConfig(c) { fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true }); fs.writeFileSync(CONFIG_PATH, JSON.stringify(c, null, 2), "utf8"); }
 function fieldOn() { const c = readConfig(); return typeof c.field === "boolean" ? c.field : false; }
+function extractOn() { return extract.readExtractEnabled(readConfig()); }
+const EMBED_URL = process.env.EMBED_ENDPOINT || "http://localhost:1234/v1/embeddings";
 
 function parseJsonl(text) {
   return String(text).split("\n").filter(Boolean)
@@ -138,6 +142,7 @@ const PAGE = `<!doctype html>
     background: #fff; border-radius: 50%; transition: .22s; box-shadow: 0 2px 5px rgba(0,0,0,.25); }
   input:checked + .slider { background: var(--acc); }
   input:checked + .slider::before { transform: translateX(26px); }
+  .switch input:disabled + .slider { opacity: .55; cursor: default; }
   .pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-weight: 600; font-size: 12px; }
   .on { background: #dcf5e8; color: #1c7a4f; } .off { background: #eceef1; color: #6b7280; }
   .warn { background: #fceccb; color: #8a5a00; }
@@ -209,6 +214,14 @@ const PAGE = `<!doctype html>
       <label class="switch"><input type="checkbox" id="tog"><span class="slider"></span></label>
     </div>
 
+    <div class="row" id="extractRow" style="margin-top:10px">
+      <div>
+        <div class="label">LLM extraction <span id="extractPill" class="pill off">off</span></div>
+        <div class="hint" id="extractHint">Optional. Resonance already extracts the cheap, reliable way; a local model can pull implicit facts on top. Off by default on purpose.</div>
+      </div>
+      <label class="switch"><input type="checkbox" id="extractTog"><span class="slider"></span></label>
+    </div>
+
     <div class="sec">
       <div class="sechead">
         <button id="graphToggle" class="linkish" aria-expanded="true">Association graph <span id="caret">&#9662;</span></button>
@@ -238,20 +251,42 @@ const PAGE = `<!doctype html>
     <div class="foot">
       <div><b>For weaker models</b> that forget to save or recall: <a href="#" id="spBtn">copy a ready-made system prompt</a> and paste it into your app's system-prompt box. <span id="spMsg"></span></div>
       <div style="margin-top:11px"><b>Removing it?</b> Click <b>Disconnect</b> next to each app above, then delete <code>resonance-memory.exe</code> &mdash; that's the whole app. Your memories live at <code id="storePath">&hellip;</code> and stay put unless you delete that file too &mdash; along with the small <code>.edges.json</code> / <code>.access.json</code> companions beside it (and a leftover <code>.assoc.json</code> if an older build wrote one).</div>
-      <div style="margin-top:11px">The field switch applies instantly &mdash; no restart. This panel closes itself a few seconds after you close the tab.</div>
+      <div style="margin-top:11px">The field and extraction switches apply instantly &mdash; no restart. This panel closes itself a few seconds after you close the tab.</div>
     </div>
   </div>
 <script>
   var tog = document.getElementById('tog');
+  var extractTog = document.getElementById('extractTog');
+  var extractHint = document.getElementById('extractHint');
+  var extractPill = document.getElementById('extractPill');
   var demoBtn = document.getElementById('demoBtn');
   var cap = document.getElementById('cap'), counts = document.getElementById('counts');
   var showDemo = false;
+  var extractCapable = false;
 
   function css(v){ return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+
+  function renderExtract(s){
+    extractCapable = !!s.extract_capable;
+    extractTog.disabled = !extractCapable;
+    extractTog.checked = !!(s.extract_llm && extractCapable);
+    if(extractCapable){
+      extractPill.textContent = extractTog.checked ? 'on' : 'available';
+      extractPill.className = 'pill ' + (extractTog.checked ? 'on' : 'warn');
+      extractHint.textContent = extractTog.checked
+        ? 'A capable model will extract implicit facts on save. Failures fall back to the reliable path \u2014 a save never hangs on this.'
+        : 'A capable model is available \u2014 enable LLM extraction?';
+    } else {
+      extractPill.textContent = 'unavailable';
+      extractPill.className = 'pill off';
+      extractHint.textContent = 'No chat-capable model detected. Load one at the local endpoint, or use an MCP client that supports sampling. Resonance still extracts the cheap, reliable way.';
+    }
+  }
 
   async function loadState(){
     var s = await (await fetch('/api/state')).json();
     tog.checked = s.field;
+    renderExtract(s);
     if(s.store){ var sp = document.getElementById('storePath'); if(sp) sp.textContent = s.store; }
   }
 
@@ -269,6 +304,11 @@ const PAGE = `<!doctype html>
   tog.addEventListener('change', async function(){
     await fetch('/api/toggle', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ field: tog.checked }) });
     if(!showDemo && !graphCollapsed) loadGraph(true);
+  });
+  extractTog.addEventListener('change', async function(){
+    if(!extractCapable){ extractTog.checked = false; return; }
+    var r = await (await fetch('/api/toggle', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ extract_llm: extractTog.checked }) })).json();
+    renderExtract(r);
   });
 
   async function loadClients(){
@@ -574,8 +614,24 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { "Content-Type": "application/json" }); res.end("{}"); return;
   }
   if (req.method === "GET" && url === "/api/state") {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ field: fieldOn(), memories: memCount(), store: STORE_PATH })); return;
+    extract.probeChatCapability({ modelsUrl: extract.modelsUrl(EMBED_URL) }).then((probe) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        field: fieldOn(),
+        extract_llm: extractOn(),
+        extract_capable: probe.capable,
+        extract_model: probe.model,
+        memories: memCount(),
+        store: STORE_PATH,
+      }));
+    }).catch(() => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        field: fieldOn(), extract_llm: extractOn(), extract_capable: false,
+        extract_model: null, memories: memCount(), store: STORE_PATH,
+      }));
+    });
+    return;
   }
   if (req.method === "GET" && url === "/api/system-prompt") {
     let text = "";
@@ -589,9 +645,34 @@ const server = http.createServer((req, res) => {
   }
   if (req.method === "POST" && url === "/api/toggle") {
     body(req, (b) => {
-      let want; try { want = JSON.parse(b).field; } catch { }
-      const c = readConfig(); c.field = typeof want === "boolean" ? want : !fieldOn(); writeConfig(c);
-      res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ field: c.field }));
+      let parsed = {};
+      try { parsed = JSON.parse(b) || {}; } catch { parsed = {}; }
+      const c = readConfig();
+      const hasField = Object.prototype.hasOwnProperty.call(parsed, "field");
+      const hasExtract = Object.prototype.hasOwnProperty.call(parsed, "extract_llm");
+      if (hasField) c.field = typeof parsed.field === "boolean" ? parsed.field : !fieldOn();
+      else if (!hasExtract) c.field = !fieldOn();
+      const finish = (probe) => {
+        if (hasExtract) {
+          const want = !!parsed.extract_llm;
+          c.extract_llm = want && !!(probe && probe.capable);
+        }
+        writeConfig(c);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          field: typeof c.field === "boolean" ? c.field : fieldOn(),
+          extract_llm: !!c.extract_llm,
+          extract_capable: !!(probe && probe.capable),
+          extract_model: probe && probe.model || null,
+        }));
+      };
+      if (hasExtract) {
+        extract.probeChatCapability({ modelsUrl: extract.modelsUrl(EMBED_URL) })
+          .then(finish)
+          .catch(() => finish({ capable: false, model: null }));
+      } else {
+        finish({ capable: false, model: null });
+      }
     }); return;
   }
   if (req.method === "GET" && url === "/api/clients") {

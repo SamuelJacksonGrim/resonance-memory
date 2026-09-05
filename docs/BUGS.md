@@ -237,7 +237,7 @@ way, every one of them from work in this same branch:
 | `0005` | "every recall rewrites the entire store" | fixed — sidecar, zero writes on read |
 | `0005` | "kill-9 leaves an unreadable store" | fixed — atomic writes |
 | `COMPETITIVE-ANALYSIS` | temporal metadata ❌ | ✅ shipped |
-| `COMPETITIVE-ANALYSIS` | deduplication ❌ | 🟡 exact-match ships |
+| `COMPETITIVE-ANALYSIS` | deduplication ❌ | ✅ cosine-banded at save (RM-02.b) + `--dedup-existing` backfill (RM-02.c) |
 
 ### Why it matters more than a typo
 Every one of these feeds a build decision. `0006` alone would have had someone implement a

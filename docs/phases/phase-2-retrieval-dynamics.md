@@ -59,15 +59,18 @@ A failed gate keeps the flag off and writes the negative result down. A measured
 
 ### 2.5 Retrieval evaluation ✅ 🔀 — **this is `RM-00`; extend, don't rebuild**
 Already live: JSONL corpora, contains/excludes scorecard, superseded-surfacing, field ROC/TBR,
-golden-set gate, offline/deterministic. **Not built despite `RM-00` being "done":** recall@k, MRR,
-staleness rate, duplicate rate. Anything depending on those (the gate first) needs them built.
-- [ ] recall@k and MRR · staleness + duplicate rate · false-association rate under fusion ·
-      hub-formation metric (degree distribution) · retrieval latency as the graph grows ·
-      semantic-only vs. fused as a standing A/B.
-- [ ] **Corpus realism** (measured 2026-08-22): corpora are clean (4 within-scenario pairs > 0.75,
+golden-set gate, offline/deterministic. Reporting-metric registry (RM-02.a): `recall_at_k`,
+`duplicate_rate`. **Still open:** MRR, staleness rate, false-association rate, hub-formation.
+Anything depending on those (the fusion gate first) needs them built.
+- [x] recall@k · duplicate rate (reporting metrics, `eval/metrics.js` registry + `eval/measure.js`;
+      not the golden gate).
+- [ ] MRR · staleness · false-association rate under fusion · hub-formation metric
+      (degree distribution) · retrieval latency as the graph grows · semantic-only vs. fused
+      as a standing A/B.
+- [x] **Corpus realism** (measured 2026-08-22): corpora were clean (4 within-scenario pairs > 0.75,
       top 0.818) — competition/normalization tuned here are not fitting duplicate bloat; the risk
-      runs the other way (real stores carry duplicates until `RM-02`). **Add a duplicate-heavy
-      corpus before trusting 2.3/2.4 constants in production.** See [[RESULTS]], [[0007-eval-harness]].
+      runs the other way (real stores carry duplicates until `RM-02`). Duplicate-heavy corpus:
+      `eval/corpora/duplicates.jsonl` (RM-02.a). See [[RESULTS]], [[0007-eval-harness]].
 
 ## Success metrics
 Grounded (build them here, then measure): recall@k, MRR, staleness rate, duplicate rate,
