@@ -18,6 +18,8 @@ node eval/substrate/scale.js --skip-100k
 node eval/substrate/scale.js --no-field      # skip field-on latency (W-03)
 node eval/substrate/scale.js --embed-only    # fill eval/substrate/.cache/
 node eval/substrate/scale.js --offline       # cache must already exist
+node eval/substrate/scale.js --store sqlite --n 50000,100000 --no-field --latency-only
+     # RM-07 product Store; direct INSERT (migrator is a later slice)
 ```
 
 First run live-embeds against LM Studio (`:1234`, `text-embedding-nomic-embed-text-v1.5`),
@@ -34,8 +36,10 @@ not 50k vectors.
   the planted needle, and whether a hard near-topic distractor outranked it.
   In-memory Store seam; ranking is still `memory-core.recall`.
 - **Latency** (field off and on): p50/p95/p99 of `recall(query, k=5)` on a real
-  `JsonlStore` with embeddings in the JSONL — the user-facing `all()`-parse +
-  cosine scan, plus `field.buildEdges` O(n²) when the field is on (W-03).
+  store. Default is `JsonlStore` with embeddings in the JSONL — the user-facing
+  `all()`-parse + cosine scan, plus `field.buildEdges` O(n²) when the field is
+  on (W-03). `--store sqlite` uses `SqliteStore` (BLOB + in-process cache);
+  that is the RM-07 measurement. JSONL cannot load 50k.
 
 Pre-declared concern thresholds live in `scale.js` and in
 [`eval/RESULTS.md`](../RESULTS.md) "S1". Changing them after seeing the table

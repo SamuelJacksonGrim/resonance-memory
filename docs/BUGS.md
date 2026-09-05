@@ -78,14 +78,18 @@ that affects an answer. That is the correct thing to make cheap.
 
 **Tests:** `test.js` → "recall does NOT rewrite the store" asserts the store bytes *and*
 mtime are unchanged across `applyRecall`, while the access bump still lands.
+**SQLite (RM-07):** the analogue is not "file mtime unchanged" — a bounded in-table
+`UPDATE` of the returned ids is the I5-permitted retention write. The test is:
+after recall, only retention columns changed on those rows, row count unchanged,
+no other column touched.
 
 ### Still open (tracked, not a bandaid)
 `all()` still parses the full store on every call, and mutations (`save`/`edit`/`delete`)
-still rewrite the whole file. That is inherent to a flat JSONL backend and is the actual
-subject of **`RM-07`** (SQLite + `sqlite-vec` + FTS5, design in
-[`proposed/0005`](proposed/0005-store-abstraction.md)). It is a *performance* limit now, not a
-correctness or data-loss one — the difference that matters. Current ceiling: comfortable to
-~10k memories, degrading after that.
+still rewrite the whole file. That is inherent to a flat JSONL backend. **`RM-07` slice 1**
+ships `SqliteStore` (`store-sqlite.js`, `node:sqlite`, BLOB + JS cosine, no sqlite-vec —
+see [`proposed/0010`](proposed/0010-sqlite-backend.md)) as a selectable backend; JSONL
+stays default until golden parity. JSONL's load wall (50k cannot `readFileSync`) is the
+reason it exists.
 
 ---
 

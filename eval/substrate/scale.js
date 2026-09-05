@@ -33,6 +33,8 @@
  *   node eval/substrate/scale.js --embed-only    # fill the vector cache
  *   node eval/substrate/scale.js --quality-only
  *   node eval/substrate/scale.js --latency-only
+ *   node eval/substrate/scale.js --store sqlite --n 50000,100000 --no-field
+ *        # RM-07 product Store; direct INSERT (migrator is a later slice)
  */
 
 "use strict";
@@ -41,7 +43,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const crypto = require("crypto");
-const { JsonlStore } = require("../../store.js");
+const { JsonlStore, SqliteStore } = require("../../store.js");
 const { normalize, isCurrent } = require("../../record.js");
 const { createMemory } = require("../pipeline.js");
 const { explainMetric, parsePrimaryHits } = require("../metrics.js");
@@ -436,16 +438,39 @@ async function checkI9(recs, embed, query, tmpDir) {
 
 // ---- latency ---------------------------------------------------------
 
-async function runLatency(recs, embed, n, fieldOn, tmpDir) {
-  const file = path.join(tmpDir, "n" + n + (fieldOn ? "-on" : "-off") + ".jsonl");
-  process.stdout.write("    write jsonl (" + recs.length + " recs) ... ");
-  const tWrite0 = process.hrtime.bigint();
-  writeJsonl(file, recs);
-  const writeMs = Number(process.hrtime.bigint() - tWrite0) / 1e6;
-  const bytes = fs.statSync(file).size;
+function parseStoreKind(argv) {
+  const flag = argv.find((a) => a === "--store" || a.startsWith("--store="));
+  if (!flag) return "jsonl";
+  const raw = flag.includes("=") ? flag.split("=")[1] : argv[argv.indexOf(flag) + 1];
+  return String(raw || "jsonl").toLowerCase() === "sqlite" ? "sqlite" : "jsonl";
+}
+
+async function runLatency(recs, embed, n, fieldOn, tmpDir, storeKind) {
+  storeKind = storeKind || "jsonl";
+  const base = path.join(tmpDir, "n" + n + (fieldOn ? "-on" : "-off"));
+  let store, file, writeMs, bytes, writeLabel;
+
+  if (storeKind === "sqlite") {
+    file = base + ".db";
+    writeLabel = "insert sqlite";
+    process.stdout.write("    " + writeLabel + " (" + recs.length + " recs) ... ");
+    const tWrite0 = process.hrtime.bigint();
+    store = new SqliteStore(file);
+    store.addMany(recs);
+    writeMs = Number(process.hrtime.bigint() - tWrite0) / 1e6;
+    try { bytes = fs.statSync(file).size; } catch { bytes = 0; }
+  } else {
+    file = base + ".jsonl";
+    writeLabel = "write jsonl";
+    process.stdout.write("    " + writeLabel + " (" + recs.length + " recs) ... ");
+    const tWrite0 = process.hrtime.bigint();
+    writeJsonl(file, recs);
+    writeMs = Number(process.hrtime.bigint() - tWrite0) / 1e6;
+    bytes = fs.statSync(file).size;
+    store = new JsonlStore(file);
+  }
   process.stdout.write(fmt(writeMs) + " ms, " + bytes + " bytes\n");
 
-  const store = new JsonlStore(file);
   const mem = createMemory({
     store, embed, fieldEnabled: fieldOn,
     edgesPath: fieldOn ? file + ".edges.json" : undefined,
@@ -499,14 +524,16 @@ async function runLatency(recs, embed, n, fieldOn, tmpDir) {
     }
   }
   samples.sort((a, b) => a - b);
-  return {
+  const out = {
     n, field: fieldOn, trials, capped: false,
-    warm_ms: warmMs, write_ms: writeMs, bytes,
+    warm_ms: warmMs, write_ms: writeMs, bytes, store: storeKind,
     p50: percentile(samples, 50),
     p95: percentile(samples, 95),
     p99: percentile(samples, 99),
     min: samples[0], max: samples[samples.length - 1],
   };
+  try { if (storeKind === "sqlite" && store && typeof store.close === "function") store.close(); } catch { /* */ }
+  return out;
 }
 
 function qualityVerdict(row) {
@@ -562,8 +589,11 @@ function printQualityTable(rows) {
 
 function printLatencyTable(rows, label) {
   console.log("");
-  console.log("LATENCY " + label + " (recall(query, k=5), JsonlStore, embeddings in JSONL)");
-  console.log("| N | trials | p50 (ms) | p95 (ms) | p99 (ms) | jsonl bytes | write (ms) | warm (ms) |");
+  const kind = (rows[0] && rows[0].store) || "jsonl";
+  const byteCol = kind === "sqlite" ? "db bytes" : "jsonl bytes";
+  console.log("LATENCY " + label + " (recall(query, k=5), " +
+    (kind === "sqlite" ? "SqliteStore, BLOB + in-process cache" : "JsonlStore, embeddings in JSONL") + ")");
+  console.log("| N | trials | p50 (ms) | p95 (ms) | p99 (ms) | " + byteCol + " | write (ms) | warm (ms) |");
   console.log("|---|--------|----------|----------|----------|-------------|------------|-----------|");
   for (const r of rows) {
     console.log("| " + r.n +
@@ -587,10 +617,11 @@ async function main(argv) {
   const fieldLarge = argv.includes("--field-50k");
   const offline = argv.includes("--offline");
   const embedOnly = argv.includes("--embed-only");
+  const storeKind = parseStoreKind(argv);
 
   console.log("S1 substrate recall scale");
   console.log("seed=" + DEFAULT_SEED + "  model=" + EMBED_MODEL + "  batch=" + BATCH);
-  console.log("N=" + ns.join(",") + "  maxN=" + maxN);
+  console.log("N=" + ns.join(",") + "  maxN=" + maxN + "  store=" + storeKind);
   console.log("PRE-DECLARED: recall@5≥" + QUALITY_RECALL5_FLOOR +
     "  MRR≥" + QUALITY_MRR_FLOOR +
     "  mean rank≤" + QUALITY_MEAN_RANK_CEILING +
@@ -669,7 +700,7 @@ async function main(argv) {
         process.stdout.write("  latency field-off (" + trialsFor(n, false) + " trials)\n");
         let off;
         try {
-          off = await runLatency(recs, embed, n, false, tmpDir);
+          off = await runLatency(recs, embed, n, false, tmpDir, storeKind);
         } catch (e) {
           console.log("    FAILED: " + String(e && e.message || e));
           allFlags.push("field-off latency failed at N=" + n + ": " + String(e && e.message || e));
@@ -688,7 +719,7 @@ async function main(argv) {
         if (runOn) {
           process.stdout.write("  latency field-on (" + trialsFor(n, true) + " trials)\n");
           try {
-            const on = await runLatency(recs, embed, n, true, tmpDir);
+            const on = await runLatency(recs, embed, n, true, tmpDir, storeKind);
             console.log("    p50=" + fmt(on.p50) + "  p95=" + fmt(on.p95) + "  p99=" + fmt(on.p99) +
               (on.capped ? "  CAPPED" : ""));
             const onf = latencyVerdict(on);
@@ -733,6 +764,7 @@ async function main(argv) {
     model: EMBED_MODEL,
     dim,
     ns,
+    store: storeKind,
     predeclared: {
       QUALITY_RECALL5_FLOOR, QUALITY_MRR_FLOOR, QUALITY_MEAN_RANK_CEILING,
       QUALITY_DISTRACTOR_BEAT_CEILING, LATENCY_OFF_P95_AT_10K_MS,

@@ -42,6 +42,7 @@ const {
   detectSupersession, hasSupersedeCue,
   detectNearDuplicate, pickMergeSurvivor,
   normalizeText, splitFacts, guardSecrets, prepareWrite, isStandaloneFact,
+  isVector, hasVector,
 } = require("./record.js");
 
 let passed = 0, failed = 0;
@@ -107,6 +108,44 @@ test("normalize treats a JSON-null embedding_version as missing (defaults to 1)"
   // JSON null. Next read must not keep null — version comparison needs a number.
   const r = normalize({ id: 1, text: "hi", embedding_version: null });
   assert.strictEqual(r.embedding_version, 1);
+});
+
+test("normalize DROPS a Float32Array embedding (typed array is not Array.isArray)", () => {
+  // Spike trap: SqliteStore stored NULLs for a whole run because normalize()
+  // only keeps Array.isArray embeddings. The drop is the schema's job; the
+  // store attaches the typed array AFTER. This test fails if someone "fixes"
+  // normalize() to accept ArrayLike without updating the store contract.
+  const f32 = new Float32Array([1, 0, 0.5]);
+  const r = normalize({ id: 1, text: "x", embedding: f32 });
+  assert.strictEqual(r.embedding, null, "Float32Array must not survive normalize()");
+  const arr = normalize({ id: 2, text: "y", embedding: [1, 0, 0.5] });
+  assert.deepStrictEqual(arr.embedding, [1, 0, 0.5], "JSON number[] still kept");
+});
+
+test("isVector accepts both JSON number[] and Float32Array", () => {
+  assert.strictEqual(isVector([1, 0]), true);
+  assert.strictEqual(isVector(new Float32Array([1, 0])), true);
+  assert.strictEqual(isVector(null), false);
+  assert.strictEqual(isVector([]), false);
+  assert.strictEqual(hasVector({ embedding: new Float32Array([0.1, 0.2]) }), true);
+  assert.strictEqual(hasVector({ embedding: null }), false);
+});
+
+test("detectNearDuplicate sees a Float32Array neighbor (SqliteStore cache form)", () => {
+  const incoming = normalize({ id: 99, text: "I prefer tea", embedding: [1, 0] });
+  const stored = {
+    id: 1, text: "I prefer tea", embedding: new Float32Array([1, 0]),
+    deleted: false, valid_to: null,
+  };
+  const cosineFn = (a, b) => {
+    let d = 0, na = 0, nb = 0;
+    for (let i = 0; i < a.length; i++) { d += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; }
+    return na && nb ? d / (Math.sqrt(na) * Math.sqrt(nb)) : 0;
+  };
+  const hit = detectNearDuplicate(incoming, [stored], cosineFn, { hi: 0.95, lo: 0.88 });
+  assert.ok(hit, "typed-array neighbor must participate");
+  assert.strictEqual(hit.action, "restate");
+  assert.strictEqual(hit.match.id, 1);
 });
 
 test("isCurrent: superseded and deleted are both excluded", () => {
@@ -583,6 +622,241 @@ test("recall backfill of a vectorless row does NOT increment embedding_version",
   assert.deepStrictEqual(s.get(1).embedding, [0.5, 0.5]);
   assert.strictEqual(s.get(1).embedding_version, 1, "backfill is not a re-embed");
 });
+
+// ------------------------------------------------- RM-07 SqliteStore + conformance
+section("SqliteStore (RM-07 drop-in) + Store conformance");
+
+const {
+  SqliteStore, openStore, resolveStoreBackend, sqlitePathFor,
+} = require("./store.js");
+
+function sqliteAvailable() {
+  try { require("node:sqlite"); return true; } catch { return false; }
+}
+
+function freshSqlite(name) {
+  const dir = tmp("sqlite-" + (name || Math.random().toString(36).slice(2)));
+  fs.mkdirSync(dir, { recursive: true });
+  const s = new SqliteStore(path.join(dir, "mem.db"));
+  return s;
+}
+
+function embClose(a, b, eps) {
+  eps = eps == null ? 1e-5 : eps;
+  if (a == null && b == null) return true;
+  if (!a || !b || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (Math.abs(a[i] - b[i]) > eps) return false;
+  return true;
+}
+
+function recFields(r) {
+  return {
+    id: String(r.id),
+    created: r.created,
+    text: r.text,
+    valid_from: r.valid_from,
+    valid_to: r.valid_to,
+    superseded_by: r.superseded_by == null ? null : String(r.superseded_by),
+    supersedes: r.supersedes == null ? null : String(r.supersedes),
+    revision: r.revision,
+    deleted: !!r.deleted,
+    is_constraint: !!r.is_constraint,
+    source: r.source,
+    embedding_version: r.embedding_version,
+    access_count: r.access_count,
+  };
+}
+
+if (!sqliteAvailable()) {
+  test("SqliteStore SKIPPED (node:sqlite not in this Node)", () => {
+    assert.ok(true);
+  });
+} else {
+
+test("openStore defaults to JsonlStore; RESONANCE_STORE=sqlite is selectable", () => {
+  const prev = process.env.RESONANCE_STORE;
+  try {
+    delete process.env.RESONANCE_STORE;
+    assert.strictEqual(resolveStoreBackend(null), "jsonl");
+    assert.strictEqual(resolveStoreBackend({}), "jsonl");
+    assert.ok(openStore(tmp("sel-default.jsonl")) instanceof JsonlStore);
+    assert.strictEqual(resolveStoreBackend({ store: "sqlite" }), "sqlite", "live-config wins");
+    process.env.RESONANCE_STORE = "sqlite";
+    assert.strictEqual(resolveStoreBackend(null), "sqlite");
+    assert.strictEqual(resolveStoreBackend({ store: "jsonl" }), "jsonl", "config beats env");
+    assert.strictEqual(sqlitePathFor("C:/data/resonance-memory.jsonl").replace(/\\/g, "/"),
+      "C:/data/resonance-memory.db");
+    assert.strictEqual(sqlitePathFor("mem.db"), "mem.db");
+  } finally {
+    if (prev == null) delete process.env.RESONANCE_STORE;
+    else process.env.RESONANCE_STORE = prev;
+  }
+});
+
+test("SqliteStore NEVER constructs AccessLog (BUG-007 trap)", () => {
+  const s = freshSqlite("no-access");
+  assert.strictEqual(s.access, undefined, "no AccessLog on the instance");
+  assert.ok(!fs.existsSync(s.file + ".access.json"), "must not create a sidecar");
+  // A leftover live sidecar next to the .db is ignored — counts come from the row.
+  fs.writeFileSync(s.file + ".access.json", JSON.stringify({ counts: { "1": { n: 99, last: "X" } } }));
+  s.add(normalize({ id: 1, text: "x", created: "2026-01-01T00:00:00.000Z" }));
+  assert.strictEqual(s.get(1).access_count, 0, "leftover sidecar must not fold in");
+  s.applyRecall([1], new Map());
+  assert.strictEqual(s.get(1).access_count, 1, "in-table bump only");
+  assert.notStrictEqual(s.get(1).access_count, 100, "99 + 1 would be the doubling costume");
+  s.close();
+});
+
+test("SqliteStore preserves the opaque id (never AUTOINCREMENT-renumbers)", () => {
+  const s = freshSqlite("ids");
+  const id = 1700000000001;
+  s.add(normalize({ id, text: "keep this id", created: "2026-01-01T00:00:00.000Z" }));
+  assert.strictEqual(Number(s.get(id).id), id);
+  assert.strictEqual(Number(s.current()[0].id), id);
+  s.add(normalize({ id: 7, text: "small id", created: "2026-01-01T00:00:00.000Z" }));
+  assert.strictEqual(Number(s.get(7).id), 7, "a small explicit id is not reassigned to 1 or 2");
+  assert.strictEqual(s.all().length, 2);
+  s.close();
+});
+
+test("SqliteStore preserves created as a real column", () => {
+  const s = freshSqlite("created");
+  const created = "2020-06-15T12:34:56.000Z";
+  s.add(normalize({ id: 1, text: "old fact", created, modified: "2021-01-01T00:00:00.000Z" }));
+  assert.strictEqual(s.get(1).created, created);
+  s.update(1, { text: "edited", modified: "2022-01-01T00:00:00.000Z" });
+  assert.strictEqual(s.get(1).created, created, "an edit must not rewrite created");
+  s.close();
+  const reopened = new SqliteStore(s.file);
+  assert.strictEqual(reopened.get(1).created, created, "created survives reopen");
+  reopened.close();
+});
+
+test("SqliteStore attaches Float32Array AFTER normalize() (typed-array trap)", () => {
+  const s = freshSqlite("f32");
+  const f32 = new Float32Array([1, 0, 0.25]);
+  s.add({
+    id: 1, text: "vec", created: "2026-01-01T00:00:00.000Z",
+    modified: "2026-01-01T00:00:00.000Z", embedding: f32,
+  });
+  const got = s.get(1);
+  assert.ok(got.embedding instanceof Float32Array, "store returns typed array, not number[]");
+  assert.ok(embClose(got.embedding, f32), "round-trip within 1e-5");
+  assert.strictEqual(normalize({ embedding: got.embedding }).embedding, null,
+    "normalize still drops it — attach-after is the store's job");
+  s.close();
+});
+
+test("I5-SQLite / BUG-002: recall updates only retention columns on returned rows", () => {
+  const s = freshSqlite("bug002");
+  const created = "2026-01-01T00:00:00.000Z";
+  s.add(normalize({ id: 1, text: "a", embedding: [1, 0], created, source: "user_stated" }));
+  s.add(normalize({ id: 2, text: "b", embedding: [0, 1], created, source: "user_stated" }));
+  const snap = (r) => ({
+    id: Number(r.id), created: r.created, modified: r.modified, text: r.text,
+    valid_from: r.valid_from, valid_to: r.valid_to, last_confirmed: r.last_confirmed,
+    superseded_by: r.superseded_by, supersedes: r.supersedes, revision: r.revision,
+    needs_review: r.needs_review, embedding_version: r.embedding_version,
+    source: r.source, is_constraint: r.is_constraint, deleted: r.deleted,
+    embedding: Array.from(r.embedding || []),
+  });
+  const before1 = snap(s.get(1));
+  const before2 = snap(s.get(2));
+  const nBefore = s.all().length;
+  s.applyRecall([1], new Map());
+  assert.strictEqual(s.all().length, nBefore, "row count unchanged");
+  const after1 = s.get(1);
+  const after2 = s.get(2);
+  assert.strictEqual(after1.access_count, 1, "returned row was bumped");
+  assert.ok(after1.last_access, "last_access stamped");
+  assert.deepStrictEqual(snap(after1), before1, "no non-retention column on id 1 changed");
+  assert.strictEqual(after2.access_count, 0, "non-returned row not bumped");
+  assert.strictEqual(after2.last_access, null);
+  assert.deepStrictEqual(snap(after2), before2, "id 2 entirely untouched");
+  s.close();
+});
+
+test("SqliteStore: access_count does not double after an edit (BUG-007 class)", () => {
+  const s = freshSqlite("no-double");
+  s.add(normalize({ id: 1, text: "x", created: "2026-01-01T00:00:00.000Z" }));
+  s.applyRecall([1], new Map());
+  s.applyRecall([1], new Map());
+  assert.strictEqual(s.get(1).access_count, 2);
+  s.update(1, { text: "edited" });
+  assert.strictEqual(s.get(1).access_count, 2, "edit must not inflate");
+  s.close();
+});
+
+test("SqliteStore vacuum drops deleted rows, keeps counts on survivors", () => {
+  const s = freshSqlite("vac");
+  s.add(normalize({ id: 1, text: "keep", created: "2026-01-01T00:00:00.000Z" }));
+  s.add(normalize({ id: 2, text: "gone", deleted: true, created: "2026-01-01T00:00:00.000Z" }));
+  s.applyRecall([1], new Map());
+  assert.strictEqual(s.hasDeleted(), true);
+  assert.strictEqual(s.vacuum(), 1);
+  assert.strictEqual(s.all().length, 1);
+  assert.strictEqual(s.get(1).access_count, 1);
+  assert.strictEqual(s.hasDeleted(), false);
+  s.close();
+});
+
+test("SqliteStore nextId stays unique under rapid saves", () => {
+  const s = freshSqlite("nextid");
+  const ids = [];
+  for (let i = 0; i < 200; i++) {
+    const id = s.nextId();
+    ids.push(String(id));
+    s.add(normalize({ id, text: "m" + i, created: "2026-01-01T00:00:00.000Z" }));
+  }
+  assert.strictEqual(new Set(ids).size, 200);
+  assert.strictEqual(s.all().length, 200);
+  s.close();
+});
+
+test("conformance: add/get/current/active/updateMany/vacuum match JsonlStore", () => {
+  const created = "2026-03-01T00:00:00.000Z";
+  const jsonl = freshStore();
+  const sqlite = freshSqlite("conf");
+  const recs = [
+    normalize({ id: 1, text: "I work at Acme", embedding: [1, 0, 0], created }),
+    normalize({ id: 2, text: "I prefer tea", embedding: [0, 1, 0], created }),
+    normalize({ id: 3, text: "gone", deleted: true, embedding: [0, 0, 1], created }),
+  ];
+  for (const r of recs) { jsonl.add(r); sqlite.add(r); }
+
+  const cmp = (a, b, label) => {
+    assert.strictEqual(a.length, b.length, label + " length");
+    const A = a.map(recFields).sort((x, y) => x.id.localeCompare(y.id));
+    const B = b.map(recFields).sort((x, y) => x.id.localeCompare(y.id));
+    assert.deepStrictEqual(A, B, label + " fields");
+    for (let i = 0; i < a.length; i++) {
+      const ja = jsonl.get(A[i].id), sa = sqlite.get(A[i].id);
+      assert.ok(embClose(ja.embedding, sa.embedding), label + " embedding id " + A[i].id);
+    }
+  };
+  cmp(jsonl.current(), sqlite.current(), "current");
+  cmp(jsonl.active(), sqlite.active(), "active");
+  cmp(jsonl.all(), sqlite.all(), "all");
+
+  const p = supersedePatches(jsonl.get(1), jsonl.get(2), "T2");
+  assert.strictEqual(jsonl.updateMany({ "1": p.old, "2": p.new }), 2);
+  assert.strictEqual(sqlite.updateMany({ "1": p.old, "2": p.new }), 2);
+  cmp(jsonl.current(), sqlite.current(), "after supersession current");
+  cmp(jsonl.active(), sqlite.active(), "after supersession active");
+  assert.strictEqual(jsonl.get(1).valid_to, sqlite.get(1).valid_to);
+  assert.strictEqual(String(jsonl.get(1).superseded_by), String(sqlite.get(1).superseded_by));
+
+  jsonl.applyRecall([2], new Map());
+  sqlite.applyRecall([2], new Map());
+  assert.strictEqual(jsonl.get(2).access_count, sqlite.get(2).access_count);
+  assert.strictEqual(jsonl.get(1).access_count, sqlite.get(1).access_count);
+
+  assert.strictEqual(jsonl.vacuum(), sqlite.vacuum());
+  cmp(jsonl.all(), sqlite.all(), "after vacuum");
+  sqlite.close();
+});
+
+} // sqliteAvailable
 
 // ------------------------------------------------- associative field topology
 section("associative field: reciprocal kNN (RM-00)");
@@ -2653,6 +2927,90 @@ async function asyncTests() {
     assert.strictEqual(computeMetric("recall_at_k", { queries: ranked }, null, { k: 1 }), 1);
     assert.strictEqual(computeMetric("mrr", { queries: ranked }, null), 1);
   });
+
+  if (sqliteAvailable()) {
+    section("Store conformance through createCore (JsonlStore ≡ SqliteStore)");
+
+    const confEmbedBank = {
+      "I work at Acme": [1, 0, 0, 0],
+      "I prefer tea": [0, 1, 0, 0],
+      "I'm allergic to peanuts": [0, 0, 1, 0],
+      "where do I work": [0.95, 0.05, 0, 0],
+      "what do I drink": [0.05, 0.95, 0, 0],
+      // Same-slot correction at ~0.60 cosine to Acme: above RM-03 floor
+      // (0.535) and below DEDUP_LO (0.88) so it supersedes rather than
+      // restates. Mass on dim 4 so it does not argmax onto tea.
+      "Actually I work at Globex now": [0.60, 0.05, 0.05, 0.797],
+      "I work at Globex": [0.60, 0.05, 0.05, 0.797],
+    };
+    const confEmbed = async (texts) => texts.map((t) => {
+      if (confEmbedBank[t]) return confEmbedBank[t].slice();
+      const v = new Array(4).fill(0);
+      v[t.length % 4] = 1;
+      return v;
+    });
+
+    function seedPair(suffix) {
+      const created = "2026-01-01T00:00:00.000Z";
+      const jsonl = new JsonlStore(tmp("conf-core-" + suffix + ".jsonl"));
+      const sqlite = freshSqlite("conf-core-" + suffix);
+      const recs = [
+        normalize({ id: 11, text: "I work at Acme", embedding: [1, 0, 0, 0], created }),
+        normalize({ id: 12, text: "I prefer tea", embedding: [0, 1, 0, 0], created }),
+        normalize({ id: 13, text: "I'm allergic to peanuts", embedding: [0, 0, 1, 0], created }),
+      ];
+      for (const r of recs) { jsonl.add(r); sqlite.add(r); }
+      const jCore = createCore({ store: jsonl, embed: confEmbed });
+      const sCore = createCore({ store: sqlite, embed: confEmbed });
+      return { jsonl, sqlite, jCore, sCore };
+    }
+
+    await atest("recall ranking/ids are identical on both backends", async () => {
+      const { sqlite, jCore, sCore } = seedPair("recall");
+      const jq = await jCore.recall("where do I work", 3);
+      const sq = await sCore.recall("where do I work", 3);
+      const jHits = parsePrimaryHits(jq).map((h) => String(h.id));
+      const sHits = parsePrimaryHits(sq).map((h) => String(h.id));
+      assert.deepStrictEqual(sHits, jHits, "same id order\n jsonl=" + jHits + "\n sqlite=" + sHits);
+      assert.strictEqual(sHits[0], "11", "Acme is rank-1 for 'where do I work'");
+      sqlite.close();
+    });
+
+    await atest("save restatement / supersession / edit / delete match", async () => {
+      const { jsonl, sqlite, jCore, sCore } = seedPair("verbs");
+      // HI restatement of tea: confirm, do not append.
+      await jCore.save("I prefer tea");
+      await sCore.save("I prefer tea");
+      assert.strictEqual(jsonl.current().length, sqlite.current().length, "restatement did not append");
+      assert.strictEqual(jsonl.get(12).access_count, sqlite.get(12).access_count);
+
+      // Cue-gated supersession of the job.
+      await jCore.save("Actually I work at Globex now");
+      await sCore.save("Actually I work at Globex now");
+      const jCur = jsonl.current().map((r) => r.text).sort();
+      const sCur = sqlite.current().map((r) => r.text).sort();
+      assert.deepStrictEqual(sCur, jCur, "current texts after supersession");
+      const jOld = jsonl.get(11), sOld = sqlite.get(11);
+      assert.ok(jOld.valid_to && sOld.valid_to, "old job retired on both");
+      assert.ok(jOld.superseded_by != null && sOld.superseded_by != null, "superseded_by set");
+
+      const jNew = jsonl.current().find((r) => /Globex/.test(r.text));
+      const sNew = sqlite.current().find((r) => /Globex/.test(r.text));
+      assert.ok(jNew && sNew, "Globex is current");
+
+      await jCore.edit(jNew.id, "I work at Globex");
+      await sCore.edit(sNew.id, "I work at Globex");
+      assert.strictEqual(jsonl.get(jNew.id).text, sqlite.get(sNew.id).text);
+
+      await jCore.remove(13);
+      await sCore.remove(13);
+      assert.strictEqual(jsonl.get(13).deleted, true);
+      assert.strictEqual(sqlite.get(13).deleted, true);
+      assert.strictEqual(jsonl.vacuum(), sqlite.vacuum());
+      assert.strictEqual(jsonl.all().length, sqlite.all().length);
+      sqlite.close();
+    });
+  }
 
   section("RM-01.b save() wiring (Tier 0/1 on the live path)");
 

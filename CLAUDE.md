@@ -22,7 +22,8 @@ roadmap, and per-repo backlog live in the companion repo
 
 ## Tech stack & constraints
 
-- **Pure Node.js standard library + built-in `fetch`** (Node ≥ 18). Speaks MCP over stdio
+- **Pure Node.js standard library + built-in `fetch`** (Node ≥ 22.5; `node:sqlite`
+  for SqliteStore). Speaks MCP over stdio
   as line-delimited JSON-RPC 2.0.
 - **Zero runtime dependencies.** `package.json` has no `dependencies` block — only scripts.
   Do not add npm dependencies without a very strong reason; the dependency-free property is
@@ -44,7 +45,8 @@ roadmap, and per-repo backlog live in the companion repo
 | `memory-core.js` | **The four cognitive verbs, as ONE implementation.** `createCore({ store, embed, fieldEnabled, getEdgeStore, dedupThresholds, extractEnabled, extract })` returns `{ save, recall, edit, remove }`. Also owns `dedupExisting` / `planDedupExisting` (RM-02.c) so the `--dedup-existing` backfill cannot fork the 02.b bands. Everything environment-specific is *injected*, nothing reached for — so `server.js` (network embedder) and `eval/pipeline.js` (cached embedder) build on the exact same code. This is deliberate: two copies of the recall path is the drift the RM-00 harness exists to catch. |
 | `extract.js` | RM-01.c Tier 2: the opt-in LLM extraction pass (prompt, parser, sanity gate, chat POST, MCP sampling, capability detect). `save()` in `memory-core.js` is the only caller. Off by default. |
 | `record.js` | The shared record schema (`normalize()`), durable atomic writes (`writeFileDurable()`), the access sidecar (`AccessLog`), and the lexical heuristics (constraint typing, historical-query detection, supersession cues + `detectSupersession`, cosine-banded `detectNearDuplicate` + `pickMergeSurvivor`). Owned here so the server and panel agree on a record byte-for-byte. |
-| `store.js` | `JsonlStore` — the flat-JSONL storage backend behind the Store seam. Constructed and testable without the stdio loop; a SQLite/Lantern backend can replace it with the same method surface (see `docs/proposed/0005`). |
+| `store.js` | Store seam. `JsonlStore` is the default backend; `openStore()` selects `SqliteStore` when `RESONANCE_STORE=sqlite` (or live-config `store`). Same method surface so `memory-core.js` does not change. See `docs/proposed/0010`. |
+| `store-sqlite.js` | RM-07 `SqliteStore`: `node:sqlite` `DatabaseSync`, WAL + `synchronous=FULL`, BLOB embeddings, in-process Float32 cache, in-table access counts. Never constructs `AccessLog`. |
 | `field.js` | Associative layer (Phase 2a): a kNN semantic graph over stored vectors, neighborhood expansion, and constraint rescue. No new embedding calls, no LLM extraction — built from vectors already stored at save. |
 | `ledger.js` | Retired Hebbian sidecar (Phase 2b). Off the live recall/reinforce path as of Phase 0 Slice C; kept as the reference implementation of the epoch-decay math so tests can prove EdgeStore produces the same numbers. |
 | `edges.js` | Unified persistent edge store (Phase 0): one undirected record, two independent signals (`semantic` derived cache + `hebbian` source of truth), typed provenance, one-way `.assoc.json` → `.edges.json` migration. **On the live recall path** — Hebbian bonus (via `effectiveHebbian`)/reinforce/save. Decay is lazy wall-clock half-life (I6); `tick()` is retired. A reinforcing mutation materializes the effective weight before applying α (0.3). MCP request-ID idempotency: a 256-entry LRU of processed JSON-RPC ids lives in the sidecar so one durable write commits the id and the weight change. Save-time semantic neighbors persist here (K=5, min cosine 0.25, Hebbian weight 0); `field.js` still computes semantic kNN at recall (minSim 0.55). Soft prune (0.4 / I8): `pruneSweep()` marks `pruned_at` only when both unreinforced and semantically weak (gate 0.25); hard drop is `vacuum()`, explicit. Reactivation is in-place on save/edit/reinforce of an endpoint. |
@@ -164,11 +166,19 @@ new golden case: `EVAL_REFRESH=1 npm run eval`. For a measurement corpus (`dupli
     first load, if `.edges.json` is missing, those weights are copied in one-way and the
     old file is left untouched so a downgraded exe still reads its own stale sidecar.
   - `<store>.access.json` — access counts (`AccessLog` in `record.js`), kept out of the
-    store so a recall never rewrites the store file (see `BUG-002`).
+    JSONL store so a recall never rewrites the JSONL file (see `BUG-002`). Lives only
+    next to a JsonlStore. SqliteStore keeps `access_count` / `last_access` **in the
+    row** and never constructs `AccessLog` (BUG-007); a leftover `.access.json` next
+    to a `.db` is ignored.
+- **Selectable backend (RM-07 slice 1).** Default is still JSONL. `RESONANCE_STORE=sqlite`
+  (or live-config `store: "sqlite"`) opens `SqliteStore` at the sibling `.db`
+  (`resonance-memory.jsonl` → `resonance-memory.db`). WAL + `synchronous=FULL`;
+  embeddings as Float32 BLOBs; in-process cache hydrated once. Opaque `id` preserved.
+  Default switch, migrator, and JSONL export are later slices.
 - Live runtime state (the field toggle, the extract toggle, plus `dedup_hi` /
-  `dedup_lo`) lives in `resonance-memory.config.json` **beside the data file**, so
+  `dedup_lo`, and `store`) lives in `resonance-memory.config.json` **beside the data file**, so
   the panel toggle and the server read the same file — the field and extraction
-  turn on/off with no client restart.
+  turn on/off with no client restart. A backend change needs a process restart.
 
 ### Environment variables
 
@@ -179,8 +189,10 @@ new golden case: `EVAL_REFRESH=1 npm run eval`. For a measurement corpus (`dupli
 `dedup_hi` / `dedup_lo` win), `RESONANCE_EXTRACT_LLM` (Tier 2 default when no
 config file; live-config `extract_llm` wins; **off**), `RESONANCE_EXTRACT_MODEL`
 (preferred chat id), `RESONANCE_EXTRACT_TIMEOUT_MS` (interactive bound, default
-8000). The embedder is **not bundled** — we depend on the `/v1/embeddings`
-*interface*, not a specific model, so any compatible embedding model can be swapped in.
+8000), `RESONANCE_STORE` (`jsonl` default / `sqlite`; live-config `store` wins;
+SqliteStore needs Node ≥22.5 for `node:sqlite`). The embedder is **not bundled**
+— we depend on the `/v1/embeddings` *interface*, not a specific model, so any
+compatible embedding model can be swapped in.
 
 ## Design invariants — DO NOT VIOLATE
 
@@ -202,10 +214,15 @@ load-bearing ones, enforced here:
 4. **Embed once at save; the server owns all metadata; the model assigns none of it.** A
    `Store` abstraction sits behind the verbs (`store.js`) so the backend can be swapped
    without changing the MCP API.
-5. **All store writes go through `writeFileDurable()` (temp → fsync → atomic rename), and
-   nothing on a read path writes to the store.** Both were violated once — see `BUG-001`
-   (a non-atomic write that could truncate the user's entire memory) and `BUG-002` (recall
-   rewriting the store to bump a counter). Never use `fs.writeFileSync` to replace the store.
+5. **Durable writes; no *unbounded* write on a read path (I5).** Writes are atomic and
+   durable. A read path must not perform an unbounded / full-corpus rewrite. Retention
+   metadata (`access_count` / `last_access`) MAY be updated on recall if that update is
+   bounded, atomic, and cannot truncate the store. **JSONL:** `writeFileDurable()`
+   (temp → fsync → atomic rename) for mutations; AccessLog sidecar for recall (never
+   rewrite the JSONL to bump a counter — `BUG-001` / `BUG-002`). **SQLite:** WAL +
+   `synchronous=FULL`; recall is one `BEGIN`/`UPDATE`/`COMMIT` of the ~5 returned ids.
+   `SqliteStore` never constructs `AccessLog` (BUG-007). Never use `fs.writeFileSync` to
+   replace the JSONL store.
 
 ## Conventions
 

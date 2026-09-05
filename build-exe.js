@@ -56,7 +56,7 @@ console.log("[1/4] bundling sources with esbuild ...");
 // so the bundle isn't peppered with a dozen identical notices. We add ONE notice
 // back as a top-of-file banner below.
 const bundleFile = path.join(build, "bundle.js");
-run(`npx --yes esbuild "${path.join(dir, "entry.js")}" --bundle --platform=node --target=node20 --legal-comments=none --outfile="${bundleFile}"`);
+run(`npx --yes esbuild "${path.join(dir, "entry.js")}" --bundle --platform=node --target=node22 --legal-comments=none --outfile="${bundleFile}"`);
 
 // One clean license banner at the very top of the bundle, in place of the many
 // per-file headers. Defensively strip any header block esbuild happened to keep.

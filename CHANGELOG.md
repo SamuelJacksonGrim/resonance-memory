@@ -8,6 +8,24 @@ stable; sophistication grows in the substrate, not in the API.
 
 ## [Unreleased]
 
+### Added
+- **RM-07 slice 1 — `SqliteStore` drop-in.** Selectable backend (`RESONANCE_STORE=sqlite`
+  / live-config `store`); JSONL stays default. `node:sqlite` `DatabaseSync`, WAL +
+  `synchronous=FULL`, embeddings as Float32 BLOBs, in-process cache, JS cosine (no
+  sqlite-vec). Opaque ids preserved; `created` is a real column; access counts live
+  in the row (`SqliteStore` never constructs `AccessLog`). Conformance suite proves
+  JsonlStore ≡ SqliteStore on save/recall/edit/delete/vacuum. Product S1: **loads
+  50k and 100k** (JSONL cannot); field-off recall p95 **49.6 ms @50k, 96.4 ms @100k**.
+  Migrator, export, default switch, edges-in-db, `searchDense` are later slices.
+
+### Changed
+- **I5 restated** to match ARCHITECTURE/ROADMAP: durable writes; no *unbounded* /
+  full-corpus rewrite on a read path. Bounded atomic retention UPDATE of the
+  returned ids is permitted (JSONL = AccessLog sidecar; SQLite = in-table
+  `UPDATE`). CLAUDE.md / AGENTS.md brought in line.
+- **`package.json` `engines`** `>=18` → `>=22.5` (`node:sqlite` floor). esbuild
+  `--target` follows (`node22`).
+
 Beta-readiness pass:
 
 ### Changed

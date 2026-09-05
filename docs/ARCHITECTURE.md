@@ -51,10 +51,10 @@ than the code supports is worse than none — it stops anyone from looking.
 |---|---|---|---|
 | **I1** | **Four verbs, nothing more.** The public tool surface is fixed; new capability lands in the substrate, never a fifth tool. If a feature seems to need one, the design is wrong. | ✅ held | `server.js` tool schemas |
 | **I2** | **No *unmeasured* signal touches rank.** Ranking is cosine today; a second arm may enter *only* on a measured A/B win, flag-off until then. `importance`/`access_count` govern *retention*, never *retrieval order* — measured: a durability weight on cosine inverts rankings. | ✅ held (amended) | `memory-core.js` recall; `proposed/0003` |
-| **I2b** | **Access-frequency signals are telemetry only.** `access_count`/`last_access`/read frequency may be logged and charted; they may **not** feed rank, decay, reinforcement, or pruning. | ✅ held | `record.js` `AccessLog`; `BUG-002` |
+| **I2b** | **Access-frequency signals are telemetry only.** `access_count`/`last_access`/read frequency may be logged and charted; they may **not** feed rank, decay, reinforcement, or pruning. | ✅ held | `record.js` `AccessLog` (JSONL); `store-sqlite.js` in-table columns; `BUG-002` |
 | **I3** | **The associative layer fails open.** The entire field/ledger path is wrapped in a `try/catch` that must never break recall; losing it degrades to plain cosine. | ✅ held | `memory-core.js` field block |
 | **I4** | **Embed once at save; the server owns all metadata; the model assigns none of it.** A `Store` seam sits behind the verbs so the backend swaps without touching the MCP API. | ✅ held¹ | `memory-core.js` `save`; `store.js` |
-| **I5** | **Durable writes; no *unbounded* write on a read path.** Every store rewrite goes through `writeFileDurable()` (temp → fsync → atomic rename); recall performs zero store writes in steady state. | ✅ held¹ | `record.js`; `BUG-001`/`BUG-002` |
+| **I5** | **Durable writes; no *unbounded* write on a read path.** Writes are atomic and durable. A read path must not perform an unbounded / full-corpus rewrite (the BUG-001/002 class). Retention metadata (`access_count` / `last_access`) MAY be updated on recall if that update is bounded, atomic, and cannot truncate the store. **JSONL:** AccessLog sidecar (recall writes the sidecar, never the JSONL file); store mutations go through `writeFileDurable()`. **SQLite:** WAL + `synchronous=FULL`; recall is one `BEGIN`/`UPDATE`/`COMMIT` of the ~5 returned ids. | ✅ held¹ | `record.js` `AccessLog`; `store-sqlite.js` `applyRecall`; `BUG-001`/`BUG-002` |
 | **I6** | **Reading does not drive the decay clock.** Co-recall *reinforcement* is retained (it is the differentiator); edge **decay** is lazy wall-clock, computed at access via `effectiveHebbian`, never stored, never ticked by recall count. A reinforcing mutation **materializes** that computed weight before applying α (Phase 0.3), so reinforcement cannot bypass decay. | ✅ held (Phase 0.2; materialize 0.3) | `edges.js` `effectiveHebbian` / `_bump`; `memory-core.js` recall (no `tick()`) |
 | **I7** | **Activation never persists.** Spreading activation (Phase 1) is seeded per query, attenuated per hop, bounded, and never written to the edge store. | ⬜ n/a until Phase 1 | `phases/phase-0` |
 | **I8** | **No silent removal.** *Record* deletes are soft (`deleted`, compacted at `vacuum()`) and supersession keeps a non-overlapping validity chain. *Edge* pruning is the same pattern: `pruneSweep()` marks `pruned_at` (record kept; `incident()` skips it); `EdgeStore.vacuum()` is the explicit hard drop. Never on `recall`/`save`. Reactivation is in-place on save/edit/reinforce of an endpoint, never a fifth tool. | ✅ held (records + edges, Phase 0.4) | `store.js` `vacuum`; `edges.js` `pruneSweep` / `vacuum`; `phases/phase-0` |
@@ -144,7 +144,8 @@ same record the panel renders, the installer targets, and `--dedup-existing` sca
 | `extract.js` | RM-01.c Tier 2: opt-in LLM extraction (prompt, parser, sanity gate, `/v1/chat/completions`, MCP sampling, capability detect). Off by default. `save()` is the only caller. | stdlib + `fetch` |
 | `dedup-existing.js` | RM-02.c CLI. Dry-run default; `--apply` is one durable rewrite. Thin wrapper over `dedupExisting()` — no second decision. | `memory-core`, `store` |
 | `record.js` | The shared record schema (`normalize()`), durable atomic writes (`writeFileDurable()`), the access sidecar (`AccessLog`), and the lexical heuristics (constraint typing, historical-query detection, supersession cues, cosine-banded `detectNearDuplicate`). Owned here so server and panel agree on a record byte-for-byte. | stdlib only |
-| `store.js` | `JsonlStore` — the flat-JSONL backend behind the Store seam. Constructible and testable without the stdio loop; a SQLite backend can replace it with the same method surface. | `record` |
+| `store.js` | Store seam: `JsonlStore` (default) plus `openStore()` selectability. Flag: `RESONANCE_STORE=sqlite` / live-config `store`. Same method surface; `memory-core.js` does not change. | `record`, `store-sqlite` |
+| `store-sqlite.js` | RM-07 `SqliteStore`. `node:sqlite` `DatabaseSync`, WAL + `synchronous=FULL`, BLOB embeddings, in-process cache, in-table access counts. Never constructs `AccessLog`. | `record`, `node:sqlite` |
 | `field.js` | Associative layer (Phase 2a): a kNN semantic graph over stored vectors, neighborhood expansion, and constraint rescue. No new embedding calls, no LLM extraction. | stdlib only |
 | `ledger.js` | Retired Hebbian sidecar (Phase 2b). Off the live path as of Slice C; kept so tests can compare EdgeStore bonuses against the shipped epoch-decay math. | `record` |
 | `edges.js` | Unified persistent edge store (Phase 0 / `RM-21`): one undirected record, two independent signals (`semantic` derived cache validated by version comparison, `hebbian` source of truth), typed provenance, one-way `.assoc.json` → `.edges.json` migration (`kind: "resonance-edges"`). **On the live recall path** — Hebbian bonus (via `effectiveHebbian`)/reinforce/save. Decay is lazy wall-clock (I6); `tick()` is retired. A reinforcing mutation materializes `effectiveHebbian` before applying α (0.3). MCP request-ID idempotency: a 256-entry LRU of processed JSON-RPC ids (`processed_ids`) lives in the sidecar envelope so one `writeFileDurable` commits the dedup record and the weight change together. Soft prune (0.4 / I8): `pruneSweep()` marks `pruned_at` only when *both* unreinforced and semantically weak (`SEMANTIC_PRUNE_GATE` 0.25); hard drop is `vacuum()`, explicit. Reactivation is in-place on save/edit/reinforce of an endpoint. `field.js` still builds the semantic kNN at recall. | `record` |
@@ -255,9 +256,11 @@ argument is always the smallest possible thing (`content`, `query`, or `id`).
 2. **Embed the query** (plus any vectorless legacy rows, folded into the same call). Cosine-rank
    all candidates. Return the top-k (default 5), each prefixed `[id N]`. If the embedder is
    unreachable, degrade to a crude keyword-overlap score rather than erroring.
-3. **Record the recall.** `store.applyRecall()` bumps access counts *in the sidecar* and
-   backfills any freshly-computed vectors. In steady state a recall performs **zero** writes to
-   the memory store (the `BUG-002` fix).
+3. **Record the recall.** `store.applyRecall()` bumps access counts. On **JSONL** that is
+   the AccessLog sidecar (zero writes to the JSONL file in steady state). On **SQLite**
+   that is a bounded `UPDATE` of the returned ids (I5: not a full-corpus rewrite).
+   Freshly-computed vectors for vectorless rows are backfilled — the self-extinguishing
+   I4/I5 exception.
 4. **Associative field (if enabled).** Additive only: build the kNN edge set, expand a
    `neighborhood()` one hop from the returned seeds, and run `reachableConstraints()` to rescue
    apex rules (a "diabetic" memory reachable through a "lemon bars" bridge) that sit far down
@@ -310,11 +313,14 @@ Two properties make this safe and swappable:
   file in the *same directory*, `fsync`, then `rename` (atomic on POSIX and Windows). A reader
   sees the whole old file or the whole new one — never a half-written one. Plain
   `fs.writeFileSync` on the live file is forbidden (`BUG-001`).
-- **Read paths never write the store.** Access counts and Hebbian weights are *sidecars*, not
-  columns. They are retention/learning signals that never touch ranking, so losing their tail
-  to a crash costs nothing — while rewriting the whole store on a read risked everything
-  (`BUG-002`). Deleting a sidecar loses learned associations or access counts, never a memory;
-  both regenerate.
+- **No unbounded write on a read path (I5).** The forbidden thing is a full-corpus rewrite
+  on recall (BUG-002: parse every row, bump ~5 counters, rewrite the file). Retention
+  metadata may move on recall when the update is bounded, atomic, and cannot truncate the
+  store. JSONL keeps counts in the AccessLog sidecar (zero JSONL writes in steady state).
+  SQLite updates `access_count` / `last_access` in-table on the returned ids, one
+  transaction, `synchronous=FULL`. Hebbian weights stay in the `.edges.json` sidecar on
+  both backends (edges-in-db is a later slice). Deleting a sidecar loses learned
+  associations or access counts, never a memory.
 
 The **config file** is deliberately beside the *data*, not the exe, so the panel toggle and
 the MCP server read the same file — the field turns on/off with no client restart. `server.js`
@@ -322,13 +328,22 @@ reads `fieldEnabled()` per recall for exactly this reason.
 
 ### The Store seam
 
-`JsonlStore` (`store.js`) is the only thing that touches the file. Its method surface —
-`all` / `active` / `current` / `get` / `add` / `update` / `updateMany` / `applyRecall` /
-`vacuum` / `hasDeleted` / `nextId` — is what `memory-core.js` depends on. A SQLite-backed store
-(`sqlite-vec` for vectors, FTS5 for the hybrid keyword arm; `node:sqlite` confirmed available)
-can replace it with the same surface, leaving the four verbs untouched. That is `RM-07`; the
-*data-loss* half is already done, the *performance* half (`all()` parses the whole file per
-call; mutations rewrite it) is the open scaling limit.
+The Store method surface — `all` / `active` / `current` / `get` / `add` / `update` /
+`updateMany` / `applyRecall` / `vacuum` / `hasDeleted` / `nextId` — is what
+`memory-core.js` depends on. Two implementations:
+
+- **`JsonlStore`** (default). Flat JSONL; mutations go through `writeFileDurable()`.
+  Access counts live in the AccessLog sidecar. `all()` re-parses the file per call —
+  this is the S1 load wall (50k with vectors is 834 MB and cannot `readFileSync`).
+- **`SqliteStore`** (selectable, `RESONANCE_STORE=sqlite`). `node:sqlite` `DatabaseSync`,
+  WAL + `synchronous=FULL`, embeddings as Float32 BLOBs, in-process record cache
+  hydrated once. Opaque `id` is preserved (never AUTOINCREMENT-renumbered). `created`
+  is a real column. Access counts live *in the row*; this class never constructs
+  `AccessLog` (BUG-007). No sqlite-vec — a RAM Float32 scan beat it at 10k–100k
+  (see [`proposed/0010`](proposed/0010-sqlite-backend.md)). Product S1, field-off
+  cached recall: **p95 49.6 ms at 50k, 96.4 ms at 100k** (JSONL cannot load either
+  size). Default switch, migrator, export, edges-in-db, and `searchDense` are later
+  slices.
 
 ---
 

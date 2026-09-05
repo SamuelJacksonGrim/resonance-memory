@@ -1,7 +1,8 @@
 # 0010 — SQLite backend behind the Store seam (RM-07)
 
-**Status:** proposed (spike measured) · **Backlog:** `RM-07` · **Depends on:** `RM-00`, [`0005`](0005-store-abstraction.md)
-**Spike:** [`spike/rm-07-sqlite/`](../../spike/rm-07-sqlite/) — not product; `memory-core.js` / `store.js` untouched.
+**Status:** slice 1 shipped (drop-in `SqliteStore`, selectable, JSONL still default) · **Backlog:** `RM-07` · **Depends on:** `RM-00`, [`0005`](0005-store-abstraction.md)
+**Spike:** [`spike/rm-07-sqlite/`](../../spike/rm-07-sqlite/) — de-risked the driver and the vector path.
+**Product:** `store-sqlite.js` `SqliteStore`, same JsonlStore method surface, `memory-core.js` verbs unchanged.
 
 This RFC extends 0005. 0005 named the seam and guessed `node:sqlite` + `sqlite-vec`. This
 document is the **measured** architecture for the backend, after a de-risking spike that
@@ -208,7 +209,7 @@ anti-hoarding claim; see [`COMPETITIVE-ANALYSIS`](../COMPETITIVE-ANALYSIS.md).
 |---|---|
 | I2 ranking = cosine only | Cache is a faster load of the same vectors. No durability/recency weight. |
 | I3 field fails open | Unchanged: field still `try/catch` around `field.js`. Backend is below that. |
-| I5 durable writes; nothing on a read path rewrites the store | WAL transactions for mutations. Recall does not rewrite the db file. `applyRecall` access bumps: see open decision (sidecar vs 5-row UPDATE). Vector backfill on recall stays the legacy-row exception it is today. |
+| I5 durable writes; no *unbounded* write on a read path | Restated (ARCHITECTURE / CLAUDE / AGENTS now agree): writes are atomic + durable; a read path must not perform an unbounded / full-corpus rewrite; retention metadata MAY be updated on recall if that update is bounded, atomic, and cannot truncate the store. **JSONL** = AccessLog sidecar (unchanged). **SQLite** = one `BEGIN`/`UPDATE`/`COMMIT` of the ~5 returned ids, `synchronous=FULL`. Vector backfill of vectorless rows stays the self-extinguishing I4/I5 exception. |
 | I6 reading never drives decay | Unchanged (edges sidecar, not the memory store). |
 | I9 field on/off primary byte-identical | Ranking still cosine over the same vectors. Backend cannot reorder. |
 | Four verbs | No new tool. Export/migrate are CLI. |
@@ -244,15 +245,46 @@ in the SEA blob, extract to `os.tmpdir()` (or beside the exe) on first open,
 
 ---
 
-## What we are *not* doing in the implementation slice (until sign-off)
+## Slice 1 (shipped) — drop-in `SqliteStore`
+
+Landed. Selectable, not the default.
+
+- Driver: `node:sqlite` `DatabaseSync`. No npm `dependencies`. WAL +
+  `synchronous=FULL`. `engines` ≥22.5; esbuild `--target=node22`.
+- Schema: `memories` table, `normalize()` fields as columns, opaque `id`
+  preserved (never AUTOINCREMENT-renumbered), `created` a real TEXT column,
+  embedding a Float32 BLOB. Access counts **in the row**. `SqliteStore`
+  never constructs `AccessLog` (BUG-007).
+- Vectors: BLOB + in-process record cache (hydrate once) + JS cosine in
+  `memory-core`. No sqlite-vec.
+- `normalize()` still drops `Float32Array`; the store attaches after.
+  Encoded as a regression test.
+- Selectability: `RESONANCE_STORE=sqlite` or live-config `store: "sqlite"`.
+  Sibling path `*.jsonl` → `*.db`. Default remains JsonlStore.
+- I5 operationalized per backend as above. BUG-002 SQLite test: after
+  recall, only retention columns changed on the returned rows; row count
+  unchanged.
+- Conformance: same save/recall/edit/delete/all/vacuum/retention ops on
+  both backends, identical observables.
+- Product S1 (2026-09-05, this slice, `--store sqlite --n 50000,100000
+  --no-field --latency-only --offline`): **loads** 50k (206 MB) and 100k
+  (412 MB). Field-off cached recall p95 **49.6 ms @50k, 96.4 ms @100k**.
+  JSONL cannot load either size. The 100k <100 ms bar is cleared on the
+  JsonlStore surface without `searchDense`.
+
+## What this slice is *not* (later slices)
 
 - Ripping out `JsonlStore`. JSONL stays default until SqliteStore passes
-  conformance **and** RM-00 golden parity (0005 step 4).
+  RM-00 golden parity (eval still runs on JSONL because it is the default).
 - Changing `memory-core.js` to `searchDense`. First landing is a drop-in
-  Store. `searchDense` is the 100k-bar shave, gated separately.
+  Store. `searchDense` is a later shave (packed cosine was 48 ms at 100k
+  in the spike); the product cache already cleared 100 ms.
 - Adding npm dependencies.
 - Auto-migrating user stores on upgrade. Migration is explicit (CLI / first-run
-  prompt), reversible, `.bak` always.
+  prompt), reversible, `.bak` always. **Next slice: migrator + export.**
+- Export/zip/folder tree (rounds 2–3). Not this slice's docs.
+- Edges-in-db. Named fast-follow; EdgeStore API stays, persistence adapter
+  later.
 
 ---
 
@@ -283,11 +315,10 @@ These are product calls. The spike is evidence, not a substitute.
    JSONL export for leaving RM / handing to a competitor. Recommend **both**,
    with JSONL as the documented sovereignty path (embeddings as JSON, no RM
    needed to read them).
-6. **Access counts on recall.** Sidecar (`AccessLog`, letter of I5) vs
-   5-row `UPDATE` in SQLite (spirit of I5 / 0005 `touch()`). Recommend
-   **in-table UPDATE** — BUG-002 was "rewrite the whole JSONL"; a 5-row
-   UPDATE is not that class. Keep the sidecar only if you want byte-identical
-   I5 across backends.
+6. **Access counts on recall.** **Settled this slice.** I5 restated (no
+   letter-vs-spirit exception): JSONL keeps the AccessLog sidecar for as
+   long as it is a live write path; SQLite does a bounded in-table `UPDATE`
+   of the returned ids. `SqliteStore` never constructs `AccessLog`.
 7. **`normalize()` ArrayLike embeddings.** Teach `normalize()` to keep
    typed arrays, or always attach after? Recommend **attach after** in
    SqliteStore and add a test; don't change the JSONL migration-on-read

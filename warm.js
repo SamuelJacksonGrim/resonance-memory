@@ -54,7 +54,11 @@ function envInt(name, fallback) {
 const WARM_EDGE_CAP = envInt("RESONANCE_WARM_EDGE_CAP", 512);
 
 function vectorCount(mems) {
-  return (mems || []).filter((m) => Array.isArray(m.embedding)).length;
+  // Typed arrays (SqliteStore) fail Array.isArray; cosine still works.
+  return (mems || []).filter((m) => {
+    const e = m && m.embedding;
+    return !!(e && e.length > 0 && typeof e[0] === "number");
+  }).length;
 }
 
 function shouldSpread(mems, cap) {

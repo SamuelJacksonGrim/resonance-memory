@@ -1137,6 +1137,21 @@ is BLOB + JS cosine, no vector extension.
 Mini-SEA smoke: `node:sqlite` runs inside a Node 24.18.0 SEA
 (`SEA node:sqlite OK`).
 
+### S1 follow-up — RM-07 slice 1 product Store (2026-09-05)
+
+Not the spike. `SqliteStore` in `store-sqlite.js`, same JsonlStore surface,
+`memory-core.recall` unchanged. Direct INSERT (migrator is a later slice).
+Reproduce: `node eval/substrate/scale.js --store sqlite --n 50000,100000 --no-field --latency-only --offline`.
+
+| N | JSONL S1 | spike cached p95 | **product SqliteStore p95** | load | db |
+|---|---|---|---|---|---|
+| 50k | cannot load (834 MB) | 57.9 ms | **49.6 ms** | yes | 206 MB |
+| 100k | cannot load | 107.6 ms | **96.4 ms** | yes | 412 MB |
+
+Warm (hydrate-once) 544 ms @50k / 1.3 s @100k; then the cached scan. Insert
+830 ms / 1.7 s. Pre-declared 250 ms @50k bar: **held**. The 0005 100k <100 ms
+bar: **held on the JsonlStore surface**, without `searchDense`.
+
 ---
 
 ---

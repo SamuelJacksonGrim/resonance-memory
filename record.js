@@ -122,6 +122,10 @@ function normalize(r) {
     created,
     modified,
     text: r.text,
+    // Array.isArray is false for Float32Array (a view, not an Array). That
+    // drop is deliberate: normalize() owns the JSON-shaped schema, not the
+    // store's BLOB representation. SqliteStore attaches the typed array
+    // AFTER normalize() — see store-sqlite.js rowToRecord. Encode as a test.
     embedding: Array.isArray(r.embedding) ? r.embedding : null,
 
     // retention signals - never used in ranking
@@ -220,8 +224,19 @@ function detectSupersession(newRec, currentMems, cosineFn, opts = {}) {
   return (best && bestSim >= minSim) ? best : null;
 }
 
+/*
+ * True for a cosine-able embedding: a JSON number[] (JsonlStore) OR a
+ * Float32Array (SqliteStore attaches these after normalize()). Array.isArray
+ * is false for a typed array — using it here would make RM-02.b skip every
+ * SQLite neighbor and silently append restatements. Length + numeric index
+ * is what cosine actually reads.
+ */
+function isVector(v) {
+  return !!(v && typeof v.length === "number" && v.length > 0 && typeof v[0] === "number");
+}
+
 function hasVector(r) {
-  return r && Array.isArray(r.embedding) && r.embedding.length > 0;
+  return r && isVector(r.embedding);
 }
 
 /*
@@ -529,5 +544,5 @@ module.exports = {
   detectConstraint, CONSTRAINT_RE,
   normalizeText, splitFacts, guardSecrets, prepareWrite, isStandaloneFact,
   WRITE_OPENERS, SECRET_PATTERNS,
-  AccessLog, HISTORICAL_RE,
+  AccessLog, HISTORICAL_RE, isVector, hasVector,
 };

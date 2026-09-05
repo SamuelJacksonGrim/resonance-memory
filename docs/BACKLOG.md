@@ -320,19 +320,27 @@ deletions, ever.
 - [x] Extract the storage layer into its own module (`store.js`) so it can be constructed and
       tested without starting the MCP stdio loop.
 - [ ] Formalize the documented `Store` interface (`touch`, `searchDense`, `searchSparse`) —
-      the seam exists now but still leaks JSONL assumptions.
-- [ ] Add `SqliteStore` — WAL, incremental writes, FTS5 for the `RM-05` keyword arm.
-      **Design + spike (2026-09-05):** [`proposed/0010`](proposed/0010-sqlite-backend.md),
-      numbers in [`spike/rm-07-sqlite/results.md`](../spike/rm-07-sqlite/results.md).
-      `node:sqlite` works *inside a SEA* (mini-smoke on Node 24.18.0 / sqlite 3.53.1).
-      sqlite-vec `loadExtension` works and matches brute cosine (Δ 6.5e-8) but is
-      *slower* than RAM JS cosine at 10k–100k — **not the v1 vector path**. Recommended:
-      BLOB + in-process Float32 cache + JS cosine; JSONL export/import for sovereignty.
-      Cached field-off recall p95: 10.4 ms @10k, **57.9 ms @50k** (JSONL cannot load),
-      107.6 ms @100k. Implementation waits on sign-off of 0010's open decisions.
-- [ ] Conformance test suite both backends must pass identically.
-- [ ] Transparent one-way migration on first run, with a `.bak`.
+      the seam exists now but still leaks JSONL assumptions. `searchDense` is a later
+      slice (the 100k-bar shave; product S1 already clears 100 ms at 100k on the
+      JsonlStore surface via the in-process cache).
+- [x] Add `SqliteStore` — drop-in behind the JsonlStore surface (`store-sqlite.js`).
+      WAL + `synchronous=FULL`, BLOB embeddings, in-process Float32 cache, JS cosine.
+      **No sqlite-vec** (spike: slower at 10k–100k + SEA packaging). Selectable via
+      `RESONANCE_STORE=sqlite` / live-config `store`; **JSONL stays default** this
+      slice. Product S1 (2026-09-05): **loads 50k (196 MB) and 100k (392 MB)**;
+      field-off cached recall p95 **49.6 ms @50k, 96.4 ms @100k** (JSONL cannot
+      load either). Opaque ids preserved; `created` is a real column; access
+      counts in-table (never `AccessLog` — BUG-007). FTS5 / `searchSparse` wait
+      on RM-05.
+- [x] Conformance test suite both backends must pass identically. `test.js`
+      "Store conformance" + I5-SQLite BUG-002, id-preservation, created-preservation,
+      normalize() typed-array trap. (`touch` / `searchDense` not on this slice's
+      surface.)
+- [ ] Transparent one-way migration on first run, with a `.bak`. *(next slice:
+      migrator + export.)*
 - [ ] JSONL stays the default until SQLite passes conformance + eval parity.
+      Conformance is green; golden parity on the sqlite backend is a later slice
+      (eval still runs on JSONL because it is the default).
 
 **Acceptance:** 100k memories, recall p95 <100ms, no full-file rewrite; both backends
 byte-identical on the eval scorecard.

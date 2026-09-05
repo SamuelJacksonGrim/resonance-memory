@@ -8,7 +8,7 @@
   "type": "commonjs",
   "main": "entry.js",
   "bin": { "resonance-memory": "entry.js" },
-  "engines": { "node": ">=18" },
+  "engines": { "node": ">=22.5" },
   "scripts": {
     "test": "node test.js",
     "build": "node build-exe.js",

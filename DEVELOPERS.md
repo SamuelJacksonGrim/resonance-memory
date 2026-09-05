@@ -11,7 +11,7 @@ an opaque `id`.
 |---|---|
 | `server.js` | The MCP server. Four verbs: `save_memory`, `recall_memory`, `edit_memory`, `delete_memory`. |
 | `record.js` | The shared record schema (incl. temporal fields and `embedding_version`), durable atomic writes, and the access sidecar. |
-| `store.js` | `JsonlStore` — the storage backend behind the Store seam. Separate module so it's testable without the stdio loop. |
+| `store.js` | Store seam (`JsonlStore` default; `openStore()` selects `SqliteStore` in `store-sqlite.js`). |
 | `test.js` | Dependency-free test suite: `npm test`. |
 | `package.json` | No dependencies — scripts only (`test`, `build`, `panel`, `mcp`, `seed`, `inspect`, `dedup-existing`). Sole source of the version string; `server.js` reads it so `serverInfo` can't drift. |
 | `field.js` | Associative layer (Phase 2a): kNN semantic graph over stored vectors; neighborhood expansion. |
@@ -80,8 +80,10 @@ in the `resonance-memory-stack` repo. The load-bearing ones:
 - **Embed once at save; server owns all metadata; a `Store` abstraction sits behind the verbs**
   so the backend (JSONL now, SQLite later — see `docs/proposed/0005`) can be swapped without
   changing the MCP API. The seam lives in `store.js`.
-- **All store writes go through `writeFileDurable()`, and nothing on a read path writes to the
-  store.** Both were violated once; see `BUG-001`/`BUG-002`.
+- **Durable writes; no *unbounded* write on a read path (I5).** JSONL mutations go through
+  `writeFileDurable()`; recall writes the AccessLog sidecar, never the JSONL file.
+  SQLite uses WAL + `synchronous=FULL`; recall is a bounded in-table `UPDATE` of the
+  returned ids. Both were violated once as a full-file rewrite; see `BUG-001`/`BUG-002`.
 
 ## Where the work is planned
 

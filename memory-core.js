@@ -73,7 +73,7 @@ const {
 } = require("./warm.js");
 const {
   normalize, isCurrent, isHistoricalQuery, detectSupersession, supersedePatches,
-  detectNearDuplicate, pickMergeSurvivor, prepareWrite, guardSecrets,
+  detectNearDuplicate, pickMergeSurvivor, prepareWrite, guardSecrets, isVector,
 } = require("./record.js");
 const { acceptExtract, EXTRACT_TIMEOUT_MS } = require("./extract.js");
 const { makeEdge, setSemantic, semanticValid, hebbianDecayType, reactivateEdge } = require("./edges.js");
@@ -197,7 +197,11 @@ function cosine(a, b) {
 }
 
 function hasVector(r) {
-  return r && Array.isArray(r.embedding) && r.embedding.length > 0;
+  // isVector, not Array.isArray: SqliteStore attaches Float32Array after
+  // normalize() (typed arrays fail Array.isArray). Cosine only needs length
+  // + numeric index. This is seam-honesty, not a verb change — without it
+  // RM-02.b and save-time bind silently skip every SQLite neighbor.
+  return r && isVector(r.embedding);
 }
 
 /*
@@ -464,14 +468,14 @@ function bindSaveTimeNeighbors(rec, mems, edgeStore, opts = {}) {
     return { bound: 0, wrote: false };
   }
   const vec = rec && rec.embedding;
-  if (!Array.isArray(vec) || vec.length === 0) return { bound: 0, wrote: false };
+  if (!isVector(vec)) return { bound: 0, wrote: false };
 
   const k = opts.k != null ? opts.k : SAVE_TIME_K;
   const minCos = opts.minCos != null ? opts.minCos : SAVE_TIME_MIN_COS;
   const scores = [];
   for (const m of mems || []) {
     if (String(m.id) === String(rec.id)) continue;
-    if (!Array.isArray(m.embedding) || m.embedding.length === 0) continue;
+    if (!isVector(m.embedding)) continue;
     const cos = cosine(vec, m.embedding);
     if (cos >= minCos) scores.push({ m, cos });
   }
@@ -616,7 +620,7 @@ function createCore({
   // (eval / tests) applies normally.
   function tryBindSaveTime(rec, mems, requestId) {
     try {
-      if (!Array.isArray(rec && rec.embedding) || rec.embedding.length === 0) return;
+      if (!isVector(rec && rec.embedding)) return;
       const L = hebbianStore();
       if (!L) return;
       if (typeof L.acceptRequest === "function" && !L.acceptRequest(requestId)) return;

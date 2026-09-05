@@ -20,9 +20,13 @@
  * store.js - the storage backend, behind the Store seam.
  *
  * Lives in its own module so it can be constructed and tested without starting
- * the MCP stdio loop, and so a second backend (SQLite; see docs/proposed/0005)
- * can be added alongside it without touching server.js. The MCP verbs never see
- * anything in here.
+ * the MCP stdio loop, and so a second backend (SQLite; see docs/proposed/0005
+ * and 0010) can sit alongside JsonlStore without touching memory-core.js. The
+ * MCP verbs never see anything in here.
+ *
+ * RM-07 slice 1: SqliteStore is SELECTABLE (RESONANCE_STORE=sqlite or live-config
+ * `store: "sqlite"`). Default stays JsonlStore until conformance + golden parity
+ * land the default switch. openStore() is the one construction path.
  */
 
 const fs = require("fs");
@@ -136,4 +140,37 @@ class JsonlStore {
   }
 }
 
-module.exports = { JsonlStore };
+/*
+ * Backend selectability (RM-07 slice 1). Default is jsonl — the default
+ * switch is a later slice, after conformance + RM-00 golden parity.
+ * Live-config `store` wins over env RESONANCE_STORE, same pattern as the
+ * field toggle. A backend change needs a process restart (you cannot
+ * hot-swap engines under an open file).
+ */
+function resolveStoreBackend(config) {
+  if (config && (config.store === "sqlite" || config.store === "jsonl")) return config.store;
+  const raw = String(process.env.RESONANCE_STORE || "jsonl").toLowerCase();
+  return raw === "sqlite" ? "sqlite" : "jsonl";
+}
+
+function sqlitePathFor(file) {
+  const s = String(file || "");
+  if (/\.db$/i.test(s)) return s;
+  if (/\.jsonl$/i.test(s)) return s.replace(/\.jsonl$/i, ".db");
+  return s + ".db";
+}
+
+function openStore(file, opts) {
+  const backend = (opts && opts.backend) || resolveStoreBackend(opts && opts.config);
+  if (backend === "sqlite") {
+    const { SqliteStore } = require("./store-sqlite.js");
+    return new SqliteStore(sqlitePathFor(file));
+  }
+  return new JsonlStore(file);
+}
+
+module.exports = { JsonlStore, openStore, resolveStoreBackend, sqlitePathFor };
+Object.defineProperty(module.exports, "SqliteStore", {
+  enumerable: true,
+  get() { return require("./store-sqlite.js").SqliteStore; },
+});

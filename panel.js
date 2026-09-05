@@ -37,7 +37,8 @@ const install = require("./install.js");
 const field = require("./field.js");
 const engine = require("./engine.js");
 const { EdgeStore } = require("./edges.js");
-const { normalize, isCurrent } = require("./record.js");
+const { normalize, isCurrent, isVector } = require("./record.js");
+const { resolveStoreBackend, sqlitePathFor } = require("./store.js");
 const extract = require("./extract.js");
 
 function baseDir() {
@@ -73,6 +74,20 @@ function parseJsonl(text) {
     .filter((r) => r && !r.deleted);
 }
 function loadRecords(file) {
+  // Selectable backend (RM-07 slice 1): default JSONL. When the user has
+  // flipped RESONANCE_STORE / config.store to sqlite, the panel must read
+  // the .db — parsing the sibling JSONL would show a stale (or empty) graph.
+  const backend = resolveStoreBackend(readConfig());
+  if (backend === "sqlite") {
+    const { SqliteStore } = require("./store.js");
+    const dbPath = sqlitePathFor(file);
+    let s;
+    try {
+      s = new SqliteStore(dbPath);
+      return s.active();
+    } catch { return []; }
+    finally { try { if (s) s.close(); } catch { /* */ } }
+  }
   try { return parseJsonl(fs.readFileSync(file, "utf8")); } catch { return []; }
 }
 // Demo: prefer a loose demo-seed.jsonl (dev) but fall back to the embedded copy so a
@@ -88,7 +103,7 @@ function memCount() { return loadRecords(STORE_PATH).filter(isCurrent).length; }
 // Build the association graph for the view: nodes = memories, edges = kNN semantic links,
 // annotated with any learned Hebbian weight so the UI can highlight what use has reinforced.
 function graphData(demo) {
-  const recs = (demo ? loadDemo() : loadRecords(STORE_PATH)).filter((r) => Array.isArray(r.embedding));
+  const recs = (demo ? loadDemo() : loadRecords(STORE_PATH)).filter((r) => isVector(r.embedding));
   const byId = new Map(recs.map((r) => [String(r.id), r]));
   let edges = null;
   if (!demo && fieldOn()) { try { edges = new EdgeStore(STORE_PATH + ".edges.json"); } catch { } }

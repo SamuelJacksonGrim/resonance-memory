@@ -37,14 +37,15 @@
  *   - A Store abstraction sits behind the verbs so the backend (JSONL now, Lantern
  *     later) can be swapped without changing the MCP API.
  *
- * Pure Node stdlib + built-in fetch (Node 18+). Speaks MCP over stdio as
+ * Pure Node stdlib + built-in fetch (Node ≥22.5 for SqliteStore / node:sqlite;
+ * JsonlStore itself does not need it). Speaks MCP over stdio as
  * line-delimited JSON-RPC 2.0.
  */
 
 const fs = require("fs");
 const path = require("path");
 const { EdgeStore, hebbianDecayType } = require("./edges.js");
-const { JsonlStore } = require("./store.js");
+const { openStore, resolveStoreBackend } = require("./store.js");
 const { createCore, defaultGetEdges, readDedupThresholds } = require("./memory-core.js");
 const extract = require("./extract.js");
 const { WarmField } = require("./warm.js");
@@ -199,7 +200,10 @@ async function embed(texts) {
   return body.data.map((d) => d.embedding);
 }
 
-const store = new JsonlStore(STORE_PATH);
+let _bootConfig = {};
+try { _bootConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8")); } catch { /* no config yet */ }
+const STORE_BACKEND = resolveStoreBackend(_bootConfig);
+const store = openStore(STORE_PATH, { backend: STORE_BACKEND });
 
 // The four verbs live in the shared engine (memory-core.js); server.js only wires
 // the environment into it - network embed, the live field toggle, the lazy EdgeStore.
@@ -346,4 +350,5 @@ process.stdin.on("data", (chunk) => {
   }
 });
 
-process.stderr.write("resonance-memory MCP server (v2) running on stdio (store: " + STORE_PATH + ")\n");
+process.stderr.write("resonance-memory MCP server (v2) running on stdio (store: " +
+  (store.file || STORE_PATH) + ", backend: " + STORE_BACKEND + ")\n");
