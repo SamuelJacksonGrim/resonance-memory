@@ -252,7 +252,13 @@ travel with `RM-07` when it does land, but the *scan* did not force the date.
 
 Conjunction is the whole predicate. Reinforced+weak stays (Hebbian is enough). Unreinforced+strong stays (the failure-signature case). Only unreinforced+weak is marked `pruned_at`. Empty/null semantic counts as weak.
 
-### 0.5 — Phase 0 tests *(see Test plan below)*
+### 0.5 — Phase 0 tests ✅ *(see Test plan below)*
+- [x] `test.js` is the Phase 0 contract. Section headers are keyed to the
+      sub-phase / invariant they defend (`Phase 0.0` … `Phase 0.5`). Every
+      transition-table row asserts the state change AND the `Writes?` column
+      (I5). Every pre-declared failure signature has a test that fails if
+      that bug is reintroduced. Interrupted/failed persistence atomic
+      recovery is covered. No behaviour change; golden unmoved.
 ### 0.6 — Threat-model sketch *(design only; `RM-16` implementation stays gated to Phase 2)*
 - [ ] On paper: what can cause an edge to exist? raise Hebbian weight? make a memory a
       constraint-rescue bridge? survive indefinitely? Record that **semantic is recomputable,
@@ -340,14 +346,20 @@ batched through the `AccessLog` pattern. Telemetry does not get to violate an in
       *(request-ID half is 0.3: same id once, two ids both apply, no-id always applies,
       LRU eviction, one sidecar write holds id+weight. Soft-prune persistence is 0.4:
       `pruned_at` survives reload; `incident()` skips it; `vacuum()` is the hard drop.)*
-- [ ] Interrupted/failed persistence, atomic recovery.
+- [x] Interrupted/failed persistence, atomic recovery.
+      *(0.5: leftover `.tmp` is ignored — the target is still the complete previous
+      document; a leftover tmp with no target is not ingested (fail-open empty);
+      `writeFileDurable` on failure unlinks its temp and does not clobber the live
+      file; `EdgeStore.save` failure does not throw or empty the in-memory table.)*
 - [x] **Field fails open (I3):** corrupt sidecar → recall still returns cosine.
 - [x] Negatives: recall writes nothing to the edge store **on the decay account**; edit
       writes nothing to the edge store.
-      *(edit: tested, no edge write. recall-the-verb still co-issues `reinforceRecall` +
-      sidecar save — that write is the SIDECAR, not the JSONL store (I5), and is the
-      retained co-recall path. `tick()` is gone. Decay does not move `last_updated` or
-      stored weight.)*
+      *(edit: tested, no edge write unless reactivation (0.4) actually revives a pruned
+      row. recall-the-verb still co-issues `reinforceRecall` + sidecar save — that write
+      is the SIDECAR, not the JSONL store (I5), and is the retained co-recall path.
+      Field-off recall writes nothing at all (0.5). `tick()` is gone. Decay does not
+      move `last_updated` or stored weight. Save-where-exists with fresh `src_versions`
+      does not rewrite the sidecar.)*
 
 ---
 

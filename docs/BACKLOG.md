@@ -170,9 +170,10 @@ Design: [`proposed/0002`](proposed/0002-temporal-supersession.md).
       `vacuum()` (`I8` now held for edges). **Reactivation is server-side only**
       (I1): revive in place, `created_at` preserved, `prune_count`/`first_pruned_at`/
       `last_reactivated_at` kept bounded; no `reactivate_edge()` tool.
-- [ ] **0.5** Phase 0 tests — every transition-table row incl. the negatives (recall/edit write
+- [x] **0.5** Phase 0 tests — every transition-table row incl. the negatives (recall/edit write
       nothing to the edge store), *reading ≠ decay-clock advance*, *signals stay separate*,
-      *stale-semantic self-heals by version compare*, *fails-open*.
+      *stale-semantic self-heals by version compare*, *fails-open*. `test.js` is the
+      Phase 0 contract (section headers keyed to sub-phase / invariant).
 - [ ] **0.6** Threat-model sketch (design only; `RM-16` implementation stays gated to Phase 2).
 
 **Acceptance:** the `RM-00` golden set does **not** regress at any sub-phase boundary

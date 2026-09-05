@@ -23,6 +23,12 @@
  * model (RM-04), and the Phase 0 unified edge store (edges.js, standalone).
  * Deliberately no framework: this project ships as a single Node binary with
  * zero dependencies, and the tests keep that property.
+ *
+ * Phase 0 contract (0.5): section headers are keyed to the sub-phase /
+ * invariant they defend. Every edge state-transition row asserts the
+ * state change AND the Writes? column (I5). Every pre-declared failure
+ * signature has a test that fails if that bug is reintroduced. Timing
+ * tests use a fake/injectable clock — never real Date.now().
  */
 
 const fs = require("fs");
@@ -227,6 +233,43 @@ test("a large write is never observed truncated", () => {
   const lines = fs.readFileSync(f, "utf8").split("\n").filter(Boolean);
   assert.strictEqual(lines.length, 5000);
   assert.doesNotThrow(() => lines.forEach((l) => JSON.parse(l)), "every line parses");
+});
+
+test("interrupted write: leftover .tmp is ignored; the target is still the complete previous document", () => {
+  // Crash window: temp written, rename not yet. Readers must see all-old,
+  // never the partial tmp (BUG-001 class). The tmp name is pid+Date.now();
+  // a leftover from a dead attempt uses a different suffix.
+  const f = tmp("d-interrupt.txt");
+  writeFileDurable(f, "complete-old");
+  const leftover = path.join(path.dirname(f), "." + path.basename(f) + ".999.1.tmp");
+  fs.writeFileSync(leftover, "PARTIAL-NEW");
+  assert.strictEqual(fs.readFileSync(f, "utf8"), "complete-old", "target unmoved by a sibling tmp");
+  writeFileDurable(f, "complete-new");
+  assert.strictEqual(fs.readFileSync(f, "utf8"), "complete-new", "subsequent durable write recovers");
+  assert.strictEqual(fs.readFileSync(leftover, "utf8"), "PARTIAL-NEW",
+    "a leftover tmp is not consumed as the store (new writes use a fresh tmp name)");
+  fs.unlinkSync(leftover);  // crash leftover is not auto-reaped; don't poison later stray-tmp checks
+});
+
+test("failed writeFileDurable does not clobber the target and cleans its temp", () => {
+  const blocker = tmp("d-fail-blocker");
+  writeFileDurable(blocker, "original");
+  // Parent is a file, not a directory: mkdir/open of a nested path throws.
+  const nested = path.join(blocker, "child.txt");
+  assert.throws(() => writeFileDurable(nested, "must-not-land"));
+  assert.strictEqual(fs.readFileSync(blocker, "utf8"), "original", "failed write must not touch the live file");
+  const strays = fs.readdirSync(tmpRoot).filter((n) => n.includes(".tmp"));
+  assert.deepStrictEqual(strays, [], "failed write must unlink its temp: " + strays.join(", "));
+});
+
+test("writeFileDurable onto a directory throws, leaves the directory, cleans the temp", () => {
+  const d = tmp("d-fail-dir");
+  fs.mkdirSync(d);
+  assert.throws(() => writeFileDurable(d, "payload"));
+  assert.ok(fs.statSync(d).isDirectory(), "rename-onto-dir must not replace the directory");
+  const strays = fs.readdirSync(path.dirname(d)).filter((n) =>
+    n.startsWith("." + path.basename(d)) && n.endsWith(".tmp"));
+  assert.deepStrictEqual(strays, [], "temp cleaned after rename failure");
 });
 
 test("appendLineDurable appends without rewriting", () => {
@@ -529,11 +572,14 @@ test("reachableConstraints: the gate governs whether a bridge counts", () => {
   assert.deepStrictEqual(ids(reachableConstraints([C, D], ["D"], { gate: 0.35, exclude: [] })), ["C"]);
 });
 
-// ------------------------------------------------- unified edge store (Phase 0 / RM-21)
-// Slice C wired EdgeStore into recall. Module-level cases still fail without
-// edges.js; the live-path cases (I3/I5/I9, migration-numbers, constraint-rescue)
-// fail without the memory-core wiring.
-section("unified edge store (Phase 0)");
+// ------------------------------------------------- Phase 0 contract (RM-21)
+// Section headers keyed to sub-phase / invariant. Slice C wired EdgeStore
+// into recall: module-level cases still fail without edges.js; live-path
+// cases (I3/I5/I9, migration-numbers, constraint-rescue) fail without the
+// memory-core wiring. 0.5 fills remaining transition-table Writes? cells
+// and the atomic-recovery tests; it does not re-add coverage that 0.0–0.4
+// already hold.
+section("Phase 0.0 unified edge record + migration");
 
 const {
   edgeKey, makeEdge, normalizeEdge, semanticValid, setSemantic, setHebbian,
@@ -1199,6 +1245,8 @@ test("decay-to-zero (computed) leaves the edge alive with semantic intact", () =
 });
 
 // --- Phase 0.4: soft prune + reactivation ----------------------------------
+section("Phase 0.4 soft prune + reactivation (I8)");
+
 test("SEMANTIC_PRUNE_GATE matches SAVE_TIME_MIN_COS (below it, bind wouldn't create the edge)", () => {
   const { SAVE_TIME_MIN_COS: minCos } = require("./memory-core.js");
   assert.strictEqual(SEMANTIC_PRUNE_GATE, 0.25);
@@ -1408,6 +1456,104 @@ test("shouldPrune helpers: the two-signal conjunction is the whole predicate", (
   reactivateEdge(weak, T0);
   assert.strictEqual(weak.pruned_at, null);
   assert.strictEqual(weak.prune_count, 1);
+});
+
+// --- Phase 0.5: remaining transition-table Writes? cells + atomic recovery --
+// Gaps the earlier slices left: interrupted sidecar recovery, the hard-compaction
+// write, pruneSweep's positive write, and the full soft-prune column set.
+// Failure signatures that already have a guarding test are not re-added.
+section("Phase 0.5 contract (transition-table Writes? + atomic recovery)");
+
+test("transition: leftover .tmp sibling is not the store (interrupted persist, EdgeStore)", () => {
+  const file = tmp("p05-tmp-sibling.edges.json");
+  const E = new EdgeStore(file, { now: () => T0 });
+  E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 0.7 }));
+  E.save();
+  const leftover = path.join(path.dirname(file), "." + path.basename(file) + ".999.1.tmp");
+  fs.writeFileSync(leftover, "{ this is a partial write");
+  const reloaded = new EdgeStore(file, { now: () => T0 });
+  assert.strictEqual(reloaded.size, 1, "load reads the target, not the leftover tmp");
+  assert.strictEqual(reloaded.get(1, 2).hebbian.weight, 0.7);
+});
+
+test("transition: a leftover .tmp with no target is NOT ingested (fail-open empty)", () => {
+  // Recovery is "all-old or all-new", never "promote the temp". A crash
+  // before the first rename leaves no target; I3 fail-open is empty, not
+  // a guess at a partial file. Learned weight in that tmp is gone — the
+  // same cost as a corrupt sidecar.
+  const file = tmp("p05-tmp-only.edges.json");
+  const leftover = path.join(path.dirname(file), "." + path.basename(file) + ".999.1.tmp");
+  const ghost = makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 0.99 });
+  fs.writeFileSync(leftover, JSON.stringify({
+    kind: SIDECAR_KIND, version: SIDECAR_VERSION, recalls: 0,
+    edges: { [edgeKey(1, 2)]: ghost },
+  }));
+  const E = new EdgeStore(file, { now: () => T0 });
+  assert.strictEqual(E.size, 0, "tmp is not the store; a missing target fail-opens empty");
+  assert.strictEqual(E.get(1, 2), undefined);
+});
+
+test("transition: EdgeStore.save failure does not throw and does not empty the in-memory table (I3)", () => {
+  // save() swallows write errors so a full disk cannot break recall.
+  // In-memory learned weight is kept; the next successful save persists it.
+  const dir = tmp("p05-save-fail-dir");
+  fs.mkdirSync(dir);
+  const E = new EdgeStore(dir, { now: () => T0 });   // path is a directory → rename fails
+  E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 0.4 }));
+  assert.doesNotThrow(() => E.save(), "I3: sidecar write must never throw into recall");
+  assert.strictEqual(E.size, 1, "failed persist must not wipe the in-memory table");
+  assert.strictEqual(E.get(1, 2).hebbian.weight, 0.4);
+});
+
+test("transition: soft prune writes the sidecar; semantic + hebbian + created_at + last_updated unmoved", () => {
+  const file = tmp("p05-soft-cols.edges.json");
+  const E = new EdgeStore(file, { now: () => T0 });
+  const e0 = putCombo(E, 1, 2, 0, 0.10);
+  const created = e0.created_at;
+  const hebSnap = JSON.parse(JSON.stringify(e0.hebbian));
+  const semSnap = JSON.parse(JSON.stringify(e0.semantic));
+  E.save();
+  const before = fs.readFileSync(file, "utf8");
+  assert.strictEqual(E.pruneSweep(), 1);
+  const after = E.get(1, 2);
+  assert.notStrictEqual(fs.readFileSync(file, "utf8"), before, "Writes? yes");
+  assert.deepStrictEqual(after.semantic, semSnap, "semantic unchanged");
+  assert.deepStrictEqual(after.hebbian, hebSnap, "stored Hebbian unchanged (keeps the decayed value)");
+  assert.strictEqual(after.created_at, created);
+  assert.strictEqual(after.pruned_at, T0);
+  assert.strictEqual(after.prune_count, 1);
+  const disk = JSON.parse(fs.readFileSync(file, "utf8"));
+  assert.strictEqual(disk.edges["1:2"].pruned_at, T0);
+});
+
+test("transition: hard compaction writes the sidecar and drops both signals", () => {
+  const file = tmp("p05-vac-write.edges.json");
+  const E = new EdgeStore(file, { now: () => T0 });
+  putCombo(E, 1, 2, 0, 0.10);
+  putCombo(E, 3, 4, 0.8, 0.70);
+  E.pruneSweep();
+  const before = fs.readFileSync(file, "utf8");
+  assert.ok(JSON.parse(before).edges["1:2"], "soft-pruned row still on disk");
+  assert.strictEqual(E.vacuum(), 1);
+  const after = fs.readFileSync(file, "utf8");
+  assert.notStrictEqual(after, before, "Writes? yes");
+  const j = JSON.parse(after);
+  assert.strictEqual(j.edges["1:2"], undefined, "pruned row dropped (both signals gone)");
+  assert.ok(j.edges["3:4"], "active row kept");
+  assert.strictEqual(j.edges["3:4"].hebbian.weight, 0.8);
+  assert.strictEqual(j.edges["3:4"].semantic.value, 0.70);
+});
+
+test("transition: vacuum of nothing does not rewrite the sidecar", () => {
+  const file = tmp("p05-vac-nowrite.edges.json");
+  const E = new EdgeStore(file, { now: () => T0 });
+  putCombo(E, 1, 2, 1.0, 0.70);
+  E.save();
+  const before = fs.readFileSync(file, "utf8");
+  const mtime = fs.statSync(file).mtimeMs;
+  assert.strictEqual(E.vacuum(), 1, "remaining count, nothing dropped");
+  assert.strictEqual(fs.readFileSync(file, "utf8"), before);
+  assert.strictEqual(fs.statSync(file).mtimeMs, mtime);
 });
 
 // ------------------------------------------------- ROC/TBR field signals (RM-00)
@@ -2724,6 +2870,174 @@ async function asyncTests() {
     void n;
     const out = await core.recall(DESSERT_Q, 1);
     assert.ok(/diabetic/.test(out), "constraint rescue still fires after the sweep");
+  });
+
+  // ------------------------------------------------ Phase 0.5 live-path contract
+  // Remaining transition-table rows (save-creates columns, save-where-exists
+  // Writes?, field-off recall Writes? no) and the crash-before-edge-write
+  // stale-semantic case. Fake clock via EdgeStore.now = T0 throughout.
+  section("Phase 0.5 live-path contract (transition table + failure signatures)");
+
+  await atest("transition: save creates edge — all columns + sidecar write", async () => {
+    const vecs = { a: [1, 0, 0], b: vecAtCos(0.80) };
+    const embed = async (texts) => texts.map((t) => vecs[t] || [0, 0, 1]);
+    const { store, core, edges, edgesPath } = saveTimeCore("p05-save-creates.jsonl", embed);
+    await core.save("a");
+    assert.strictEqual(fs.existsSync(edgesPath), false, "first save has no neighbor → no sidecar yet");
+    await core.save("b");
+    assert.ok(fs.existsSync(edgesPath), "Writes? yes — sidecar appears when an edge is created");
+    const idA = store.current().find((m) => m.text === "a").id;
+    const idB = store.current().find((m) => m.text === "b").id;
+    const e = edges().get(idA, idB);
+    assert.ok(e, "save-time edge exists");
+    assert.strictEqual(e.hebbian.weight, 0, "no seeded baseline");
+    assert.strictEqual(e.hebbian.last_updated, e.created_at, "last_updated = created_at");
+    assert.ok(e.created_at, "created_at set");
+    assert.strictEqual(e.pruned_at, null);
+    assert.strictEqual(e.provenance.origin, "save-time-neighbor");
+    assert.ok(typeof e.semantic.value === "number" && e.semantic.value >= SAVE_TIME_MIN_COS);
+    const recA = store.get(e.a);
+    const recB = store.get(e.b);
+    assert.deepStrictEqual(e.semantic.src_versions, {
+      a: recA.embedding_version,
+      b: recB.embedding_version,
+    });
+    const j = JSON.parse(fs.readFileSync(edgesPath, "utf8"));
+    assert.strictEqual(j.kind, SIDECAR_KIND);
+    assert.ok(j.edges[edgeKey(idA, idB)]);
+  });
+
+  await atest("transition: save where edge exists, versions fresh — no sidecar write, columns unmoved", async () => {
+    const vecs = { a: [1, 0, 0], b: vecAtCos(0.80) };
+    const embed = async (texts) => texts.map((t) => vecs[t] || [0, 0, 1]);
+    const { store, core, edges, edgesPath } = saveTimeCore("p05-exists-fresh.jsonl", embed);
+    await core.save("a");
+    await core.save("b");
+    const idA = store.current().find((m) => m.text === "a").id;
+    const idB = store.current().find((m) => m.text === "b").id;
+    const recA = store.get(idA);
+    const recB = store.get(idB);
+    const snap = JSON.parse(JSON.stringify(edges().get(idA, idB)));
+    const before = fs.readFileSync(edgesPath, "utf8");
+    const mtime = fs.statSync(edgesPath).mtimeMs;
+    const result = bindSaveTimeNeighbors(recB, [recA], edges());
+    assert.strictEqual(result.wrote, false, "fresh src_versions → no recompute");
+    assert.strictEqual(fs.readFileSync(edgesPath, "utf8"), before, "Writes? only if semantic recomputed");
+    assert.strictEqual(fs.statSync(edgesPath).mtimeMs, mtime);
+    assert.deepStrictEqual(edges().get(idA, idB), snap,
+      "semantic, hebbian, created_at, pruned_at all unmoved");
+  });
+
+  await atest("transition: save where edge exists, versions stale — recompute semantic, hebbian unmoved, write yes", async () => {
+    const vecs = { a: [1, 0, 0], b: vecAtCos(0.80) };
+    const embed = async (texts) => texts.map((t) => vecs[t] || [0, 0, 1]);
+    const { store, core, edges, edgesPath } = saveTimeCore("p05-exists-stale.jsonl", embed);
+    await core.save("a");
+    await core.save("b");
+    const idA = store.current().find((m) => m.text === "a").id;
+    const idB = store.current().find((m) => m.text === "b").id;
+    const recA = store.get(idA);
+    const recB = store.get(idB);
+    const edge = edges().get(idA, idB);
+    const hebSnap = JSON.parse(JSON.stringify(edge.hebbian));
+    const created = edge.created_at;
+    const pruned = edge.pruned_at;
+    const originSnap = JSON.parse(JSON.stringify(edge.provenance));
+    // Simulate an edit() version bump with no edge write (transition table).
+    recA.embedding_version = recA.embedding_version + 1;
+    const before = fs.readFileSync(edgesPath, "utf8");
+    const result = bindSaveTimeNeighbors(recB, [recA], edges());
+    assert.strictEqual(result.wrote, true, "stale cache must be refreshed");
+    assert.notStrictEqual(fs.readFileSync(edgesPath, "utf8"), before, "Writes? yes");
+    const after = edges().get(idA, idB);
+    assert.deepStrictEqual(after.hebbian, hebSnap, "hebbian.weight + last_updated unchanged");
+    assert.strictEqual(after.created_at, created);
+    assert.strictEqual(after.pruned_at, pruned);
+    assert.deepStrictEqual(after.provenance, originSnap, "origin is how it came to exist");
+    // store.get re-parses from disk; the bump lives on the in-memory recs we
+    // passed into bind. Tag must follow canonical edge.a/edge.b, not save-arg order.
+    const byId = { [String(idA)]: recA, [String(idB)]: recB };
+    assert.strictEqual(
+      semanticValid(after, byId[after.a].embedding_version, byId[after.b].embedding_version),
+      true,
+      "src_versions now match the recs bind saw"
+    );
+    assert.ok(typeof after.semantic.value === "number");
+  });
+
+  await atest("transition: field-off recall writes nothing to the edge store", async () => {
+    // The transition-table `recall` row is Writes? no. Field-on recall still
+    // co-issues reinforceRecall (sidecar write, not JSONL — I5); that is the
+    // retained co-recall path, covered elsewhere. Field-off is the pure read.
+    const vecs = { a: [1, 0, 0], b: vecAtCos(0.80), q: [1, 0, 0] };
+    const embed = async (texts) => texts.map((t) => vecs[t] || vecs.q);
+    const { core, edgesPath } = saveTimeCore("p05-recall-off.jsonl", embed, { fieldOn: false });
+    await core.save("a");
+    await core.save("b");
+    assert.ok(fs.existsSync(edgesPath), "save-time bind already wrote the sidecar");
+    const before = fs.readFileSync(edgesPath, "utf8");
+    const mtime = fs.statSync(edgesPath).mtimeMs;
+    await core.recall("q", 1);
+    assert.strictEqual(fs.readFileSync(edgesPath, "utf8"), before, "field-off recall Writes? no");
+    assert.strictEqual(fs.statSync(edgesPath).mtimeMs, mtime);
+  });
+
+  await atest("failure: crash-before-edge-write — persist bumped version, reload sidecar, still stale", async () => {
+    // Event-based invalidation's failure window: memory persists, invalidation
+    // never runs (crash, or by design: edit writes no edge). Stale must be
+    // structurally self-evident on a FRESH EdgeStore loaded from disk.
+    let vec = [1, 0, 0];
+    const embed = async (texts) => texts.map(() => vec.slice());
+    const { store, core, edgesPath } = saveTimeCore("p05-crash-stale.jsonl", embed);
+    await core.save("first");
+    await core.save("second");
+    const ids = store.current().map((m) => m.id);
+    const sidecarBefore = fs.readFileSync(edgesPath, "utf8");
+    const srcBefore = JSON.parse(sidecarBefore).edges[edgeKey(ids[0], ids[1])].semantic.src_versions;
+    vec = [0, 1, 0];
+    await core.edit(ids[0], "first-edited");
+    assert.strictEqual(store.get(ids[0]).embedding_version, 2);
+    assert.strictEqual(fs.readFileSync(edgesPath, "utf8"), sidecarBefore,
+      "edit did not touch the sidecar (crash-before-edges is the design)");
+    // New process: load the sidecar from disk, no in-memory invalidate().
+    const reloaded = new EdgeStore(edgesPath, { now: () => T0 });
+    const edge = reloaded.get(ids[0], ids[1]);
+    assert.deepStrictEqual(edge.semantic.src_versions, srcBefore, "no invalidation event rewrote it");
+    const recA = store.get(edge.a);
+    const recB = store.get(edge.b);
+    assert.strictEqual(semanticValid(edge, recA.embedding_version, recB.embedding_version), false,
+      "stale is a version comparison against the persisted memory, not a flag");
+  });
+
+  await atest("transition: reactivate does not rewrite semantic — self-heal is version mismatch", async () => {
+    const { core, store, edges, edgesPath } = liveField("p05-re-stale.jsonl", true);
+    await core.save(DIABETIC);
+    await core.save(LEMON);
+    await core.save(MEETING);
+    const E = edges();
+    const meetingId = store.current().find((m) => m.text === MEETING).id;
+    const diabeticId = store.current().find((m) => m.text === DIABETIC).id;
+    const planted = E.put(makeEdge(meetingId, diabeticId, {
+      origin: "co-activation", now: T0, hebbianWeight: 0.4,
+      semantic: { value: 0.10, src_versions: { a: 1, b: 1 } },
+    }));
+    markPruned(planted, T0);
+    E.save();
+    const semSnap = JSON.parse(JSON.stringify(E.get(meetingId, diabeticId).semantic));
+    const hebSnap = JSON.parse(JSON.stringify(E.get(meetingId, diabeticId).hebbian));
+    const created = planted.created_at;
+    await core.edit(meetingId, MEETING);   // re-embed → version 2; reactivation writes
+    const after = E.get(meetingId, diabeticId);
+    assert.strictEqual(after.pruned_at, null, "revived");
+    assert.strictEqual(after.last_reactivated_at, T0);
+    assert.strictEqual(after.created_at, created, "created_at preserved");
+    assert.deepStrictEqual(after.hebbian, hebSnap, "weight + last_updated carried, not snapped");
+    assert.deepStrictEqual(after.semantic, semSnap, "reactivate does not recompute semantic");
+    const recA = store.get(after.a);
+    const recB = store.get(after.b);
+    assert.strictEqual(semanticValid(after, recA.embedding_version, recB.embedding_version), false,
+      "self-heal is the version mismatch on next read, not an invalidation event");
+    assert.ok(fs.existsSync(edgesPath), "Writes? yes (reactivation is the one edit write)");
   });
 }
 

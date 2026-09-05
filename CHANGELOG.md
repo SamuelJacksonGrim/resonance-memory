@@ -17,6 +17,12 @@ Beta-readiness pass:
   "revisit only if hosted resale looms" trigger the backlog pre-registered, now pulled.
 
 ### Added
+- **Phase 0.5 test contract.** `test.js` is now the Phase 0 contract: every
+  edge state-transition row (state change AND the `Writes?` column), every
+  pre-declared failure signature, and interrupted/failed persistence atomic
+  recovery. Section headers keyed to sub-phase / invariant. No behaviour
+  change; golden unmoved. See
+  [`docs/phases/phase-0-edge-substrate.md`](docs/phases/phase-0-edge-substrate.md).
 - **Soft pruning + server-side reactivation (Phase 0.4 / I8).** An explicit
   `pruneSweep()` (MCP startup or on demand — never `recall`/`save`) marks an
   edge `pruned_at` only when it is **both** unreinforced (`effectiveHebbian <

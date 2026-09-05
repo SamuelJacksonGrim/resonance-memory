@@ -166,7 +166,7 @@ The one phase in flight. Full spec + metrics + tests: [`phase-0`](phases/phase-0
 | **0.2** | Lazy wall-clock decay of the learned signal (**I6 held**) | ✅ |
 | **0.3** | Materialize-on-mutation; MCP request-ID idempotency (atomic dedup) | ✅ |
 | **0.4** | Soft pruning (mirror `vacuum()`); server-side reactivation | ✅ |
-| **0.5** | Phase 0 tests — every transition row, *reading ≠ decay*, *fails-open* | ⬜ |
+| **0.5** | Phase 0 tests — every transition row, *reading ≠ decay*, *fails-open* | ✅ |
 | **0.6** | Threat-model sketch (design only; `RM-16` stays gated to Phase 2) | ⬜ |
 
 **Exit:** golden green and reliable. Do not proceed to Phase 1 until it is.
@@ -250,7 +250,7 @@ Phase 0.3   materialize-on-mutation · request-ID idempotency   ✅
   ↓
 Phase 0.4   soft pruning · server-side reactivation   ✅
   ↓
-Phase 0.5   tests — reading ≠ reinforcement · fails-open
+Phase 0.5   tests — reading ≠ reinforcement · fails-open   ✅
   ↓
 GREEN (npm test + npm run eval)
   ↓
