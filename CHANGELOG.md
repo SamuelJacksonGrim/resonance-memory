@@ -17,6 +17,14 @@ Beta-readiness pass:
   "revisit only if hosted resale looms" trigger the backlog pre-registered, now pulled.
 
 ### Added
+- **Unified edge store (`edges.js`, Phase 0.0).** One undirected edge record carrying two
+  independent signals — `semantic` (derived cache, validated by `src_versions` vs each
+  endpoint's `embedding_version`) and `hebbian` (source of truth; `last_updated` nests
+  here because that's the only thing it clocks). Typed provenance (`origin` is how the
+  edge came to exist; `migrated_from` is a separate fact). Existing `.assoc.json`
+  sidecars migrate losslessly and one-way (`kind: "resonance-edges"`; an old-format
+  reader refuses rather than dropping edges). Not wired into recall yet. See
+  [`docs/phases/phase-0-edge-substrate.md`](docs/phases/phase-0-edge-substrate.md).
 - **`embedding_version` on every memory** (Phase 0.0 schema). `record.js` `normalize()`
   backfills it to `1` for legacy rows. A successful `edit()` re-embed increments it; an
   embedder failure does not — the version moves in lockstep with the vector so a

@@ -19,9 +19,10 @@
 /*
  * test.js - dependency-free tests. Run:  node test.js
  *
- * Covers the record schema, durable writes, the access sidecar, and the temporal
- * model (RM-04). Deliberately no framework: this project ships as a single Node
- * binary with zero dependencies, and the tests keep that property.
+ * Covers the record schema, durable writes, the access sidecar, the temporal
+ * model (RM-04), and the Phase 0 unified edge store (edges.js, standalone).
+ * Deliberately no framework: this project ships as a single Node binary with
+ * zero dependencies, and the tests keep that property.
  */
 
 const fs = require("fs");
@@ -526,6 +527,272 @@ test("reachableConstraints: the gate governs whether a bridge counts", () => {
   assert.deepStrictEqual(reachableConstraints([C, D], ["D"], { gate: 0.55, exclude: [] }), []);
   // Drop the gate to 0.35 and the same link now rescues C (the stage-2 mechanic).
   assert.deepStrictEqual(ids(reachableConstraints([C, D], ["D"], { gate: 0.35, exclude: [] })), ["C"]);
+});
+
+// ------------------------------------------------- unified edge store (Phase 0 / RM-21)
+// Module is tested STANDALONE. field.js / ledger.js / recall are not wired
+// yet (Slice C). Every case here is written to fail without edges.js.
+section("unified edge store (Phase 0)");
+
+const {
+  edgeKey, makeEdge, normalizeEdge, semanticValid, setSemantic, setHebbian,
+  sidecarKind, readLegacyAssoc, migrateAssoc, IncompatibleEdgeFormatError,
+  SIDECAR_KIND, SIDECAR_VERSION, EdgeStore,
+} = require("./edges.js");
+
+const T0 = "2026-09-05T00:00:00.000Z";
+
+test("edgeKey is undirected: A↔B and B↔A are one edge", () => {
+  assert.strictEqual(edgeKey(1, 2), edgeKey(2, 1));
+  assert.strictEqual(edgeKey("b", "a"), edgeKey("a", "b"));
+  assert.strictEqual(edgeKey(1, 2), "1:2");
+});
+
+test("makeEdge sets the spec fields with sane defaults", () => {
+  const e = makeEdge(2, 1, { origin: "save-time-neighbor", now: T0 });
+  assert.strictEqual(e.a, "1", "endpoints canonicalized (sorted)");
+  assert.strictEqual(e.b, "2");
+  assert.strictEqual(e.semantic.value, null, "semantic empty until computed");
+  assert.deepStrictEqual(e.semantic.src_versions, { a: null, b: null });
+  assert.strictEqual(e.hebbian.weight, 0, "unreinforced: Hebbian is genuinely zero");
+  assert.strictEqual(e.hebbian.last_updated, T0, "last_updated nests inside hebbian");
+  assert.strictEqual(e.provenance.origin, "save-time-neighbor");
+  assert.strictEqual(e.provenance.migrated_from, null);
+  assert.strictEqual(e.created_at, T0);
+  assert.strictEqual(e.pruned_at, null, "null = active");
+  assert.strictEqual(e.prune_count, 0);
+  assert.strictEqual(e.first_pruned_at, null);
+  assert.strictEqual(e.last_reactivated_at, null);
+  assert.strictEqual("last_accessed" in e, false, "last_accessed is deliberately absent (I5 / BUG-002)");
+  assert.strictEqual("last_updated" in e, false, "no bare last_updated — it clocks hebbian only");
+});
+
+test("makeEdge requires a typed origin (no silent default)", () => {
+  assert.throws(() => makeEdge(1, 2, { now: T0 }), /origin/);
+  assert.throws(() => makeEdge(1, 2, { origin: "migrated", now: T0 }), /origin/);
+});
+
+test("the two signals are independent: raising hebbian leaves semantic untouched", () => {
+  const e = makeEdge(1, 2, {
+    origin: "save-time-neighbor", now: T0,
+    semantic: { value: 0.72, src_versions: { a: 1, b: 1 } },
+  });
+  const snap = JSON.parse(JSON.stringify(e.semantic));
+  setHebbian(e, 1.4, "2026-09-05T01:00:00.000Z");
+  assert.deepStrictEqual(e.semantic, snap, "semantic bytes unmoved");
+  assert.strictEqual(e.hebbian.weight, 1.4);
+  assert.strictEqual(e.hebbian.last_updated, "2026-09-05T01:00:00.000Z");
+  assert.strictEqual(e.created_at, T0, "created_at is provenance only");
+});
+
+test("the two signals are independent: setting semantic leaves hebbian untouched", () => {
+  const e = makeEdge(1, 2, {
+    origin: "co-activation", now: T0, hebbianWeight: 0.5,
+  });
+  const snap = JSON.parse(JSON.stringify(e.hebbian));
+  setSemantic(e, 0.81, { a: 2, b: 2 });
+  assert.deepStrictEqual(e.hebbian, snap, "hebbian bytes unmoved");
+  assert.strictEqual(e.semantic.value, 0.81);
+  assert.deepStrictEqual(e.semantic.src_versions, { a: 2, b: 2 });
+});
+
+test("src_versions.a/b follow canonical endpoints, not makeEdge argument order", () => {
+  const e = makeEdge(2, 1, {
+    origin: "save-time-neighbor", now: T0,
+    semantic: { value: 0.5, src_versions: { a: 10, b: 20 } },
+  });
+  assert.strictEqual(e.a, "1");
+  assert.strictEqual(e.b, "2");
+  assert.deepStrictEqual(e.semantic.src_versions, { a: 10, b: 20 }, "a=10 is endpoint 1's version");
+  assert.strictEqual(semanticValid(e, 10, 20), true);
+  assert.strictEqual(semanticValid(e, 20, 10), false);
+});
+
+test("semantic validity is a version comparison, not a stored flag", () => {
+  const e = makeEdge(1, 2, {
+    origin: "save-time-neighbor", now: T0,
+    semantic: { value: 0.8, src_versions: { a: 1, b: 1 } },
+  });
+  assert.strictEqual(semanticValid(e, 1, 1), true, "src_versions match both endpoints");
+  // Bump endpoint b's embedding_version. No invalidate() is called — there
+  // isn't one. Stale is structurally self-evident on the next read.
+  assert.strictEqual(semanticValid(e, 1, 2), false, "one endpoint moved; cache is stale");
+  assert.strictEqual(e.semantic.value, 0.8, "stale cache still physically present");
+  assert.deepStrictEqual(e.semantic.src_versions, { a: 1, b: 1 }, "no invalidation event rewrote the edge");
+  assert.strictEqual(semanticValid(e, 2, 1), false, "the other endpoint moving is also stale");
+});
+
+test("empty (migrated) semantic is invalid against real embedding_versions", () => {
+  const e = makeEdge(1, 2, { origin: "co-activation", now: T0, migrated_from: "assoc.json", hebbianWeight: 0.3 });
+  assert.strictEqual(semanticValid(e, 1, 1), false);
+  assert.strictEqual(e.semantic.value, null);
+});
+
+test("normalizeEdge backfills prune fields and never invents last_accessed", () => {
+  const n = normalizeEdge({ a: 3, b: 1, hebbian: { weight: 0.2, last_updated: T0 } }, T0);
+  assert.strictEqual(n.a, "1");
+  assert.strictEqual(n.pruned_at, null);
+  assert.strictEqual(n.prune_count, 0);
+  assert.strictEqual("last_accessed" in n, false);
+});
+
+// --- migration from .assoc.json --------------------------------------------
+const LEGACY_EDGES = {
+  "1:2": 0.4,
+  "1:3": 0.1,
+  "2:5": 1.2,
+  "10:2": 0.05,   // lexicographic key (same as ledger.js); must not be dropped
+  "7:8": 0,
+  "4:9": 0.33,
+  "6:11": 0.9,
+};
+const LEGACY_N = Object.keys(LEGACY_EDGES).length;
+
+function writeLegacyAssoc(file, edges) {
+  fs.writeFileSync(file, JSON.stringify({ recalls: 40, edges }));
+}
+
+test("migrateAssoc: every .assoc.json edge survives (count + spot-check)", () => {
+  const mapped = migrateAssoc({ recalls: 40, edges: LEGACY_EDGES }, T0);
+  assert.strictEqual(mapped.size, LEGACY_N, "dropped edge = silent data loss");
+  const spot = mapped.get(edgeKey(2, 5));
+  assert.ok(spot, "2:5 present");
+  assert.strictEqual(spot.hebbian.weight, 1.2, "weight lands on hebbian.weight");
+  assert.strictEqual(spot.hebbian.last_updated, T0, "last_updated stamped at migration (lower bound)");
+  assert.strictEqual(spot.created_at, T0, "created_at stamped at migration (lower bound)");
+  assert.strictEqual(spot.provenance.origin, "co-activation", "genuine origin, not a bookkeeping value");
+  assert.strictEqual(spot.provenance.migrated_from, "assoc.json");
+  assert.strictEqual(spot.semantic.value, null, "semantic empty; computed on first use");
+  assert.strictEqual(spot.pruned_at, null);
+  // zero-weight edges survive too — lossless means the key, not a floor.
+  assert.strictEqual(mapped.get(edgeKey(7, 8)).hebbian.weight, 0);
+  assert.ok(mapped.get(edgeKey(10, 2)), "lexicographic 10:2 survived");
+});
+
+test("EdgeStore loads a fixture .assoc.json in memory without writing (I5)", () => {
+  const file = tmp("legacy.assoc.json");
+  writeLegacyAssoc(file, LEGACY_EDGES);
+  const bytes = fs.readFileSync(file, "utf8");
+  const mtime = fs.statSync(file).mtimeMs;
+  const store = new EdgeStore(file, { now: () => T0 });
+  assert.strictEqual(store.size, LEGACY_N);
+  assert.strictEqual(store.migrated, true);
+  assert.strictEqual(store.get(2, 5).hebbian.weight, 1.2);
+  assert.strictEqual(fs.readFileSync(file, "utf8"), bytes, "load must not rewrite the sidecar");
+  assert.strictEqual(fs.statSync(file).mtimeMs, mtime);
+});
+
+test("EdgeStore save of a migrated sidecar is the new format, still N edges", () => {
+  const file = tmp("migrated.assoc.json");
+  writeLegacyAssoc(file, LEGACY_EDGES);
+  const store = new EdgeStore(file, { now: () => T0 });
+  store.save();
+  const j = JSON.parse(fs.readFileSync(file, "utf8"));
+  assert.strictEqual(j.kind, SIDECAR_KIND);
+  assert.strictEqual(j.version, SIDECAR_VERSION);
+  assert.strictEqual(Object.keys(j.edges).length, LEGACY_N);
+  const reloaded = new EdgeStore(file, { now: () => T0 });
+  assert.strictEqual(reloaded.migrated, false, "second load is native, not a re-migration");
+  assert.strictEqual(reloaded.size, LEGACY_N);
+  assert.strictEqual(reloaded.get(2, 5).hebbian.weight, 1.2);
+  assert.strictEqual(reloaded.get(2, 5).provenance.migrated_from, "assoc.json");
+});
+
+test("one-way: an old-format reader fails cleanly on the new sidecar", () => {
+  const file = tmp("new-format.assoc.json");
+  const store = new EdgeStore(file, { now: () => T0 });
+  store.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 0.7 }));
+  store.save();
+  const j = JSON.parse(fs.readFileSync(file, "utf8"));
+  assert.strictEqual(sidecarKind(j), SIDECAR_KIND);
+  assert.throws(
+    () => readLegacyAssoc(j),
+    (err) => err instanceof IncompatibleEdgeFormatError && /resonance-edges/.test(err.message),
+    "must throw, not return a silent subset of edges"
+  );
+  // Belt: object-valued edges without the kind still refuse (misparse = NaN weights).
+  assert.throws(
+    () => readLegacyAssoc({ recalls: 0, edges: { "1:2": j.edges["1:2"] } }),
+    IncompatibleEdgeFormatError
+  );
+});
+
+test("readLegacyAssoc still accepts a real .assoc.json", () => {
+  const parsed = readLegacyAssoc({ recalls: 7, edges: { "1:2": 0.4, "3:4": 0.1 } });
+  assert.strictEqual(parsed.recalls, 7);
+  assert.strictEqual(parsed.edges["1:2"], 0.4);
+  assert.strictEqual(sidecarKind({ recalls: 7, edges: { "1:2": 0.4 } }), "legacy-assoc");
+});
+
+test("persistence round-trip: write → reload → identical records", () => {
+  const file = tmp("roundtrip.edges.json");
+  const a = new EdgeStore(file, { now: () => T0 });
+  const e1 = makeEdge(1, 2, {
+    origin: "save-time-neighbor", now: T0,
+    semantic: { value: 0.61, src_versions: { a: 1, b: 3 } },
+  });
+  const e2 = makeEdge(4, 5, { origin: "co-activation", now: T0, hebbianWeight: 0.25, migrated_from: "assoc.json" });
+  a.put(e1);
+  a.put(e2);
+  a.save();
+  const b = new EdgeStore(file, { now: () => T0 });
+  assert.strictEqual(b.size, 2);
+  assert.deepStrictEqual(b.get(2, 1), a.get(1, 2));
+  assert.deepStrictEqual(b.get(4, 5), a.get(5, 4));
+  assert.strictEqual("last_accessed" in b.get(1, 2), false);
+  assert.strictEqual(b.get(1, 2).semantic.value, 0.61);
+  assert.strictEqual(b.get(4, 5).hebbian.weight, 0.25);
+});
+
+test("corrupt sidecar fails open: empty store, does not throw (I3)", () => {
+  const cases = [
+    ["truncated.json", "{ not json"],
+    ["empty.json", ""],
+    ["null.json", "null"],
+    ["array.json", "[1,2,3]"],
+    ["unknown.json", JSON.stringify({ foo: 1, edges: "nope" })],
+    ["kind-but-array.json", JSON.stringify({ kind: SIDECAR_KIND, version: 1, edges: [1, 2] })],
+  ];
+  for (const [name, body] of cases) {
+    const file = tmp("corrupt-" + name);
+    fs.writeFileSync(file, body);
+    let store;
+    assert.doesNotThrow(() => { store = new EdgeStore(file, { now: () => T0 }); }, "corrupt " + name + " must not throw");
+    assert.strictEqual(store.size, 0, name + " fails open to empty, not a throw");
+  }
+  // Missing file is the same posture as Ledger: start empty.
+  const missing = new EdgeStore(tmp("no-such-sidecar.json"), { now: () => T0 });
+  assert.strictEqual(missing.size, 0);
+});
+
+test("old Ledger.save stripping kind does not drop records (envelope recovery)", () => {
+  // Attack: shipped Ledger.load stores object-valued edges as "weights", then
+  // save() writes {recalls, edges} with no kind. Without recovery, sidecarKind
+  // would return "unknown" and EdgeStore would fail-open empty — silent loss
+  // of irreplaceable Hebbian weight. Slice C must still stop Ledger writing
+  // this file; this is the load-side belt.
+  const file = tmp("stripped-kind.assoc.json");
+  const first = new EdgeStore(file, { now: () => T0 });
+  first.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 0.7 }));
+  first.put(makeEdge(3, 4, { origin: "save-time-neighbor", now: T0, hebbianWeight: 0.2 }));
+  first.save();
+  const native = JSON.parse(fs.readFileSync(file, "utf8"));
+  fs.writeFileSync(file, JSON.stringify({ recalls: 0, edges: native.edges }));
+  const recovered = new EdgeStore(file, { now: () => T0 });
+  assert.strictEqual(recovered.size, 2, "stripped envelope must not fail-open empty");
+  assert.strictEqual(recovered.get(1, 2).hebbian.weight, 0.7);
+  assert.strictEqual(recovered.get(3, 4).hebbian.weight, 0.2);
+  assert.throws(() => readLegacyAssoc(JSON.parse(fs.readFileSync(file, "utf8"))), IncompatibleEdgeFormatError);
+});
+
+test("incident() lists unpruned edges for an endpoint (Slice C absorption helper)", () => {
+  const store = new EdgeStore(tmp("incident.json"), { now: () => T0 });
+  store.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 0.2 }));
+  store.put(makeEdge(1, 3, { origin: "save-time-neighbor", now: T0 }));
+  store.put(makeEdge(4, 5, { origin: "co-activation", now: T0 }));
+  const inc = store.incident(1);
+  assert.strictEqual(inc.length, 2);
+  assert.deepStrictEqual(inc.map((e) => edgeKey(e.a, e.b)).sort(), ["1:2", "1:3"]);
 });
 
 // ------------------------------------------------- ROC/TBR field signals (RM-00)

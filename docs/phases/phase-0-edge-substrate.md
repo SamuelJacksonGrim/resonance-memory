@@ -107,13 +107,15 @@ re-embed — which is why `BUG-008` was fixed in PRE-0 before this schema harden
 ## Build steps (each sub-phase is independently buildable + testable)
 
 ### 0.0 — Edge store unification 🔀 *(start here)*
-- [ ] One edge table, two signals, typed provenance.
+- [x] One edge table, two signals, typed provenance. (`edges.js`, standalone; not on the recall
+      path yet — Slice C wires it.)
 - [x] `embedding_version` in `record.js normalize()` (legacy rows default `1`).
-- [ ] Migrate every `.assoc.json` edge in: weight → `hebbian.weight`; stamp `hebbian.last_updated`
+- [x] Migrate every `.assoc.json` edge in: weight → `hebbian.weight`; stamp `hebbian.last_updated`
       + `created_at` at migration time (both **lower bounds** — note it); origin `co-activation`,
       `migrated_from: "assoc.json"`; semantic empty, computed on first use.
-- [ ] **Migration is one-way:** an old build reading a new sidecar fails cleanly, never silently
-      drops edges.
+- [x] **Migration is one-way:** an old build reading a new sidecar fails cleanly, never silently
+      drops edges. Signalled by top-level `kind: "resonance-edges"`; `readLegacyAssoc()` throws
+      `IncompatibleEdgeFormatError` rather than returning a subset.
 - [ ] Preserve `field.js` constraint-rescue + mutual-kNN through the move (measured — [[RESULTS]]
       field experiment #2).
 
@@ -220,11 +222,15 @@ batched through the `AccessLog` pattern. Telemetry does not get to violate an in
 ## Test plan *(fake clock throughout; every transition-table row incl. the negatives)*
 
 - [ ] Decay at multiple elapsed times · half-life math · negative clock deltas.
-- [ ] Persistence/reload; legacy `.assoc.json` migration (weight lands, nothing dropped).
-- [ ] **Signals stay separate** (reinforce → semantic unmoved; decay to zero → edge survives).
-- [ ] **Stale semantic structurally detectable** (edit → version++ → incident edges fail
+- [x] Persistence/reload; legacy `.assoc.json` migration (weight lands, nothing dropped).
+- [x] **Signals stay separate** (reinforce → semantic unmoved; decay to zero → edge survives).
+      *(reinforce half: `setHebbian` leaves `semantic` byte-identical. Decay-to-zero survival
+      is re-tested when 0.2/0.4 land.)*
+- [x] **Stale semantic structurally detectable** (edit → version++ → incident edges fail
       `src_versions` on read, no event run; also: persist memory, crash before touching edges,
       edge still seen stale).
+      *(module-level: bump the version argument to `semanticValid`, no invalidate() exists.
+      The edit() wiring + crash-before-edge-write case is Slice C.)*
 - [x] `edit()` with a dead embedder does **not** increment `embedding_version`.
 - [ ] **Reading does not reinforce (I6):** read one edge 100× → weight + `last_updated` unchanged,
       *then* genuine reinforcement does change them.

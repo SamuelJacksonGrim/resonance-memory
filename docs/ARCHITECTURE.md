@@ -119,11 +119,13 @@ same record the panel renders and the installer's target reads.
                      ▼
               memory-core.js   ← the four verbs, ONE implementation
                      │
-        ┌────────────┼───────────────┐
-        ▼            ▼                ▼
-     store.js     field.js        ledger.js
-        │            │                │
-        └──────► record.js ◄──────────┘   (schema + durable writes + access sidecar)
+        ┌────────────┼────────────┬──────────────┐
+        ▼            ▼            ▼              ▼
+     store.js     field.js    ledger.js       edges.js
+        │            │            │         (Phase 0; not
+        │            │            │          on recall yet)
+        └────────────┴──► record.js ◄────────────┘
+                          (schema + durable writes + access sidecar)
 ```
 
 ---
@@ -141,6 +143,7 @@ same record the panel renders and the installer's target reads.
 | `store.js` | `JsonlStore` — the flat-JSONL backend behind the Store seam. Constructible and testable without the stdio loop; a SQLite backend can replace it with the same method surface. | `record` |
 | `field.js` | Associative layer (Phase 2a): a kNN semantic graph over stored vectors, neighborhood expansion, and constraint rescue. No new embedding calls, no LLM extraction. | stdlib only |
 | `ledger.js` | Hebbian sidecar (Phase 2b): learned co-activation weights, a bounded `maxBonus·tanh(w)` bonus, provenance-discounted reinforcement, decay + prune. | `record` |
+| `edges.js` | Unified persistent edge store (Phase 0 / `RM-21`): one undirected record, two independent signals (`semantic` derived cache validated by version comparison, `hebbian` source of truth), typed provenance, one-way `.assoc.json` migration (`kind: "resonance-edges"`). **Not wired into recall yet** — `field.js` / `ledger.js` remain the live path. | `record` |
 | `panel.js` | The `127.0.0.1` control panel (largest file): field toggle, Connect/Disconnect, the 3D association-graph view, demo graph, heartbeat auto-shutdown. | `install`, `field`, `engine`, `ledger`, `record`, `embedded-assets` |
 | `install.js` | Detect + wire into LM Studio / Claude Desktop MCP config. Preserves other configured servers, leaves a `.bak`. | stdlib only |
 | `engine.js` | One-click embedder setup for the panel: drives LM Studio's bundled `lms` CLI to start the server, download the Nomic embedder, load it, and verify the endpoint answers. Pure convenience — the MCP server never needs it. | stdlib + `fetch` |
@@ -231,6 +234,9 @@ Everything lives beside `MEMORY_FILE_PATH` (default `~/.lmstudio/resonance-memor
 resonance-memory.jsonl              the store — one JSON record per line
 resonance-memory.jsonl.access.json  access-count sidecar   (AccessLog, record.js)
 resonance-memory.jsonl.assoc.json   Hebbian edge weights   (Ledger, ledger.js)
+                                    Phase 0 successor format lives in edges.js
+                                    (`kind: "resonance-edges"`); not written by
+                                    the live path until Slice C.
 resonance-memory.config.json        live runtime state (the field toggle)
 ```
 
@@ -406,9 +412,10 @@ recall path:
 - **Substrate unification** → the two association layers (`field.js` static kNN rebuilt per
   recall, `ledger.js` Hebbian sidecar) merge into one **persistent edge store with two
   independent signals** — semantic (derived / recomputable from vectors) and learned
-  (source-of-truth / irreplaceable). This is where I6 becomes true and where activation (I7)
-  plugs in. It is a **migration, not greenfield** — existing `.assoc.json` sidecars are carried
-  in (`RM-21`, design in [`phases/phase-0`](phases/phase-0-edge-substrate.md)).
+  (source-of-truth / irreplaceable). The record + sidecar live in `edges.js` (standalone
+  in 0.0; recall wiring is the next slice). This is where I6 becomes true and where
+  activation (I7) plugs in. It is a **migration, not greenfield** — existing `.assoc.json`
+  sidecars are carried in (`RM-21`, design in [`phases/phase-0`](phases/phase-0-edge-substrate.md)).
 - **New store backend** → implement the `JsonlStore` method surface (`RM-07`, SQLite).
 - **Write-path cleanup** (extraction, dedup) → in `save()` inside `memory-core.js`, before the
   store append (`RM-01`, `RM-02`). A save must never fail because a cleanup tier did.

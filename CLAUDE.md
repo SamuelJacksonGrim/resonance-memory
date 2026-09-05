@@ -45,6 +45,7 @@ roadmap, and per-repo backlog live in the companion repo
 | `store.js` | `JsonlStore` — the flat-JSONL storage backend behind the Store seam. Constructed and testable without the stdio loop; a SQLite/Lantern backend can replace it with the same method surface (see `docs/proposed/0005`). |
 | `field.js` | Associative layer (Phase 2a): a kNN semantic graph over stored vectors, neighborhood expansion, and constraint rescue. No new embedding calls, no LLM extraction — built from vectors already stored at save. |
 | `ledger.js` | Hebbian sidecar (Phase 2b): learned co-activation weights ("fire together, wire together"), bounded `maxBonus·tanh(w)` bonus, provenance-discounted reinforcement, decay + prune. |
+| `edges.js` | Unified persistent edge store (Phase 0): one undirected record, two independent signals (`semantic` derived cache + `hebbian` source of truth), typed provenance, one-way `.assoc.json` migration. **Not wired into recall yet** — `field.js` / `ledger.js` remain the live path until Slice C. |
 | `panel.js` | The local `127.0.0.1` control panel (largest file): field toggle, Connect/Disconnect, the 3D association-graph view, demo graph, heartbeat auto-shutdown. |
 | `install.js` | Detect + wire into LM Studio / Claude Desktop MCP config. Preserves other configured servers, leaves a `.bak`. |
 | `inspect_sidecar.js` | Dependency-free telemetry for the Hebbian ledger. |
@@ -65,7 +66,7 @@ roadmap, and per-repo backlog live in the companion repo
 
 | Path | Role |
 |---|---|
-| `test.js` | The dependency-free unit/regression suite (`npm test`). 57 tests, runs in under a second. |
+| `test.js` | The dependency-free unit/regression suite (`npm test`). Runs in under a second. |
 | `eval/` | **RM-00**, the evaluation harness — the measurement system the roadmap depends on. `eval/pipeline.js` wires `memory-core.js` to a cached embedder; `eval/run.js` runs the corpora and gates against `golden.json`. See `eval/README.md`. |
 | `docs/ROADMAP.md`, `docs/BACKLOG.md` | Phased plan and itemized work (`RM-00`…`RM-20`) with acceptance criteria. |
 | `docs/BUGS.md` | Known defects (fixed and open) with a watch list. `BUG-001`/`BUG-002`/`BUG-006` are referenced throughout the code. |

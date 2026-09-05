@@ -16,6 +16,7 @@ an opaque `id`.
 | `package.json` | No dependencies — scripts only (`test`, `build`, `panel`, `mcp`, `seed`, `inspect`). Sole source of the version string; `server.js` reads it so `serverInfo` can't drift. |
 | `field.js` | Associative layer (Phase 2a): kNN semantic graph over stored vectors; neighborhood expansion. |
 | `ledger.js` | Hebbian sidecar (Phase 2b): co-activation reinforcement, bounded `cosine + 0.3·tanh(w)`, decay + prune. |
+| `edges.js` | Unified persistent edge store (Phase 0): two-signal record + one-way `.assoc.json` migration. Not on the recall path yet. |
 | `panel.js` | Local 127.0.0.1 control panel: field toggle, Connect/Disconnect, association graph view, heartbeat auto-shutdown. |
 | `install.js` | Detect + wire into LM Studio / Claude Desktop MCP config (preserves other servers, leaves `.bak`). |
 | `entry.js` | Bundle dispatch: `--mcp` → server, `--install`/`--uninstall` → installer, else → panel. |
