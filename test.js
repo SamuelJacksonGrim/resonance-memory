@@ -2821,6 +2821,157 @@ test("emitWarmTrace is callable and does not throw (hot path is `if (warmTrace()
   assert.ok(writes.some((s) => /"activation"/.test(s)), "activation is its own field");
 });
 
+// ------------------------------------------------ RM-07 slice 2b export / zip
+section("RM-07 slice 2b — zip writer + sovereignty export (read-only)");
+
+const {
+  ZipWriter, ZipReader, hasZip64Eocd, crcOf, FLAG_UTF8, U16_MAX,
+} = require("./zip.js");
+const exp = require("./export-memory.js");
+
+test("slug: lowercase, spaces→hyphens, keep words", () => {
+  assert.strictEqual(exp.memorySlug(42, "I like tea"), "42-i-like-tea.json");
+});
+
+test("slug: filesystem-illegal stripped, not replaced with junk", () => {
+  assert.strictEqual(exp.memorySlug(1, 'hello<>:"/\\|?*world'), "1-helloworld.json");
+});
+
+test("slug: reserved CON/PRN/NUL/COM1-9/LPT1-9/empty → <id>.json (no hash)", () => {
+  assert.strictEqual(exp.memorySlug(7, "CON"), "7.json");
+  assert.strictEqual(exp.memorySlug(7, "prn"), "7.json");
+  assert.strictEqual(exp.memorySlug(7, "NUL"), "7.json");
+  assert.strictEqual(exp.memorySlug(7, "COM1"), "7.json");
+  assert.strictEqual(exp.memorySlug(7, "LPT9"), "7.json");
+  assert.strictEqual(exp.memorySlug(7, ""), "7.json");
+  assert.strictEqual(exp.memorySlug(7, "???"), "7.json", "illegal-only collapses to empty");
+  assert.strictEqual(exp.memorySlug(7, "COM10"), "7-com10.json", "COM10 is not reserved");
+});
+
+test("slug: trailing dots/spaces stripped", () => {
+  assert.strictEqual(exp.memorySlug(3, "hello..."), "3-hello.json");
+  assert.strictEqual(exp.memorySlug(3, "hello   "), "3-hello.json");
+});
+
+test("slug: cap ~40 at the last hyphen (whole words, no hash suffix)", () => {
+  const long = "this-is-a-very-long-memory-about-something-important-indeed";
+  const s = exp.memorySlug(9, long);
+  assert.ok(s.startsWith("9-"));
+  assert.ok(s.endsWith(".json"));
+  const body = s.slice(2, -5);
+  assert.ok(body.length <= 40, "slug body capped, got " + body.length + " " + body);
+  assert.ok(!/-$/.test(body));
+  assert.ok(!/hash|sha|md5/i.test(s), "no hash suffix");
+});
+
+test("slug: DON'T ASCII-fold CJK — empty-fold is the payload failure", () => {
+  assert.strictEqual(exp.memorySlug(11, "记忆测试"), "11-记忆测试.json");
+  assert.strictEqual(exp.memorySlug(12, "café notes"), "12-café-notes.json");
+});
+
+test("folder path is f(created) UTC day-granular, zero-padded", () => {
+  assert.strictEqual(exp.memoryDayPath("2026-03-05T12:34:56.000Z"), "memories/2026/03/05");
+  assert.strictEqual(exp.memoryDayPath("2019-01-09T00:00:00.000Z"), "memories/2019/01/09");
+  assert.notStrictEqual(exp.memoryDayPath("2026-03-05T12:34:56.000Z"), "memories/2026/3/5");
+});
+
+test("catalog columns: id status created path bytes text", () => {
+  const rec = normalize({
+    id: 5, text: "I prefer tea in the morning with honey",
+    created: "2026-01-02T00:00:00.000Z", deleted: true,
+  });
+  const line = exp.catalogLine(rec, "root/memories/2026/01/02/5-i-prefer-tea.json", 123);
+  const cols = line.replace(/\n$/, "").split("\t");
+  assert.deepStrictEqual(exp.catalogHeader().replace(/\n$/, "").split("\t"),
+    ["id", "status", "created", "path", "bytes", "text"]);
+  assert.strictEqual(cols[0], "5");
+  assert.strictEqual(cols[1], "deleted");
+  assert.strictEqual(cols[2], "2026-01-02T00:00:00.000Z");
+  assert.strictEqual(cols[3], "root/memories/2026/01/02/5-i-prefer-tea.json");
+  assert.strictEqual(cols[4], "123");
+  assert.ok(cols[5].indexOf("I prefer tea") === 0);
+  assert.ok(cols[5].length <= 80);
+});
+
+test("recordStatus: deleted wins; superseded via valid_to or superseded_by", () => {
+  assert.strictEqual(exp.recordStatus({ deleted: true, valid_to: "x" }), "deleted");
+  assert.strictEqual(exp.recordStatus({ superseded_by: 2 }), "superseded");
+  assert.strictEqual(exp.recordStatus({ valid_to: "2026-01-01T00:00:00Z" }), "superseded");
+  assert.strictEqual(exp.recordStatus({ text: "hi" }), "current");
+});
+
+test("sanitizeExportName / never-overwrite Name (2).zip", () => {
+  assert.strictEqual(exp.sanitizeExportName("foo/bar<>.zip", "fb"), "foo-bar");
+  const dir = tmp("export-unique");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "Name.zip"), "x");
+  const p2 = exp.uniqueZipPath(dir, "Name");
+  assert.strictEqual(path.basename(p2), "Name (2).zip");
+  fs.writeFileSync(p2, "y");
+  const p3 = exp.uniqueZipPath(dir, "Name");
+  assert.strictEqual(path.basename(p3), "Name (3).zip");
+});
+
+test("human JSON omits embedding; jsonl line keeps embedding as a JSON array", () => {
+  const rec = {
+    id: 1, text: "hi", created: "2026-01-01T00:00:00.000Z",
+    embedding: Float32Array.from([0.1, 0.2, 0.3]),
+  };
+  const human = JSON.parse(exp.recordToHumanJson(rec));
+  assert.strictEqual("embedding" in human, false);
+  const line = JSON.parse(exp.recordToJsonlLine(rec));
+  assert.ok(Array.isArray(line.embedding));
+  assert.strictEqual(line.embedding.length, 3);
+});
+
+test("zip writer: STORE + DEFLATE round-trip, CRC, UTF-8 flag, ZIP64 always", () => {
+  const zpath = tmp("tiny.zip");
+  const w = new ZipWriter(zpath);
+  w.addStored("root/hello.txt", "hello store\n");
+  w.addDeflated("root/café.txt", "deflated payload " + "x".repeat(200));
+  const fin = w.finalize();
+  assert.ok(fs.existsSync(zpath), "renamed off .tmp");
+  assert.ok(!fs.existsSync(zpath + ".tmp"), "tmp gone after EOCD rename");
+  assert.strictEqual(fin.entries, 2);
+  assert.ok(hasZip64Eocd(zpath), "ZIP64 EOCD+locator even at 2 entries — no classic-only path");
+  const r = ZipReader.open(zpath);
+  assert.strictEqual(r.entries.length, 2);
+  assert.strictEqual(r.readStored("root/hello.txt").toString("utf8"), "hello store\n");
+  assert.strictEqual(r.readStored("root/café.txt").toString("utf8"), "deflated payload " + "x".repeat(200));
+  const cafe = r.get("root/café.txt");
+  assert.ok(cafe.utf8, "UTF-8 flag set so CJK/accents survive");
+  assert.strictEqual(cafe.flag & FLAG_UTF8, FLAG_UTF8);
+  assert.strictEqual(cafe.crc, crcOf(Buffer.from("deflated payload " + "x".repeat(200))) >>> 0);
+  assert.ok(cafe.usize < U16_MAX, "this member is small; ZIP64 is still used for the archive");
+});
+
+test("zip writer: killed-looking abort leaves no dest zip", () => {
+  const zpath = tmp("aborted.zip");
+  const w = new ZipWriter(zpath);
+  w.addStored("a.txt", "aa");
+  assert.ok(fs.existsSync(zpath + ".tmp"));
+  w.abort();
+  assert.ok(!fs.existsSync(zpath), "dest was never renamed");
+  assert.ok(!fs.existsSync(zpath + ".tmp"), "abort unlinks tmp");
+});
+
+test("README + manifest layout field", () => {
+  const readme = exp.buildReadme();
+  assert.ok(/you own/i.test(readme));
+  assert.ok(/diary/i.test(readme));
+  assert.ok(/do not sanitize/i.test(readme));
+  assert.ok(/memories\.jsonl/.test(readme));
+  assert.ok(/catalog\.txt/.test(readme));
+  assert.ok(/MAX_PATH/.test(readme));
+  const man = JSON.parse(exp.buildManifest({
+    exportedAt: "2026-09-05T00:00:00.000Z",
+    name: "resonance-memories-2026-09-05",
+    count: { total: 3, current: 1, superseded: 1, deleted: 1 },
+  }));
+  assert.strictEqual(man.layout, "memories/YYYY/MM/DD");
+  assert.strictEqual(man.schema_version, 1);
+});
+
 // ------------------------------------------------ edit() embedding safety
 // An embedder outage is transient; losing an embedding is not.
 // createCore already required above (warm-field section)
@@ -3136,6 +3287,237 @@ async function asyncTests() {
       assert.ok(fs.existsSync(jsonl), "JSONL still live");
       assert.ok(!fs.existsSync(sqlitePathFor(jsonl)));
     });
+  }
+
+  section("RM-07 slice 2b — export bundle (read-only, golden-safe)");
+
+  {
+    const { spawn, spawnSync } = require("child_process");
+    const { JsonlStore } = require("./store.js");
+
+    function stamp(p) {
+      if (!p || !fs.existsSync(p)) return null;
+      const st = fs.statSync(p);
+      const buf = fs.readFileSync(p);
+      return st.size + ":" + st.mtimeMs + ":" + require("crypto").createHash("sha256").update(buf).digest("hex");
+    }
+    function storeStamp(file) {
+      return {
+        store: stamp(file),
+        edges: stamp(file + ".edges.json"),
+        access: stamp(file + ".access.json"),
+        db: stamp(file.replace(/\.jsonl$/i, ".db")),
+        wal: stamp(file.replace(/\.jsonl$/i, ".db-wal")),
+      };
+    }
+
+    function seedExportStore(name) {
+      const file = tmp("export-" + name + ".jsonl");
+      const store = new JsonlStore(file);
+      store.add(normalize({
+        id: 1, text: "I prefer tea", created: "2026-03-05T12:00:00.000Z",
+        embedding: [0.1, 0.2, 0.3],
+      }));
+      store.add(normalize({
+        id: 2, text: "I used to prefer coffee", created: "2026-03-05T13:00:00.000Z",
+        embedding: [0.2, 0.1, 0.3], superseded_by: 1, valid_to: "2026-03-05T12:00:00.000Z",
+      }));
+      store.add(normalize({
+        id: 3, text: "old secret I deleted", created: "2026-01-09T00:00:00.000Z",
+        embedding: [0.0, 0.1, 0.0], deleted: true,
+      }));
+      store.add(normalize({
+        id: 4, text: "记忆测试", created: "2026-03-05T14:00:00.000Z",
+        embedding: [0.4, 0.1, 0.1],
+      }));
+      store.add(normalize({
+        id: 5, text: "CON", created: "2026-03-05T15:00:00.000Z",
+        embedding: [0.5, 0.1, 0.1],
+      }));
+      const { EdgeStore, makeEdge } = require("./edges.js");
+      const E = new EdgeStore(file + ".edges.json");
+      E.put(makeEdge(1, 2, { origin: "co-activation", now: "2026-03-05T12:00:00.000Z", hebbianWeight: 0.42 }));
+      E.processedIds = ["rpc-should-not-export"];
+      E.save();
+      return { file, store };
+    }
+
+    await atest("export zip: whole store incl deleted+superseded, layout, catalog, edges, README", async () => {
+      const { file } = seedExportStore("full");
+      const outDir = tmp("export-out-full");
+      fs.mkdirSync(outDir, { recursive: true });
+      const result = await exp.runExport({
+        mode: "zip", name: "bundle", outDir, storePath: file,
+      });
+      assert.ok(fs.existsSync(result.path));
+      const z = ZipReader.open(result.path);
+      const names = z.names();
+      const root = "bundle";
+      assert.ok(names.indexOf(root + "/README.txt") >= 0);
+      assert.ok(names.indexOf(root + "/manifest.json") >= 0);
+      assert.ok(names.indexOf(root + "/catalog.txt") >= 0);
+      assert.ok(names.indexOf(root + "/edges.json") >= 0);
+      assert.ok(names.indexOf(root + "/memories.jsonl") >= 0);
+      const man = JSON.parse(z.readStored(root + "/manifest.json").toString("utf8"));
+      assert.strictEqual(man.layout, "memories/YYYY/MM/DD");
+      assert.strictEqual(man.count.total, 5);
+      assert.strictEqual(man.count.current, 3, "tea + CJK + CON");
+      assert.strictEqual(man.count.superseded, 1);
+      assert.strictEqual(man.count.deleted, 1);
+      const jsonl = z.readStored(root + "/memories.jsonl").toString("utf8").trim().split("\n");
+      assert.strictEqual(jsonl.length, 5, "jsonl is the whole store, not current() only");
+      const recs = jsonl.map((l) => JSON.parse(l));
+      assert.ok(recs.some((r) => r.deleted));
+      assert.ok(recs.some((r) => r.superseded_by));
+      assert.ok(recs.every((r) => Array.isArray(r.embedding) || r.embedding === null));
+      const teaPath = root + "/memories/2026/03/05/1-i-prefer-tea.json";
+      const cjkPath = root + "/memories/2026/03/05/4-记忆测试.json";
+      const reservedPath = root + "/memories/2026/03/05/5.json";
+      const deletedPath = root + "/memories/2026/01/09/3-old-secret-i-deleted.json";
+      assert.ok(z.has(teaPath), "day-granular created path");
+      assert.ok(z.has(cjkPath), "CJK slug preserved (UTF-8 flag)");
+      assert.ok(z.has(reservedPath), "CON → <id>.json");
+      assert.ok(z.has(deletedPath), "deleted memory still has a human file");
+      const human = JSON.parse(z.readStored(teaPath).toString("utf8"));
+      assert.strictEqual("embedding" in human, false, "human file has no vectors");
+      assert.strictEqual(human.text, "I prefer tea");
+      const catalog = z.readStored(root + "/catalog.txt").toString("utf8");
+      const catLines = catalog.trim().split("\n");
+      assert.strictEqual(catLines[0].split("\t")[3], "path");
+      for (const line of catLines.slice(1)) {
+        const cols = line.split("\t");
+        assert.strictEqual(cols.length, 6, "catalog columns");
+        assert.ok(z.has(cols[3]), "catalog path resolves: " + cols[3]);
+      }
+      const edges = JSON.parse(z.readStored(root + "/edges.json").toString("utf8"));
+      assert.ok(edges.edges);
+      const ev = Object.values(edges.edges)[0];
+      assert.ok(ev && ev.hebbian && ev.hebbian.weight > 0, "Hebbian weight carried");
+      assert.strictEqual("processed_ids" in edges, false, "runtime LRU stays out");
+      const readme = z.readStored(root + "/README.txt").toString("utf8");
+      assert.ok(/you own/i.test(readme));
+      assert.ok(hasZip64Eocd(result.path));
+    });
+
+    await atest("export mutates NOTHING (store bytes unchanged)", async () => {
+      const { file } = seedExportStore("readonly");
+      const before = storeStamp(file);
+      const outDir = tmp("export-out-ro");
+      fs.mkdirSync(outDir, { recursive: true });
+      await exp.runExport({ mode: "zip", name: "ro", outDir, storePath: file });
+      assert.deepStrictEqual(storeStamp(file), before);
+    });
+
+    await atest("export never overwrites an existing zip", async () => {
+      const { file } = seedExportStore("ow");
+      const outDir = tmp("export-out-ow");
+      fs.mkdirSync(outDir, { recursive: true });
+      fs.writeFileSync(path.join(outDir, "mine.zip"), "keep-me");
+      const result = await exp.runExport({ mode: "zip", name: "mine", outDir, storePath: file });
+      assert.strictEqual(path.basename(result.path), "mine (2).zip");
+      assert.strictEqual(fs.readFileSync(path.join(outDir, "mine.zip"), "utf8"), "keep-me");
+    });
+
+    await atest("--export-jsonl is the raw scripting primitive (not replaced by the zip)", async () => {
+      const { file } = seedExportStore("jsonl");
+      const outDir = tmp("export-out-jsonl");
+      fs.mkdirSync(outDir, { recursive: true });
+      const result = await exp.runExport({
+        mode: "jsonl", name: "raw", outFile: outDir, storePath: file,
+      });
+      assert.ok(result.path.endsWith(".jsonl"));
+      const lines = fs.readFileSync(result.path, "utf8").trim().split("\n");
+      assert.strictEqual(lines.length, 5);
+      const recs = lines.map((l) => JSON.parse(l));
+      assert.strictEqual(recs[0].text, "I prefer tea");
+      assert.ok(Array.isArray(recs[0].embedding));
+    });
+
+    await atest("CLI --export (entry.js) is not a fifth verb; --export-jsonl stays its own flag", async () => {
+      const { file } = seedExportStore("cli");
+      const outDir = tmp("export-out-cli");
+      fs.mkdirSync(outDir, { recursive: true });
+      const entry = path.join(__dirname, "entry.js");
+      const zip = spawnSync(process.execPath, [
+        entry, "--export", "--json", "--name", "cli-bundle", "--out", outDir, file,
+      ], { encoding: "utf8" });
+      assert.strictEqual(zip.status, 0, zip.stderr || zip.stdout);
+      const z = JSON.parse(zip.stdout);
+      assert.ok(z.path && fs.existsSync(z.path));
+      assert.strictEqual(z.count.total, 5);
+      const raw = spawnSync(process.execPath, [
+        entry, "--export-jsonl", "--json", "--name", "cli-raw", "--out", outDir, file,
+      ], { encoding: "utf8" });
+      assert.strictEqual(raw.status, 0, raw.stderr || raw.stdout);
+      const j = JSON.parse(raw.stdout);
+      assert.ok(j.path.endsWith(".jsonl"));
+      assert.strictEqual(j.count, 5);
+    });
+
+    await atest("killed export leaves .zip.tmp, never a valid-looking truncated zip", async () => {
+      const { file } = seedExportStore("kill");
+      const outDir = tmp("export-out-kill");
+      fs.mkdirSync(outDir, { recursive: true });
+      const ready = tmp("export-kill.ready");
+      const child = spawn(process.execPath, [
+        path.join(__dirname, "export-memory.js"),
+        "--export", "--name", "killed", "--out", outDir, file,
+      ], {
+        env: Object.assign({}, process.env, {
+          RM_EXPORT_CRASH_AFTER: "1",
+          RM_EXPORT_CRASH_READY: ready,
+        }),
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const t0 = Date.now();
+      while (!fs.existsSync(ready)) {
+        if (Date.now() - t0 > 15000) {
+          try { child.kill("SIGKILL"); } catch { /* */ }
+          throw new Error("export crash-child never wrote ready: " +
+            String(child.stderr && child.stderr.read()));
+        }
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      child.kill("SIGKILL");
+      await new Promise((resolve) => {
+        if (child.exitCode != null || child.signalCode) return resolve();
+        child.on("exit", resolve);
+        setTimeout(resolve, 5000);
+      });
+      const dest = path.join(outDir, "killed.zip");
+      assert.ok(!fs.existsSync(dest), "no dest zip that looks valid");
+      assert.ok(fs.existsSync(dest + ".tmp"), "leftover is the .tmp");
+    });
+
+    if (sqliteAvailable()) {
+      await atest("sqlite export is read-only (no WAL checkpoint, bytes unchanged)", async () => {
+        const dir = tmp("export-sqlite");
+        fs.mkdirSync(dir, { recursive: true });
+        const dbPath = path.join(dir, "mem.db");
+        const s = new SqliteStore(dbPath);
+        s.add(normalize({
+          id: 1, text: "sqlite tea", created: "2026-04-01T00:00:00.000Z",
+          embedding: [1, 0, 0],
+        }));
+        s.close();
+        const before = stamp(dbPath);
+        const walBefore = fs.existsSync(dbPath + "-wal") ? stamp(dbPath + "-wal") : null;
+        const outDir = path.join(dir, "out");
+        fs.mkdirSync(outDir, { recursive: true });
+        const result = await exp.runExport({
+          mode: "zip", name: "sql", outDir, storePath: dbPath,
+        });
+        assert.ok(fs.existsSync(result.path));
+        assert.strictEqual(stamp(dbPath), before, ".db bytes unchanged");
+        const z = ZipReader.open(result.path);
+        assert.ok(z.has("sql/memories/2026/04/01/1-sqlite-tea.json"));
+        const jsonl = z.readStored("sql/memories.jsonl").toString("utf8").trim();
+        const rec = JSON.parse(jsonl);
+        assert.strictEqual(rec.text, "sqlite tea");
+        assert.ok(Array.isArray(rec.embedding));
+        void walBefore;
+      });
+    }
   }
 
   section("eval measure runner (RM-02.a)");

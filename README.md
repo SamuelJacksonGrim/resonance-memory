@@ -111,6 +111,12 @@ memory.
   `resonance-memory.exe --dedup-existing` (or `npm run dedup-existing`). It **reports**
   what it would merge and writes nothing. Add `--apply` only when the plan looks right.
   New saves are already de-duplicated; this is just the cleanup pass.
+- **Want a copy of your memories you can carry?** From a terminal, run
+  `resonance-memory.exe --export` (or `npm run export`). It writes a zip of
+  everything you have saved — including a `memories.jsonl` any other tool
+  can read — to your Desktop. It does not change the live store. Add
+  `--name` / `--out` to pick the filename and folder. Extract to a short
+  path on Windows.
 
 ## Support the Architect
 

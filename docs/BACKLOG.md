@@ -344,13 +344,22 @@ deletions, ever.
       before the rename leaves the JSONL live; re-run completes. 50k/768-d
       proof: lossless in 2.5 s against a 785 MB JSONL that `readFileSync`
       cannot load. **Not auto-run on startup** (first-open is slice 4).
-- [ ] JSONL export / zip bundle (slice 2b) — the live sovereignty artifact.
+- [x] JSONL export / zip bundle (slice 2b) — the live sovereignty artifact.
+      `--export` writes a ZIP64 zip (Desktop, `--name` / `--out`, never-overwrite)
+      with `memories.jsonl` (embeddings as arrays; a competitor reads it without
+      our exe), `memories/YYYY/MM/DD/<id>-<slug>.json` (no vectors), `catalog.txt`,
+      `edges.json` (Hebbian; `processed_ids` out), `manifest.json`, `README.txt`.
+      `--export-jsonl` stays as the raw primitive. Read-only. 50k proof: 34.3 s,
+      387 MB zip, 50k/50k lossless, Windows opens, ZIP64 at 70k entries.
+      Panel button is slice 2c.
+- [ ] Panel export button (slice 2c) — confirm modal, heartbeat pause, shells 2b.
 - [ ] Transparent one-way migration on first open (slice 4 default switch).
 - [x] JSONL stays the default until SQLite passes conformance + eval parity.
       Conformance green. Golden parity (slice 3): `node eval/run.js --store sqlite`
       matches JSONL **27/31 case-for-case** (no flips; cache vectors already
       exact f32 so packing is lossless on this embedder). Default switch is
-      slice 4, after 2b export/zip so migration does not open a lock-in window.
+      slice 4, after the 2c panel button so migration does not open a lock-in
+      window from the UI either.
 
 **Acceptance:** 100k memories, recall p95 <100ms, no full-file rewrite; both backends
 byte-identical on the eval scorecard.

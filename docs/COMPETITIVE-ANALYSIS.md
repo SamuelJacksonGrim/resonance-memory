@@ -12,10 +12,10 @@ because this market's published benchmarks are actively disputed (see §4).*
 > "applies supersession but can't detect it" to "detects explicit corrections and applies them,
 > fuller heuristics still open." **Provenance (`source`) is now seeded in the record schema**
 > (the `RM-16` groundwork). The write path (extraction, cosine-banded dedup) and hybrid
-> retrieval remain the real open gaps. **RM-07 SQLite is designed, not shipped**
-> ([`proposed/0010`](proposed/0010-sqlite-backend.md)): S1 made it a measured GO (JSONL
-> cannot load 50k); the spike says `node:sqlite` + BLOB + JS cosine, with lossless JSONL
-> export as the anti-lock-in path (§6 claim 5).
+> retrieval remain the real open gaps. **RM-07 SQLite is selectable** (slices 1+2a+2b+3;
+> [`proposed/0010`](proposed/0010-sqlite-backend.md)): S1 made it a measured GO (JSONL
+> cannot load 50k); `node:sqlite` + BLOB + JS cosine; lossless `--export` zip is the
+> anti-lock-in path (§6 claim 5) and has shipped. Default switch is slice 4.
 
 The goal of this document is not to cheer. It is to answer three questions honestly:
 
@@ -149,8 +149,8 @@ Honest scoring of Resonance Memory **today** (`v0.2.0`, August 2026) against the
 | Multi-user / agent scoping | ✅ | ✅ | ✅ | ❌ | `RM-06` |
 | Session vs long-term separation | ✅ | ✅ | ✅ | ❌ | `RM-06` |
 | Idle/sleep-time consolidation | 🟡 | ✅ | ✅ | ❌ | `RM-10` |
-| Pluggable store backend | ✅ | ✅ | ✅ | 🟡 *(seam extracted, one impl; SQLite spike measured, [`proposed/0010`](proposed/0010-sqlite-backend.md))* | `RM-07` |
-| Lossless export / anti-lock-in | 🟡 | 🟡 | 🟡 | 🟡 *(JSONL is the store today; SQLite design keeps JSONL as the interchange format — you can leave)* | `RM-07` |
+| Pluggable store backend | ✅ | ✅ | ✅ | 🟡 *(seam extracted; `SqliteStore` selectable, JSONL still default; [`proposed/0010`](proposed/0010-sqlite-backend.md))* | `RM-07` |
+| Lossless export / anti-lock-in | 🟡 | 🟡 | 🟡 | ✅ *( `--export` zip + `--export-jsonl`; a competitor reads `memories.jsonl` without our exe)* | `RM-07` 2b ✅ |
 | Eval harness / regression suite | ✅ | ✅ | ✅ | ✅ *(offline, deterministic, golden-gated)* | `RM-00` ✅ |
 | Provenance on records (poisoning defense) | 🟡 | 🟡 | 🟡 | 🟡 *(`source` field seeded; recall-weighting + filter open)* | `RM-16` |
 | SDKs | ✅ | ✅ | ✅ | ❌ | `RM-12` |
@@ -190,14 +190,16 @@ Three claims we can defend, and should lead with:
    the repo and runs offline in under a minute — no cloud, no API key. "Verify our claims on
    your own machine" is a claim the hosted vendors structurally cannot match, and it sidesteps
    the LOCOMO number war entirely (§4).
-5. **You can leave.** *(Design, RM-07 / [`proposed/0010`](proposed/0010-sqlite-backend.md).)*
+5. **You can leave.** *(Shipped, RM-07 slice 2b / [`proposed/0010`](proposed/0010-sqlite-backend.md).)*
    The working copy may be SQLite for speed; the interchange format is the same JSONL RM
-   already uses, lossless in both directions. Copy the store between devices, or export and
-   hand it to a competing provider. Hosted Mem0/Zep *are* the lock-in — your memory lives in
-   their cloud so leaving costs a migration you don't control. Local-only is necessary but
-   not sufficient (VEKTOR et al. are local too); **export that a competitor can read without
-   our exe** is the anti-hoarding claim. Not yet a shipped verb — it's a CLI/maintenance
-   path on purpose (four verbs stay four).
+   already uses, lossless, as `memories.jsonl` inside a ZIP64 bundle (`--export`) or as a
+   raw file (`--export-jsonl`). Copy the `.db` between devices (RM↔RM), or export and
+   hand the jsonl to a competing provider. Hosted Mem0/Zep *are* the lock-in — your memory
+   lives in their cloud so leaving costs a migration you don't control. Local-only is
+   necessary but not sufficient (VEKTOR et al. are local too); **export that a competitor
+   can read without our exe** is the anti-hoarding claim, and it is a CLI/maintenance
+   path on purpose (four verbs stay four). We do not sanitize the export. The panel
+   button is slice 2c; import is RM-17.
 
 Three claims we must **not** make until earned (updated August 2026):
 - ❌ "Beats Mem0 on LOCOMO" — still don't enter the number war (§4). `RM-00` has landed, so we

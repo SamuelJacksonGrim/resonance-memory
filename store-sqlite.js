@@ -136,25 +136,31 @@ function rowToRecord(row) {
 }
 
 class SqliteStore {
-  constructor(file) {
+  constructor(file, opts) {
     // BUG-007: access counts live in the row. Do not construct AccessLog,
     // do not read a sibling .access.json, do not fold a leftover sidecar.
     // A live .access.json next to a .db with access columns is the
     // doubling bug in a new costume. Folding that sidecar happens ONCE,
     // at ingest, in migrate-sqlite.js. This constructor refuses to touch it.
+    opts = opts || {};
     this.file = file;
     this.access = undefined;
-    if (file && file !== ":memory:") {
+    this.readOnly = !!opts.readOnly;
+    if (!this.readOnly && file && file !== ":memory:") {
       fs.mkdirSync(path.dirname(file), { recursive: true });
     }
     const DatabaseSync = loadDatabaseSync();
-    this.db = new DatabaseSync(file);
+    this.db = new DatabaseSync(file, this.readOnly ? { readOnly: true } : {});
     // WAL + FULL = I5: a COMMIT is atomic and durable. Mid-transaction
     // crash leaves the previous commit; never a half-written store.
-    this.db.exec("PRAGMA journal_mode = WAL");
-    this.db.exec("PRAGMA synchronous = FULL");
+    // Export (slice 2b) opens read-only so a sovereignty dump cannot
+    // checkpoint, create a WAL, or otherwise mutate the live store.
+    if (!this.readOnly) {
+      this.db.exec("PRAGMA journal_mode = WAL");
+      this.db.exec("PRAGMA synchronous = FULL");
+    }
     this.db.exec("PRAGMA busy_timeout = 5000");
-    this._initSchema();
+    if (!this.readOnly) this._initSchema();
     this._insert = this.db.prepare(
       "INSERT INTO memories (" + COLS.join(",") + ") VALUES (" +
       COLS.map(() => "?").join(",") + ")"
@@ -277,6 +283,23 @@ class SqliteStore {
   current() { return this._hydrate().filter(isCurrent); }
   active() { return this._hydrate().filter((r) => !r.deleted); }
 
+  /*
+   * Cursor over every row (including deleted + superseded). Export uses
+   * this so a 50k dump does not have to hydrate the RAM cache first.
+   * One record at a time; the 785 MB jsonl is never one string.
+   */
+  *iterate() {
+    if (this._cache) {
+      for (const r of this._cache) yield r;
+      return;
+    }
+    for (const row of this._all.iterate()) yield rowToRecord(row);
+  }
+
+  _assertWritable() {
+    if (this.readOnly) throw new Error("SqliteStore is read-only (export path)");
+  }
+
   get(id) {
     const k = String(id);
     if (this._cache) {
@@ -287,6 +310,7 @@ class SqliteStore {
   }
 
   add(rec) {
+    this._assertWritable();
     this._insert.run(...this._bind(rec));
     this._invalidate();
   }
@@ -298,6 +322,7 @@ class SqliteStore {
    * so it never materializes the whole file as a string (S1 834 MB wall).
    */
   addMany(recs) {
+    this._assertWritable();
     if (!recs || !recs.length) return 0;
     this._txn(() => {
       for (const rec of recs) this._insert.run(...this._bind(rec));
@@ -312,6 +337,7 @@ class SqliteStore {
    * never readFileSync the JSONL. Caller owns fold/normalize.
    */
   async ingestAsync(asyncIterable) {
+    this._assertWritable();
     let n = 0;
     this.db.exec("BEGIN");
     try {
@@ -339,10 +365,12 @@ class SqliteStore {
   }
 
   checkpoint() {
+    this._assertWritable();
     try { this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch { /* :memory: */ }
   }
 
   update(id, patch) {
+    this._assertWritable();
     const rec = this.get(id);
     if (!rec) return false;
     Object.assign(rec, patch);
@@ -355,6 +383,7 @@ class SqliteStore {
   }
 
   updateMany(patchById) {
+    this._assertWritable();
     // Several rows in ONE transaction: the supersession pair must not be
     // observable half-applied (same reason JsonlStore does one rewrite).
     let n = 0;
@@ -371,6 +400,7 @@ class SqliteStore {
   }
 
   applyRecall(returnedIds, embeddingById) {
+    this._assertWritable();
     const ids = returnedIds || [];
     const hasEmb = !!(embeddingById && embeddingById.size);
     if (!ids.length && !hasEmb) return;
@@ -408,6 +438,7 @@ class SqliteStore {
   }
 
   vacuum() {
+    this._assertWritable();
     this.db.exec("DELETE FROM memories WHERE deleted = 1");
     const n = this._count.get().n;
     try { this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch { /* :memory: */ }
@@ -457,7 +488,9 @@ class SqliteStore {
   }
 
   close() {
-    try { this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch { /* closing */ }
+    if (!this.readOnly) {
+      try { this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch { /* closing */ }
+    }
     try { this.db.close(); } catch { /* already closed */ }
     this._cache = null;
   }

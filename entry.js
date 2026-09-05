@@ -22,6 +22,8 @@
 //   memory --uninstall  (CLI)           -> disconnect from AI apps
 //   memory --dedup-existing [--apply]   -> RM-02.c backfill (dry-run default)
 //   memory --migrate                    -> RM-07 slice 2a JSONL→SQLite (opt-in)
+//   memory --export [--name] [--out]    -> RM-07 slice 2b sovereignty zip
+//   memory --export-jsonl               -> raw memories.jsonl (scripting primitive)
 const mode = process.argv[2];
 
 if (mode === "--mcp") {
@@ -41,6 +43,13 @@ if (mode === "--mcp") {
   });
 } else if (mode === "--migrate" || mode === "--migrate-sqlite") {
   require("./migrate-sqlite.js").main(process.argv.slice(3)).then((code) => {
+    if (code) process.exit(code);
+  }).catch((e) => {
+    console.error(String(e.message || e));
+    process.exit(2);
+  });
+} else if (mode === "--export" || mode === "--export-jsonl") {
+  require("./export-memory.js").main(process.argv.slice(2)).then((code) => {
     if (code) process.exit(code);
   }).catch((e) => {
     console.error(String(e.message || e));

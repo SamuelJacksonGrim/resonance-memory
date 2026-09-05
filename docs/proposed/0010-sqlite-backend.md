@@ -1,6 +1,6 @@
 # 0010 — SQLite backend behind the Store seam (RM-07)
 
-**Status:** slice 1 shipped (drop-in `SqliteStore`) · slice 2a shipped (streaming JSONL→SQLite migrator, opt-in CLI) · **slice 3 shipped** (RM-00 golden on SqliteStore = JSONL 27/31 case-for-case) · JSONL still default · **Backlog:** `RM-07` · **Depends on:** `RM-00`, [`0005`](0005-store-abstraction.md)
+**Status:** slice 1 shipped (drop-in `SqliteStore`) · slice 2a shipped (streaming JSONL→SQLite migrator, opt-in CLI) · **slice 2b shipped** (sovereignty zip export, `--export` / `--export-jsonl`) · **slice 3 shipped** (RM-00 golden on SqliteStore = JSONL 27/31 case-for-case) · JSONL still default · panel button is slice 2c · **Backlog:** `RM-07` · **Depends on:** `RM-00`, [`0005`](0005-store-abstraction.md)
 **Spike:** [`spike/rm-07-sqlite/`](../../spike/rm-07-sqlite/) — de-risked the driver and the vector path.
 **Product:** `store-sqlite.js` `SqliteStore`, same JsonlStore method surface, `memory-core.js` verbs unchanged.
 
@@ -193,23 +193,25 @@ SQLite is the working copy. JSONL is the interchange format RM already uses.
 | Direction | How | Guarantee |
 |---|---|---|
 | JSONL → SQLite | Stream line-at-a-time (`readline` + batched INSERT in one transaction) into a temp `.db.migrating`. Count-verify. WAL checkpoint. Atomic rename to `.db`. **Then** rename JSONL → `.jsonl.bak`. See [the 10-step protocol](#the-10-step-commit-protocol). | The 834 MB file that cannot `readFileSync` still migrates. 50k/768-d proof: **lossless in 2.5 s**. |
-| SQLite → JSONL | `SELECT *`, reconstruct `normalize()`-shape records, `writeFileDurable`. Embeddings as JSON arrays (the format a competitor's importer can read without RM). **Slice 2b** (`--export-jsonl` / zip bundle). | Every column round-trips (spike: 25/25 lossless). |
+| SQLite → JSONL | Stream `iterate()`, reconstruct `normalize()`-shape records. Embeddings as JSON arrays (the format a competitor's importer can read without RM). **Slice 2b shipped** (`--export` zip wraps `memories.jsonl`; `--export-jsonl` is the raw primitive). | 50k/768-d: 50,000/50,000 field-equal, embeddings within 1e-5. |
 | RM → RM, same/other device | copy the `.db` **after** `PRAGMA wal_checkpoint(TRUNCATE)` so `-wal`/`-shm` do not have to travel. SQLite files are cross-platform. | Convenience, not the sovereignty path. |
 
 **`.bak` is a recovery snapshot, not the sovereignty export.** The retained JSONL is a
 *pre-migration* copy: it goes stale on the next save to the `.db`. A downgraded exe
 must not serve it, which is why it is renamed *off* `MEMORY_FILE_PATH`. The live
-sovereignty artifact is slice 2b's `--export-jsonl` / zip bundle of the `.db` as it
-stands now. Two artifacts, two jobs. Do not `copyFile` to `.bak` *and* keep the
+sovereignty artifact is slice 2b's `--export` zip bundle of the store as it
+stands now (`--export-jsonl` is the raw scripting primitive wrapped inside).
+Two artifacts, two jobs. Do not `copyFile` to `.bak` *and* keep the
 original — that is two full copies of an 834 MB file; one retained original (the
 rename) is enough.
 
 Export is a **maintenance CLI** (like `--dedup-existing`), not a fifth MCP verb.
-The four-verb surface does not grow. Panel can later grow a "Export JSONL…"
-button that shells the same function.
+The four-verb surface does not grow. The panel button is slice 2c (next) and
+shells the same function.
 
-A user leaving RM hands a `.jsonl` to Mem0/Zep/a script. That is the
-anti-hoarding claim; see [`COMPETITIVE-ANALYSIS`](../COMPETITIVE-ANALYSIS.md).
+A user leaving RM hands `memories.jsonl` (inside the zip, or via `--export-jsonl`)
+to Mem0/Zep/a script. That is the anti-hoarding claim; see
+[`COMPETITIVE-ANALYSIS`](../COMPETITIVE-ANALYSIS.md).
 
 ### How the invariants hold
 
@@ -291,10 +293,11 @@ Landed. Selectable, not the default.
 - Auto-migrating user stores on upgrade / first open. Slice 2a is the
   **opt-in CLI** (`--migrate`). The first-open hook is the default-switch
   slice 4 — do not wire it yet (keeps the RM-00 golden on JSONL).
-- Export/zip/folder tree (slice 2b). The `.bak` from `--migrate` is a
-  recovery snapshot, not that export.
+- Panel export button (slice 2c). `--export` / `--export-jsonl` are the CLI;
+  the button shells the same function. Heartbeat pause lives with the panel.
 - Edges-in-db. Named fast-follow; EdgeStore API stays, persistence adapter
-  later.
+  later. The zip already carries `edges.json` so the sovereignty artifact is
+  complete regardless.
 
 ## Slice 2a (shipped) — streaming JSONL→SQLite migrator
 
@@ -366,11 +369,92 @@ fine on this box; materializing the JSONL as one UTF-8 string is not.
 
 ---
 
+## Slice 2b (shipped) — sovereignty export (zip + `--export-jsonl`)
+
+Landed. READ-ONLY CLI, not a fifth MCP verb, not a golden-path change.
+`memory-core.js` is untouched. The panel button is **slice 2c**.
+
+This is the anti-lock-in artifact: the user's memory as a file they own and
+can carry to another device or hand to a competing provider. It lands
+*before* the default switch (slice 4) so migrating never opens a lock-in
+window. We do **not** sanitize the export (filtering your own data out is
+the opposite of sovereignty; Tier-1 refusal does not re-run).
+
+Product: `zip.js` (zero-dep ZIP64 writer), `export-memory.js`,
+`node entry.js --export` / `npm run export`. `--export-jsonl` stays as the
+raw scripting primitive; the zip wraps it, does not replace it.
+
+### The bundle (one `.zip`)
+
+Settled across the design rounds (0010 + export deliberation 1–3).
+Top-level folder = archive name (anti-tarbomb). Default dest = **Desktop**
+(fallback home, then beside the store). `--name` defaults to
+`resonance-memories-<local-date>` and is both the `.zip` filename and the
+root folder; never overwrite → `Name (2).zip`.
+
+| Member | Why | Compression |
+|---|---|---|
+| `memories.jsonl` | Machine interchange: `normalize()`-shape, one record per line, embeddings as JSON arrays. A competitor reads this **without our exe**. | DEFLATE (`createDeflateRaw`) |
+| `memories/YYYY/MM/DD/<id>-<slug>.json` | Human-browsable, selectively extractable. Path = pure `f(created)` UTC, zero-padded, **always day-granular** (no dynamic spill; ~70 files/day at 50k). Text + metadata, **no embedding vectors** (they'd bloat it 800 MB+ and bury the sentence; re-embed on import). Pretty-printed. | STORE |
+| `catalog.txt` | Flat scan index (id · status · created · **path** · **bytes** · first ~80 chars). Usable without unzipping; the fallback when Explorer chokes on tens of thousands of members. Encoding-safe index for CJK names. | STORE |
+| `edges.json` | Hebbian sidecar. Without it the export is a "memory-amnesia machine" — facts carried, learned associations abandoned. Semantic cache may drop (recomputable); Hebbian weight may not. `processed_ids` / config stay OUT (runtime / prefs, not memory). | STORE |
+| `manifest.json` | Counts (total/current/superseded/deleted), export time, RM version, schema version, **`layout: "memories/YYYY/MM/DD"`**, what's in/not-in. | STORE |
+| `README.txt` | Plain text (Windows double-clicks it): these are your memories, you own them, this is a diary not a settings file, filenames may contain memory text, `memories.jsonl` is the importable half, use `catalog.txt` at scale, extract to a short path (Windows MAX_PATH). | STORE |
+
+Whole store, including deleted and superseded. History is the point.
+
+**Slug rule** (safety-only — don't sanitize into unrecognizable junk):
+`<id>-<slug>.json`. Lowercase, spaces→hyphens, strip filesystem-illegal
+(`<>:"/\|?*`, controls, trailing dots/spaces). Windows reserved
+(`CON`/`PRN`/`NUL`/`COM1-9`/`LPT1-9`/empty) → `<id>.json`. **No hash
+suffix.** Cap ~40 at the last hyphen (keep whole words). **Don't ASCII-fold
+non-Latin** — a CJK memory folded to empty→`<id>.json` is the payload
+failure for a whole class of users; preserve letters from any script and
+set the UTF-8 flag on the zip entry.
+
+### The zip writer
+
+Zero npm deps. `package.json` stays clean. Local file headers +
+`zlib.createDeflateRaw` (**not** `createDeflate` — the zlib wrapper makes
+Explorer reject the entry) + `zlib.crc32` (Node ≥22.5) + central directory
++ EOCD. **ZIP64 is mandatory** (extra field + ZIP64 EOCD + locator on every
+archive): classic zip caps at 65,535 entries; 100k individual files exceed
+it → a corrupt archive at the exact scale RM-07 exists for. There is no
+classic-only path that works at 10k and corrupts at 70k. Stream to
+`<name>.zip.tmp` and rename at EOCD (a killed export must not leave a
+truncated file that looks like a valid zip). Never materialize the 785 MB
+jsonl in memory — stream the Store (`iterate()` / SQLite cursor).
+
+### 50k proof (2026-09-05)
+
+S1 generator, 50k records, 768-d synthetic vectors, planted CJK / `CON` /
+deleted / superseded rows, Hebbian sidecar with `processed_ids` that must
+not travel. `node eval/substrate/export-proof.js`.
+
+| | |
+|---|---|
+| SqliteStore | **196.3 MB** (205,840,384 bytes) |
+| export | **34.3 s** → 50,005 entries, **387.0 MB** zip |
+| `memories.jsonl` uncompressed | **791.7 MB** (830,119,709 bytes) — streamed, never one string |
+| Windows `ZipFile.OpenRead` | **50,005** entries |
+| lossless jsonl round-trip | **yes** — 50k/50k field-equal, embeddings within 1e-5 |
+| catalog paths | 50,000/50,000 resolve |
+| layout | `memories/YYYY/MM/DD` |
+| CJK slug | preserved (`49997-记忆测试-—-这是一条中文记忆.json`) |
+| reserved `CON` | `<id>.json` |
+| `edges.json` | Hebbian weight present; `processed_ids` omitted |
+| store mutated | **no** |
+| synthetic ZIP64 | **70,000** entries, Windows opens 70,000, 0.9 s |
+
+The panel button (2c) is all that's left before the default-switch (slice 4).
+
+---
+
 ## Slice 3 (shipped) — RM-00 golden on SqliteStore
 
 Landed. The drop-in contract: same `memory-core.js`, different Store, **identical
-scorecard**. This is the bar that unblocks the default switch (slice 4) — after
-2b export/zip, so migration does not open a lock-in window.
+scorecard**. This is the bar that unblocks the default switch (slice 4) — 2b
+export/zip has shipped; 2c is the panel button.
 
 Product: `eval/run.js --store sqlite` (also `RESONANCE_STORE=sqlite`; `--store`
 wins). `eval/pipeline.js` is unchanged — the Store is injected; sqlite vs jsonl
@@ -419,8 +503,9 @@ genuine inequivalence; this run did not need one. If a future embedder
 emits values that are not f32-exact and a case actually flips, the honest
 move is to name the case and decide then — not to pre-paper the gate.
 
-This clears the default-switch *eval* gate. Slice 2b (export/zip/panel)
-must still land first so a migrated user can leave.
+This clears the default-switch *eval* gate. Slice 2b (export/zip) has
+landed; the panel button (2c) is all that remains before slice 4 so a
+migrated user can leave from the UI as well as the CLI.
 
 ---
 
@@ -447,8 +532,9 @@ These are product calls. The spike is evidence, not a substitute.
    green, because JSONL cannot load 50k? Recommend **SQLite default for new
    stores; existing JSONL migrates on first open with `.bak`**, once parity
    is proven. A 50k JSONL user is already stuck. **Parity is now proven
-   (slice 3, 27/31 case-for-case).** Slice 2b export still gates the
-   switch so migration is not a lock-in.
+   (slice 3, 27/31 case-for-case).** Slice 2b export has shipped; the 2c
+   panel button is the remaining UX gate before the switch so migration
+   is not a lock-in.
 5. **Move-between-devices story.** `.db` copy (after checkpoint) for RM↔RM;
    JSONL export for leaving RM / handing to a competitor. Recommend **both**,
    with JSONL as the documented sovereignty path (embeddings as JSON, no RM
@@ -470,8 +556,9 @@ These are product calls. The spike is evidence, not a substitute.
    surface, WAL, BLOB embeddings, in-process cache. Flag / env to select
    backend. `memory-core.js` unchanged.
 2. Streaming migrator JSONL→SQLite (**slice 2a, shipped** — `--migrate`) +
-   export SQLite→JSONL (**slice 2b** — `--export-jsonl` / zip bundle). `.bak`
-   is the recovery snapshot from 2a, not the export.
+   export SQLite→JSONL (**slice 2b, shipped** — `--export` zip /
+   `--export-jsonl`). `.bak` is the recovery snapshot from 2a, not the
+   export. Panel button is 2c.
 3. Conformance suite both backends (0005 step 4). Encode BUG-001/002.
 4. `normalize()` typed-array trap test.
 5. RM-00 golden on SqliteStore — must match JSONL scorecard. **Shipped (slice 3).**

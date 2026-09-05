@@ -9,6 +9,18 @@ stable; sophistication grows in the substrate, not in the API.
 ## [Unreleased]
 
 ### Added
+- **RM-07 slice 2b — sovereignty export.** `--export` writes a ZIP64 zip
+  (default dest Desktop, `--name` / `--out`, never-overwrite `Name (2).zip`)
+  containing `memories.jsonl` (machine interchange, embeddings as JSON arrays —
+  a competitor reads this without our exe), `memories/YYYY/MM/DD/<id>-<slug>.json`
+  (human, no vectors), `catalog.txt`, `edges.json` (Hebbian; `processed_ids`
+  omitted), `manifest.json` (`layout: "memories/YYYY/MM/DD"`), and `README.txt`.
+  `--export-jsonl` stays as the raw scripting primitive. Zero-dep writer
+  (`zip.js`: `createDeflateRaw` + `zlib.crc32` + stream to `.zip.tmp` + rename;
+  ZIP64 extra + EOCD + locator on every archive). READ-ONLY; not a fifth MCP
+  verb. We do not sanitize the export. 50k/768-d proof: **34.3 s**, 387 MB zip,
+  50k/50k lossless, Windows `ZipFile.OpenRead` 50,005 entries; synthetic ZIP64
+  **70,000** entries. Panel button is slice 2c.
 - **RM-07 slice 3 — RM-00 golden on SqliteStore.** `eval/run.js --store sqlite`
   (also `RESONANCE_STORE=sqlite`; `--store` wins) runs the same corpora through
   `SqliteStore` behind the Store seam — same `memory-core.js`, no forked recall

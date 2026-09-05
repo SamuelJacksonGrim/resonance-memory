@@ -1186,7 +1186,7 @@ sovereignty export (slice 2b).
 
 The drop-in contract: same `memory-core.js`, SqliteStore instead of JsonlStore,
 **identical RM-00 scorecard**. This is the eval bar that unblocks the default
-switch (slice 4), after 2b export.
+switch (slice 4); 2b export has shipped, 2c is the panel button.
 
 Reproduce:
 
@@ -1261,8 +1261,37 @@ Measured on this corpus:
 No tolerance in the parity gate. A silent epsilon would hide a real
 inequivalence; this run did not need one. Clean equivalence, not a fudge.
 
-JSONL stays the default. Slice 2b (export/zip/panel) must land before the
-slice-4 default switch so `--migrate` is not a lock-in.
+JSONL stays the default. Slice 2b (export/zip) has landed; the panel button
+(2c) is all that remains before the slice-4 default switch so `--migrate`
+is not a lock-in.
+
+---
+
+## RM-07 slice 2b — sovereignty export (2026-09-05)
+
+`--export` zip + `--export-jsonl`. Read-only. Not the golden gate.
+Reproduce: `node eval/substrate/export-proof.js`.
+
+S1 generator, 50k records, 768-d synthetic vectors, planted CJK / `CON` /
+deleted / superseded rows, Hebbian sidecar with a `processed_ids` LRU that
+must not travel.
+
+| | |
+|---|---|
+| SqliteStore | 196.3 MB |
+| export | **34.3 s** → 50,005 entries, **387.0 MB** zip |
+| `memories.jsonl` uncompressed | 791.7 MB (streamed; never one string) |
+| Windows `ZipFile.OpenRead` | **50,005** |
+| jsonl round-trip | **50k/50k** field-equal, embeddings within 1e-5 |
+| catalog paths | 50,000/50,000 resolve |
+| layout | `memories/YYYY/MM/DD` |
+| CJK slug | preserved |
+| reserved `CON` | `<id>.json` |
+| `edges.json` | Hebbian present; `processed_ids` omitted |
+| store mutated | no |
+| synthetic ZIP64 | **70,000** entries, Windows opens 70,000, 0.9 s |
+
+Golden unmoved (export is a separate CLI path). Panel button is 2c.
 
 ---
 

@@ -22,6 +22,8 @@ node eval/substrate/scale.js --store sqlite --n 50000,100000 --no-field --latenc
      # RM-07 product Store; direct INSERT (the migrator is --migrate / migrate-proof.js)
 node eval/substrate/migrate-proof.js
      # RM-07 slice 2a: 50k JSONL → SQLite lossless proof (stream vs readFileSync wall)
+node eval/substrate/export-proof.js
+     # RM-07 slice 2b: 50k sovereignty zip (opens, ZIP64 at 70k, jsonl round-trip)
 ```
 
 First run live-embeds against LM Studio (`:1234`, `text-embedding-nomic-embed-text-v1.5`),

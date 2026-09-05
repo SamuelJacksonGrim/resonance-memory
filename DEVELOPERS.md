@@ -13,16 +13,18 @@ an opaque `id`.
 | `record.js` | The shared record schema (incl. temporal fields and `embedding_version`), durable atomic writes, and the access sidecar. |
 | `store.js` | Store seam (`JsonlStore` default; `openStore()` selects `SqliteStore` in `store-sqlite.js`). |
 | `test.js` | Dependency-free test suite: `npm test`. |
-| `package.json` | No dependencies — scripts only (`test`, `build`, `panel`, `mcp`, `seed`, `inspect`, `dedup-existing`, `migrate`). Sole source of the version string; `server.js` reads it so `serverInfo` can't drift. |
+| `package.json` | No dependencies — scripts only (`test`, `build`, `panel`, `mcp`, `seed`, `inspect`, `dedup-existing`, `migrate`, `export`). Sole source of the version string; `server.js` reads it so `serverInfo` can't drift. |
 | `field.js` | Associative layer (Phase 2a): kNN semantic graph over stored vectors; neighborhood expansion. |
 | `ledger.js` | Retired Hebbian sidecar (Phase 2b). Off the live path; kept as the epoch-decay reference. |
 | `edges.js` | Unified persistent edge store (Phase 0): two-signal record + one-way `.assoc.json` → `.edges.json` migration. On the live recall path. Save-time semantic neighbors persist on `save()` (K=5, min cosine 0.25); recall still uses `field.js`. Hebbian decay is lazy wall-clock via `effectiveHebbian` (I6). Reinforce materializes the decayed weight before applying α; MCP request-ID dedup LRU lives in the sidecar (Phase 0.3). Soft prune (0.4 / I8) is an explicit `pruneSweep()` (not recall/save); reactivation is in-place on save/edit of an endpoint. |
 | `extract.js` | RM-01.c Tier 2: opt-in LLM extraction (prompt, parser, sanity, chat/sampling, capability detect). Off by default. |
 | `panel.js` | Local 127.0.0.1 control panel: field toggle, LLM-extraction toggle (surfaced when a capable model is detected), Connect/Disconnect, association graph view, heartbeat auto-shutdown. |
 | `install.js` | Detect + wire into LM Studio / Claude Desktop MCP config (preserves other servers, leaves `.bak`). |
-| `entry.js` | Bundle dispatch: `--mcp` → server, `--install`/`--uninstall` → installer, `--dedup-existing` → RM-02.c backfill (dry-run default), `--migrate` → RM-07 slice 2a JSONL→SQLite, else → panel. |
+| `entry.js` | Bundle dispatch: `--mcp` → server, `--install`/`--uninstall` → installer, `--dedup-existing` → RM-02.c backfill (dry-run default), `--migrate` → RM-07 slice 2a JSONL→SQLite, `--export` / `--export-jsonl` → RM-07 slice 2b sovereignty export, else → panel. |
 | `dedup-existing.js` | RM-02.c CLI. Reports (or `--apply`s) cosine-banded restatements/merges on a store written before 02.b. Calls `dedupExisting()` in `memory-core.js` — same bands as `save()`, no second decision. |
 | `migrate-sqlite.js` | RM-07 slice 2a. Streaming JSONL→SQLite (10-step protocol). Opt-in; not auto-run on startup. `.bak` is a recovery snapshot, not the sovereignty export. |
+| `zip.js` | Zero-dep ZIP64 writer (slice 2b). `createDeflateRaw` + `zlib.crc32` + stream to `.zip.tmp` + rename. ZIP64 on every archive. |
+| `export-memory.js` | Slice 2b CLI. `--export` writes the zip bundle; `--export-jsonl` is the raw primitive. Read-only. |
 | `build-exe.js` | Embed runtime assets → esbuild → Node SEA blob → postject → flip PE subsystem to GUI → stage `dist/`. |
 | `embedded-assets.js` | **Generated** each build (gitignored): `demo-seed.jsonl` + `system-prompt.md` baked in as strings so the shipped exe is one self-contained file. |
 | `inspect_sidecar.js` | Dependency-free telemetry for the Hebbian ledger. |
@@ -65,6 +67,13 @@ an opaque `id`.
   fold AccessLog once, count-verify, WAL checkpoint, atomic rename, **then**
   JSONL → `.jsonl.bak`. The `.bak` is a recovery snapshot, not the
   sovereignty export. Failure before the `.db` rename leaves the JSONL live.
+- **`--export`** (RM-07 slice 2b) writes the sovereignty zip bundle
+  (default dest Desktop, `--name` / `--out`, never-overwrite). Contains
+  `memories.jsonl` (a competitor reads it without our exe), per-memory
+  files under `memories/YYYY/MM/DD/`, `catalog.txt`, `edges.json`,
+  `manifest.json`, `README.txt`. **`--export-jsonl`** is the raw
+  scripting primitive the zip wraps. Read-only; not a fifth verb. Panel
+  button is slice 2c. Extract to a short path (Windows MAX_PATH).
 
 ## Build
 
