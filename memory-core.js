@@ -56,7 +56,7 @@ const {
 const {
   normalize, isHistoricalQuery, detectSupersession, supersedePatches,
 } = require("./record.js");
-const { makeEdge, setSemantic, semanticValid, hebbianDecayType } = require("./edges.js");
+const { makeEdge, setSemantic, semanticValid, hebbianDecayType, reactivateEdge } = require("./edges.js");
 
 // Reciprocal-kNN edge construction (RM-00 field experiment, 2026-08-01). Directional
 // kNN let a one-sided "hub" node bleed into a seed's neighborhood as a false positive
@@ -88,6 +88,9 @@ const CONSTRAINT_GATE = process.env.RESONANCE_CONSTRAINT_GATE ? Number(process.e
  *
  *   0.55 at RECALL  — a tight gate for what surfaces in Related:
  *   0.25 at SAVE    — a looser net for what's worth persisting as structure
+ *                     (Phase 0.4 SEMANTIC_PRUNE_GATE matches this: below it
+ *                     an edge wouldn't even be created today, so it is the
+ *                     prune floor. Do not raise prune to 0.55.)
  *
  * Unifying them would either drop persistable structure (raising this to 0.55)
  * or flood Related: (lowering recall to 0.25). Do not silently collapse them.
@@ -168,6 +171,7 @@ function bindSaveTimeNeighbors(rec, mems, edgeStore, opts = {}) {
   byId.set(String(rec.id), rec);
 
   let wrote = false;
+  const now = typeof edgeStore.now === "function" ? edgeStore.now() : undefined;
   for (const { m, cos } of top) {
     let edge = edgeStore.get(rec.id, m.id);
     if (!edge) {
@@ -177,6 +181,12 @@ function bindSaveTimeNeighbors(rec, mems, edgeStore, opts = {}) {
         origin: "save-time-neighbor",
         hebbianWeight: 0,
       }));
+      wrote = true;
+    } else if (edge.pruned_at) {
+      // save() touching an endpoint of a pruned edge revives it in place
+      // (Phase 0.4 / I1: reactivation is a consequence of an existing
+      // mutation, never a fifth tool). created_at and hebbian stay put.
+      reactivateEdge(edge, now);
       wrote = true;
     }
     const recA = byId.get(String(edge.a));
@@ -268,6 +278,19 @@ function createCore({
     } catch { /* warmth must never break save */ }
   }
 
+  // Server-side reactivation (Phase 0.4 / I1). A save/edit that touches an
+  // endpoint revives that id's pruned incident edges in place. Not a tool.
+  // Wrapped so a missing EdgeStore cannot fail the verb (I3).
+  function tryReactivateIncident(id) {
+    try {
+      if (id == null) return;
+      const L = hebbianStore();
+      if (!L || typeof L.reactivateIncident !== "function") return;
+      const n = L.reactivateIncident(id);
+      if (n && typeof L.save === "function") L.save();
+    } catch { /* reactivation must never break save/edit */ }
+  }
+
   // Save-time semantic bind. Sidecar write (I5 allows it — I5 protects the
   // JSONL store). Wrapped so a missing/corrupt EdgeStore cannot fail save (I3).
   // No vector → nothing to compare; bind later when a real vector exists.
@@ -296,6 +319,7 @@ function createCore({
     const same = mems.find((r) => r.text === content);
     if (same) {
       store.update(same.id, { last_confirmed: now });
+      tryReactivateIncident(same.id);  // save touching an existing endpoint (0.4)
       tryPrimeSave(same.id);
       return "Already remembered — confirmed it's still current. (" + store.current().length + " memories total.)";
     }
@@ -453,8 +477,10 @@ function createCore({
   }
 
   // opts.requestId is accepted (server threads it into every verb) but
-  // unused: the transition table forbids any edge write on edit, including
-  // a dedup-record stamp. Reactivation-on-edit is 0.4.
+  // unused for dedup: the transition table forbids a dedup-record stamp
+  // on edit. Phase 0.4 reactivation is the one edge write edit is allowed
+  // — and only when a pruned incident edge actually exists. No pruned
+  // edges → sidecar bytes unchanged (the 0.3 tests).
   async function edit(id, content, _opts) {
     if (id === undefined || id === null || id === "") return "Provide the `id` shown in a recall listing.";
     content = (content || "").trim();
@@ -481,6 +507,7 @@ function createCore({
     }
     const ok = store.update(id, patch);
     if (!ok) return "No memory with id " + id + ".";
+    tryReactivateIncident(id);
     return embedded
       ? "Edited memory " + id + "."
       : "Edited memory " + id + ", but re-embedding failed - it will match on keywords only until edited again.";

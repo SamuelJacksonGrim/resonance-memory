@@ -165,8 +165,9 @@ Design: [`proposed/0002`](proposed/0002-temporal-supersession.md).
       change commit atomically** (LRU of processed JSON-RPC ids lives inside the sidecar
       envelope, one `writeFileDurable`). Relates to `W-04` (orthogonal: this is same-process
       retry, not cross-process last-writer-wins).
-- [ ] **0.4** Soft pruning — an edge whose learned signal hits zero survives if semantic still
-      clears the gate. Mirror soft-delete + `vacuum()` (`I8`). **Reactivation is server-side only**
+- [x] **0.4** Soft pruning — an edge whose learned signal hits zero survives if semantic still
+      clears the gate (`SEMANTIC_PRUNE_GATE` 0.25 = save-time bind). Mirror soft-delete +
+      `vacuum()` (`I8` now held for edges). **Reactivation is server-side only**
       (I1): revive in place, `created_at` preserved, `prune_count`/`first_pruned_at`/
       `last_reactivated_at` kept bounded; no `reactivate_edge()` tool.
 - [ ] **0.5** Phase 0 tests — every transition-table row incl. the negatives (recall/edit write

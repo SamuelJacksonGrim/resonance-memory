@@ -92,12 +92,14 @@ Every phase must leave these standing. **Definitions, rationale, and the backing
 | I5 | Durable writes; no *unbounded* write on a read path | ✅ held (one self-extinguishing legacy exception) |
 | I6 | Reading does not drive the decay clock | ✅ held |
 | I7 | Activation never persists | ⬜ n/a until Phase 1 |
-| I8 | No silent removal | ✅ held (records) · ⬜ edges — Phase 0.4 |
+| I8 | No silent removal | ✅ held (records + edges, Phase 0.4) |
 | I9 | Discovery nominates; it does not appoint | ✅ held |
 
 The I4/I5 exceptions are real and named on purpose; an invariant claimed more strongly than
 the code supports stops anyone from looking. Full accounting in ARCHITECTURE. I6 flipped
-from target to held in Phase 0.2 (lazy wall-clock decay; `tick()` gone from recall).
+from target to held in Phase 0.2 (lazy wall-clock decay; `tick()` gone from recall). I8
+flipped from held-records-only to held-for-edges in Phase 0.4 (`pruneSweep` marks
+`pruned_at`; `vacuum()` is the explicit hard drop).
 
 ---
 
@@ -110,11 +112,11 @@ Status only. Where each lives and how it works: `ARCHITECTURE.md`. What each sat
 | Four-verb MCP surface; single shared core (server + eval) | — | Foundation — do not fork |
 | Embed-at-save, cosine recall, keyword fallback | — | Foundation |
 | Durable atomic writes; recall does no *unbounded* store write | — | `BUG-001`/`BUG-002` |
-| Soft delete + `vacuum()` compaction | — | Precedent for Phase 0.4 — **reuse the pattern** |
+| Soft delete + `vacuum()` compaction | — | Records: `deleted` then `vacuum()`. Edges (0.4): `pruned_at` then `EdgeStore.vacuum()`. |
 | Store abstraction behind the verbs | — | SQLite swap is `RM-07` |
 | kNN semantic graph, neighborhood expansion, constraint rescue | — | 🟡 ephemeral, rebuilt per recall |
 | Hebbian weights, bounded `maxBonus·tanh(w)`, provenance-discounted | — | 🟡 per-edge bounding solved; wall-clock decay ✅ (0.2) |
-| Decay + prune | — | ✅ lazy wall-clock half-life (0.2); prune is Phase 0.4 |
+| Decay + prune | — | ✅ lazy wall-clock half-life (0.2); soft prune + reactivation (0.4, I8 held for edges) |
 | Bi-temporal validity + current-gating | `RM-04` | ✅ extended by Phase 7, not started by it |
 | Cue-gated supersession detection v1 | `RM-03` v1 | 🟡 continued by Phase 7.2 |
 | Offline deterministic eval + golden gate | `RM-00` | ✅ **this is Phase 2.5** — extend, don't rebuild |
@@ -163,7 +165,7 @@ The one phase in flight. Full spec + metrics + tests: [`phase-0`](phases/phase-0
 | **0.1** | Save-time semantic edges + edge timestamps; save-latency cost sweep | ✅ |
 | **0.2** | Lazy wall-clock decay of the learned signal (**I6 held**) | ✅ |
 | **0.3** | Materialize-on-mutation; MCP request-ID idempotency (atomic dedup) | ✅ |
-| **0.4** | Soft pruning (mirror `vacuum()`); server-side reactivation | ⬜ |
+| **0.4** | Soft pruning (mirror `vacuum()`); server-side reactivation | ✅ |
 | **0.5** | Phase 0 tests — every transition row, *reading ≠ decay*, *fails-open* | ⬜ |
 | **0.6** | Threat-model sketch (design only; `RM-16` stays gated to Phase 2) | ⬜ |
 
@@ -246,7 +248,7 @@ Phase 0.2   lazy wall-clock decay of the learned signal   (I6 held)   ✅
   ↓
 Phase 0.3   materialize-on-mutation · request-ID idempotency   ✅
   ↓
-Phase 0.4   soft pruning · server-side reactivation
+Phase 0.4   soft pruning · server-side reactivation   ✅
   ↓
 Phase 0.5   tests — reading ≠ reinforcement · fails-open
   ↓

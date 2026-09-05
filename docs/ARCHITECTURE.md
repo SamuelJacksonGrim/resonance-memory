@@ -57,7 +57,7 @@ than the code supports is worse than none — it stops anyone from looking.
 | **I5** | **Durable writes; no *unbounded* write on a read path.** Every store rewrite goes through `writeFileDurable()` (temp → fsync → atomic rename); recall performs zero store writes in steady state. | ✅ held¹ | `record.js`; `BUG-001`/`BUG-002` |
 | **I6** | **Reading does not drive the decay clock.** Co-recall *reinforcement* is retained (it is the differentiator); edge **decay** is lazy wall-clock, computed at access via `effectiveHebbian`, never stored, never ticked by recall count. A reinforcing mutation **materializes** that computed weight before applying α (Phase 0.3), so reinforcement cannot bypass decay. | ✅ held (Phase 0.2; materialize 0.3) | `edges.js` `effectiveHebbian` / `_bump`; `memory-core.js` recall (no `tick()`) |
 | **I7** | **Activation never persists.** Spreading activation (Phase 1) is seeded per query, attenuated per hop, bounded, and never written to the edge store. | ⬜ n/a until Phase 1 | `phases/phase-0` |
-| **I8** | **No silent removal.** *Record* deletes are soft (`deleted`, compacted at `vacuum()`) and supersession keeps a non-overlapping validity chain. **Edge pruning is the open gap:** `ledger.decay()` drops below-floor edges with **no marker** today; Phase 0.4 makes it soft (`pruned_at`, reactivatable). | ✅ held (records) · ⬜ edges — Phase 0.4 | `store.js` `vacuum`; `ledger.js` `decay`; `phases/phase-0` |
+| **I8** | **No silent removal.** *Record* deletes are soft (`deleted`, compacted at `vacuum()`) and supersession keeps a non-overlapping validity chain. *Edge* pruning is the same pattern: `pruneSweep()` marks `pruned_at` (record kept; `incident()` skips it); `EdgeStore.vacuum()` is the explicit hard drop. Never on `recall`/`save`. Reactivation is in-place on save/edit/reinforce of an endpoint, never a fifth tool. | ✅ held (records + edges, Phase 0.4) | `store.js` `vacuum`; `edges.js` `pruneSweep` / `vacuum`; `phases/phase-0` |
 | **I9** | **Discovery nominates; it does not appoint.** The field/ledger *expand* the candidate set (the `Related:` block); they never reorder the primary cosine result. Primary results are **byte-identical** field on or off. | ✅ held | `memory-core.js` recall |
 
 ¹ **I4/I5 each carry one self-extinguishing legacy exception:** a record saved while the
@@ -138,13 +138,13 @@ same record the panel renders and the installer's target reads.
 | File | Role | Depends on |
 |---|---|---|
 | `entry.js` | Mode dispatch on `argv`. | server / panel / install |
-| `server.js` | MCP server. Declares the four tool schemas + descriptions, wires the *environment* (network embedder, live field toggle, lazy EdgeStore) into the shared core, runs the stdio JSON-RPC loop, vacuums soft-deletes at startup. Reads the version from `package.json` so `serverInfo` can't drift. | `memory-core`, `store`, `edges`, `package.json` |
+| `server.js` | MCP server. Declares the four tool schemas + descriptions, wires the *environment* (network embedder, live field toggle, lazy EdgeStore) into the shared core, runs the stdio JSON-RPC loop, vacuums soft-deletes and `pruneSweep`s faded+weak edges at startup. Reads the version from `package.json` so `serverInfo` can't drift. | `memory-core`, `store`, `edges`, `package.json` |
 | `memory-core.js` | **The four cognitive verbs, as one implementation.** `createCore({ store, embed, fieldEnabled, getEdgeStore })` → `{ save, recall, edit, remove }`. Everything environment-specific is *injected*. This is the code both `server.js` and `eval/pipeline.js` run — the RM-00 golden is the proof they never diverge. | `field`, `record` |
 | `record.js` | The shared record schema (`normalize()`), durable atomic writes (`writeFileDurable()`), the access sidecar (`AccessLog`), and the lexical heuristics (constraint typing, historical-query detection, supersession cues). Owned here so server and panel agree on a record byte-for-byte. | stdlib only |
 | `store.js` | `JsonlStore` — the flat-JSONL backend behind the Store seam. Constructible and testable without the stdio loop; a SQLite backend can replace it with the same method surface. | `record` |
 | `field.js` | Associative layer (Phase 2a): a kNN semantic graph over stored vectors, neighborhood expansion, and constraint rescue. No new embedding calls, no LLM extraction. | stdlib only |
 | `ledger.js` | Retired Hebbian sidecar (Phase 2b). Off the live path as of Slice C; kept so tests can compare EdgeStore bonuses against the shipped epoch-decay math. | `record` |
-| `edges.js` | Unified persistent edge store (Phase 0 / `RM-21`): one undirected record, two independent signals (`semantic` derived cache validated by version comparison, `hebbian` source of truth), typed provenance, one-way `.assoc.json` → `.edges.json` migration (`kind: "resonance-edges"`). **On the live recall path** — Hebbian bonus (via `effectiveHebbian`)/reinforce/save. Decay is lazy wall-clock (I6); `tick()` is retired. A reinforcing mutation materializes `effectiveHebbian` before applying α (0.3). MCP request-ID idempotency: a 256-entry LRU of processed JSON-RPC ids (`processed_ids`) lives in the sidecar envelope so one `writeFileDurable` commits the dedup record and the weight change together. `field.js` still builds the semantic kNN at recall. | `record` |
+| `edges.js` | Unified persistent edge store (Phase 0 / `RM-21`): one undirected record, two independent signals (`semantic` derived cache validated by version comparison, `hebbian` source of truth), typed provenance, one-way `.assoc.json` → `.edges.json` migration (`kind: "resonance-edges"`). **On the live recall path** — Hebbian bonus (via `effectiveHebbian`)/reinforce/save. Decay is lazy wall-clock (I6); `tick()` is retired. A reinforcing mutation materializes `effectiveHebbian` before applying α (0.3). MCP request-ID idempotency: a 256-entry LRU of processed JSON-RPC ids (`processed_ids`) lives in the sidecar envelope so one `writeFileDurable` commits the dedup record and the weight change together. Soft prune (0.4 / I8): `pruneSweep()` marks `pruned_at` only when *both* unreinforced and semantically weak (`SEMANTIC_PRUNE_GATE` 0.25); hard drop is `vacuum()`, explicit. Reactivation is in-place on save/edit/reinforce of an endpoint. `field.js` still builds the semantic kNN at recall. | `record` |
 | `panel.js` | The `127.0.0.1` control panel (largest file): field toggle, Connect/Disconnect, the 3D association-graph view, demo graph, heartbeat auto-shutdown. | `install`, `field`, `engine`, `edges`, `record`, `embedded-assets` |
 | `install.js` | Detect + wire into LM Studio / Claude Desktop MCP config. Preserves other configured servers, leaves a `.bak`. | stdlib only |
 | `engine.js` | One-click embedder setup for the panel: drives LM Studio's bundled `lms` CLI to start the server, download the Nomic embedder, load it, and verify the endpoint answers. Pure convenience — the MCP server never needs it. | stdlib + `fetch` |
@@ -181,7 +181,8 @@ argument is always the smallest possible thing (`content`, `query`, or `id`).
 
 1. **Exact restatement guard.** If a current memory has byte-identical `text`, bump its
    `last_confirmed` and confirm — don't store a second copy. (Near-duplicate/cosine-banded
-   dedup is `RM-02`, still open; this is only the free, unambiguous case.)
+   dedup is `RM-02`, still open; this is only the free, unambiguous case.) A confirm
+   also revives that id's pruned incident edges (Phase 0.4 — save touching an endpoint).
 2. **Embed once.** POST `content` to the OpenAI-compatible `/v1/embeddings` endpoint (LM Studio
    default, `text-embedding-nomic-embed-text-v1.5`, 768-dim). If the embedder is down, the
    record is stored **without** a vector and backfilled on a later recall — a save never fails
@@ -198,7 +199,9 @@ argument is always the smallest possible thing (`content`, `query`, or `id`).
    neighbors among existing stored vectors above cosine **0.25** and persist them on the
    EdgeStore: measured `semantic.value` + `src_versions` tagged to the canonical endpoints,
    `hebbian.weight = 0` (no seeded baseline), `provenance.origin = "save-time-neighbor"`.
-   No vector (embedder down) → bind nothing, don't throw. This is a sidecar write (I5
+   No vector (embedder down) → bind nothing, don't throw. A bind that finds an already-
+   pruned pair revives it in place (0.4) rather than inserting a duplicate. This is a
+   sidecar write (I5
    protects the JSONL store, not sidecars). **Recall does not read this table yet** —
    `Related:` still comes from `field.js` at minSim **0.55**. The two thresholds are
    different jobs: 0.55 is a tight gate for what *surfaces*; 0.25 is a looser net for
@@ -235,6 +238,8 @@ Replace `text`, re-embed, refresh `modified` + `last_confirmed` (an edit is a co
 place; the fact is current again as of now). A successful re-embed increments
 `embedding_version` in lockstep with the new vector; a failed one omits both fields from
 the patch so a good embedding cannot be clobbered (`BUG-008`). One durable rewrite.
+Incident pruned edges are revived in place (Phase 0.4); no pruned rows → the sidecar is
+not touched. No dedup-record stamp (transition table).
 
 ### `delete_memory({ id })`
 
@@ -252,7 +257,8 @@ resonance-memory.jsonl              the store — one JSON record per line
 resonance-memory.jsonl.access.json  access-count sidecar   (AccessLog, record.js)
 resonance-memory.jsonl.edges.json   unified edge table     (EdgeStore, edges.js)
                                     Hebbian source of truth + semantic derived cache.
-                                    `kind: "resonance-edges"`.
+                                    `kind: "resonance-edges"`. Soft-pruned rows stay
+                                    until an explicit `vacuum()`.
 resonance-memory.jsonl.assoc.json   LEGACY Hebbian sidecar (Ledger, ledger.js).
                                     Read-only-for-migration: if `.edges.json` is
                                     missing, weights are copied in one-way and this
@@ -331,8 +337,8 @@ properties, preserved byte-for-byte from the retired `Ledger`:
   stored. Unused associations fade with elapsed time, not recall count (I6).
 - **Materialize on mutation (Phase 0.3).** A reinforcing write first stores
   `effectiveHebbian(edge, now)` as `hebbian.weight`, then adds α, then stamps
-  `hebbian.last_updated = now`. Provenance is preserved; `pruned_at` is left
-  for 0.4. After the write, stored weight and effective weight coincide, so
+  `hebbian.last_updated = now`. Provenance is preserved; a pruned edge is
+  revived in place first (0.4). After the write, stored weight and effective weight coincide, so
   reinforcement can never bypass accumulated decay (the "ghost weight" of
   adding α to an undecayed stored value after a long idle). At Δt≈0 this is
   a no-op on the number — an instant eval does not move.
@@ -345,8 +351,19 @@ properties, preserved byte-for-byte from the retired `Ledger`:
   not serialize concurrent panel + MCP writers.
 
 Neither layer ever reorders the primary cosine result — invariant #3 / I9. A corrupt sidecar
-fails open to empty (bonus 0); recall still returns cosine (I3). Soft prune of a fully-faded
-edge is Phase 0.4.
+fails open to empty (bonus 0); recall still returns cosine (I3).
+
+- **Soft prune (Phase 0.4 / I8).** An explicit `pruneSweep()` (MCP startup or on
+  demand — never `recall`/`save`) marks an edge `pruned_at` only when it is
+  **both** unreinforced (`effectiveHebbian < 1e-6`) **and** semantically weak
+  (`semantic.value < 0.25`, the save-time bind floor). An idle but
+  semantically-strong edge stays, so constraint-rescue does not regress
+  (RESULTS field experiment #2 — the two-signal rule). The record is kept;
+  `incident()` skips it. `EdgeStore.vacuum()` is the hard drop, also
+  explicit. Reactivation is a consequence of `save`/`edit`/`reinforce`
+  touching an endpoint: `pruned_at → null`, `created_at` and the decayed
+  Hebbian bytes preserved, `prune_count` / `first_pruned_at` /
+  `last_reactivated_at` kept as O(1) history. No fifth tool (I1).
 
 ---
 

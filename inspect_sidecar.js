@@ -160,7 +160,7 @@ function main() {
   console.log(`- max / avg / min weight: ${ws[0].toFixed(3)} / ${(sum / total).toFixed(3)} / ${ws[ws.length - 1].toFixed(3)}`);
   console.log(`- sidecar file size:      ${bytes} bytes  (rewritten on reinforce, not on a decay tick)`);
   console.log(`  perf is only a concern if this grows large; wall-clock decay fades the`);
-  console.log(`  learned signal on read, and 0.4 will prune the ones that go idle.\n`);
+  console.log(`  learned signal on read; pruneSweep (0.4) soft-prunes idle AND weak ones.\n`);
 }
 
 main();

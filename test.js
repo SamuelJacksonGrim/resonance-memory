@@ -543,6 +543,8 @@ const {
   DEDUP_LRU_SIZE, canonRequestId,
   effectiveHebbian, lambdaFromHalfLife, halfLifeFor, hebbianDecayType,
   elapsedSeconds, HALF_LIFE_SECONDS, DEFAULT_HALF_LIFE_TYPE, DAY, HOUR,
+  SEMANTIC_PRUNE_GATE, HEBBIAN_PRUNE_FLOOR,
+  isSemanticallyWeak, isUnreinforced, shouldPrune, markPruned, reactivateEdge,
 } = require("./edges.js");
 const { Ledger } = require("./ledger.js");
 
@@ -1080,7 +1082,7 @@ test("reinforce after a long idle materializes decay first (no ghost weight)", (
   assert.deepStrictEqual(after.semantic, semSnap, "semantic unmoved");
   assert.deepStrictEqual(after.provenance, originSnap, "provenance preserved");
   assert.strictEqual(after.created_at, created, "created_at is provenance only");
-  assert.strictEqual(after.pruned_at, null, "pruned_at stays as-is (reactivation is 0.4)");
+  assert.strictEqual(after.pruned_at, null, "already-active edge: reactivate is a no-op");
 });
 
 test("Δt=0 reinforce is byte-identical to the pre-0.3 stored+α rule (why the golden holds)", () => {
@@ -1194,6 +1196,218 @@ test("decay-to-zero (computed) leaves the edge alive with semantic intact", () =
   assert.ok(E.get(1, 2), "edge still present (prune is 0.4, not this slice)");
   assert.strictEqual(E.get(1, 2).semantic.value, 0.66, "semantic intact at computed-zero");
   assert.strictEqual(E.weight(1, 2), 0.4, "stored weight is the source of truth, unmoved");
+});
+
+// --- Phase 0.4: soft prune + reactivation ----------------------------------
+test("SEMANTIC_PRUNE_GATE matches SAVE_TIME_MIN_COS (below it, bind wouldn't create the edge)", () => {
+  const { SAVE_TIME_MIN_COS: minCos } = require("./memory-core.js");
+  assert.strictEqual(SEMANTIC_PRUNE_GATE, 0.25);
+  assert.strictEqual(SEMANTIC_PRUNE_GATE, minCos,
+    "prune gate must stay glued to the save-time bind floor (Risk #2: do not raise to 0.55)");
+  assert.ok(SEMANTIC_PRUNE_GATE < 0.45, "must stay below the constraint-rescue gate");
+  assert.ok(HEBBIAN_PRUNE_FLOOR < 1e-3, "~0, not the retired epoch floor of 0.05");
+});
+
+function putCombo(store, a, b, heb, sem) {
+  return store.put(makeEdge(a, b, {
+    origin: "save-time-neighbor", now: T0, hebbianWeight: heb,
+    semantic: { value: sem, src_versions: { a: 1, b: 1 } },
+  }));
+}
+
+test("pruneSweep fires only for unreinforced AND semantically weak (4 combinations)", () => {
+  // Failure signature: a merged scalar prunes the strong-semantic rarely-recalled
+  // pair and constraint rescue regresses (RESULTS field experiment #2).
+  const E = new EdgeStore(tmp("p-4combo.edges.json"), { now: () => T0 });
+  putCombo(E, 1, 2, 1.0, 0.70);   // reinforced + strong
+  putCombo(E, 3, 4, 1.0, 0.10);   // reinforced + weak
+  putCombo(E, 5, 6, 0, 0.70);     // unreinforced + strong  ← must SURVIVE
+  putCombo(E, 7, 8, 0, 0.10);     // unreinforced + weak    ← only this prunes
+  const n = E.pruneSweep();
+  assert.strictEqual(n, 1, "exactly one of the four combinations prunes");
+  assert.strictEqual(E.get(1, 2).pruned_at, null, "reinforced+strong stays");
+  assert.strictEqual(E.get(3, 4).pruned_at, null, "reinforced+weak stays (Hebbian is enough)");
+  assert.strictEqual(E.get(5, 6).pruned_at, null, "unreinforced+strong stays (the two-signal rule)");
+  assert.strictEqual(E.get(7, 8).pruned_at, T0, "unreinforced+weak is the only prune");
+  assert.strictEqual(E.get(7, 8).prune_count, 1);
+  assert.strictEqual(E.get(7, 8).first_pruned_at, T0);
+});
+
+test("semantic exactly at the prune gate survives (same >= as save-time bind)", () => {
+  const E = new EdgeStore(tmp("p-gate.edges.json"), { now: () => T0 });
+  putCombo(E, 1, 2, 0, SEMANTIC_PRUNE_GATE);          // 0.25 on the gate
+  putCombo(E, 3, 4, 0, SEMANTIC_PRUNE_GATE - 1e-9);    // just under
+  E.pruneSweep();
+  assert.strictEqual(E.get(1, 2).pruned_at, null, "0.25 is worth persisting");
+  assert.ok(E.get(3, 4).pruned_at, "just under 0.25 prunes when unreinforced");
+});
+
+test("null/empty semantic is weak: unreinforced migrated edges prune", () => {
+  const E = new EdgeStore(tmp("p-nullsem.edges.json"), { now: () => T0 });
+  E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 0, migrated_from: "assoc.json" }));
+  E.put(makeEdge(3, 4, { origin: "co-activation", now: T0, hebbianWeight: 0.8, migrated_from: "assoc.json" }));
+  E.pruneSweep();
+  assert.ok(E.get(1, 2).pruned_at, "no semantic + no Hebbian → prune");
+  assert.strictEqual(E.get(3, 4).pruned_at, null, "no semantic but still reinforced → keep");
+});
+
+test("decayed-to-~0 Hebbian counts as unreinforced (effective, not stored)", () => {
+  let now = T0;
+  const E = new EdgeStore(tmp("p-decayed.edges.json"), { now: () => now });
+  putCombo(E, 1, 2, 0.4, 0.10);   // will be unreinforced+weak after idle
+  putCombo(E, 3, 4, 0.4, 0.70);   // will be unreinforced+strong after idle
+  now = plusIso(T0, 100 * HALF_LIFE_SECONDS.fact);
+  assert.ok(E.effectiveWeight(1, 2) < HEBBIAN_PRUNE_FLOOR);
+  assert.ok(E.effectiveWeight(3, 4) < HEBBIAN_PRUNE_FLOOR);
+  assert.strictEqual(E.weight(1, 2), 0.4, "stored is unmoved until a mutation");
+  const n = E.pruneSweep();
+  assert.strictEqual(n, 1);
+  assert.ok(E.get(1, 2).pruned_at, "faded + weak prunes");
+  assert.strictEqual(E.get(3, 4).pruned_at, null, "faded + strong survives (constraint-rescue case)");
+  assert.strictEqual(E.get(1, 2).hebbian.weight, 0.4, "soft prune keeps the decayed stored weight");
+  assert.strictEqual(E.get(1, 2).hebbian.last_updated, T0, "prune does not stamp last_updated");
+});
+
+test("a semantically-strong unreinforced edge still serves constraint-rescue after a sweep", () => {
+  // The live field.js walk rebuilds from embeddings (it does not yet read
+  // this table), but the failure signature is about THIS record vanishing.
+  // incident() is the retrieval surface a later rescue walk would use.
+  const E = new EdgeStore(tmp("p-rescue.edges.json"), { now: () => T0 });
+  putCombo(E, "lemon", "diabetic", 0, 0.60);   // >= CONSTRAINT_GATE 0.45
+  putCombo(E, "lemon", "noise", 0, 0.10);
+  E.pruneSweep();
+  assert.strictEqual(E.get("lemon", "diabetic").pruned_at, null, "bridge survived");
+  const inc = E.incident("lemon");
+  assert.strictEqual(inc.length, 1, "weak noise pruned out of retrieval");
+  assert.strictEqual(inc[0].b === "diabetic" || inc[0].a === "diabetic", true);
+  assert.ok(inc[0].semantic.value >= 0.45, "surviving bridge still clears the rescue gate");
+});
+
+test("I8: pruned edges are excluded from retrieval but the record persists and reloads", () => {
+  const file = tmp("p-i8.edges.json");
+  const E = new EdgeStore(file, { now: () => T0 });
+  putCombo(E, 1, 2, 0, 0.10);
+  putCombo(E, 1, 3, 0, 0.70);
+  E.pruneSweep();
+  assert.strictEqual(E.size, 2, "soft prune does not drop the record");
+  assert.ok(E.get(1, 2), "get() still returns the pruned row");
+  assert.ok(E.get(1, 2).pruned_at);
+  assert.strictEqual(E.incident(1).length, 1, "incident() skips pruned_at != null");
+  assert.strictEqual(E.weight(1, 2), 0, "weight() of a pruned edge is 0");
+  assert.strictEqual(E.bonus(1, 2), 0, "bonus() of a pruned edge is 0");
+  assert.ok(E.hasPruned());
+  // Reload: the marker survives, the row survives.
+  const E2 = new EdgeStore(file, { now: () => T0 });
+  assert.strictEqual(E2.size, 2);
+  assert.ok(E2.get(1, 2).pruned_at);
+  assert.strictEqual(E2.get(1, 2).prune_count, 1);
+  assert.strictEqual(E2.incident(1).length, 1);
+});
+
+test("a second pruneSweep of an already-pruned edge is a no-op (prune_count stays 1)", () => {
+  const E = new EdgeStore(tmp("p-twice.edges.json"), { now: () => T0 });
+  putCombo(E, 1, 2, 0, 0.10);
+  assert.strictEqual(E.pruneSweep(), 1);
+  assert.strictEqual(E.pruneSweep(), 0);
+  assert.strictEqual(E.get(1, 2).prune_count, 1);
+});
+
+test("reactivate preserves created_at, prune_count, first_pruned_at, and the decayed weight", () => {
+  let now = T0;
+  const E = new EdgeStore(tmp("p-re.edges.json"), { now: () => now });
+  const created = T0;
+  E.put(makeEdge(1, 2, {
+    origin: "co-activation", now: created, hebbianWeight: 1.0,
+    semantic: { value: 0.10, src_versions: { a: 1, b: 1 } },
+  }));
+  now = plusIso(T0, 100 * HALF_LIFE_SECONDS.fact);
+  const faded = E.effectiveWeight(1, 2);
+  assert.ok(faded < HEBBIAN_PRUNE_FLOOR);
+  E.pruneSweep();
+  const prunedAt = E.get(1, 2).pruned_at;
+  now = plusIso(now, 60);
+  const n = E.reactivateIncident(1);
+  assert.strictEqual(n, 1);
+  const after = E.get(1, 2);
+  assert.strictEqual(after.pruned_at, null);
+  assert.strictEqual(after.created_at, created, "created_at is provenance — never reset");
+  assert.strictEqual(after.prune_count, 1, "bounded history keeps the count");
+  assert.strictEqual(after.first_pruned_at, prunedAt);
+  assert.strictEqual(after.last_reactivated_at, now);
+  assert.strictEqual(after.hebbian.weight, 1.0, "stored weight is not snapped to a new full value");
+  assert.strictEqual(after.hebbian.last_updated, created, "last_updated unmoved — that would make it 'full' again");
+  assert.ok(effectiveHebbian(after, now) < HEBBIAN_PRUNE_FLOOR, "effective still decayed");
+  assert.strictEqual(E.incident(1).length, 1, "back in retrieval");
+});
+
+test("reactivate of an already-active edge is a no-op (last_reactivated_at stays null)", () => {
+  const E = new EdgeStore(tmp("p-re-noop.edges.json"), { now: () => T0 });
+  putCombo(E, 1, 2, 0, 0.70);
+  assert.strictEqual(E.reactivateIncident(1), 0);
+  assert.strictEqual(E.get(1, 2).last_reactivated_at, null);
+  assert.strictEqual(E.get(1, 2).pruned_at, null);
+});
+
+test("reinforce of a pruned edge reactivates then materializes+α (does not reset to original)", () => {
+  let now = T0;
+  const E = new EdgeStore(tmp("p-re-bump.edges.json"), { now: () => now });
+  putCombo(E, 1, 2, 1.0, 0.10);
+  now = plusIso(T0, HALF_LIFE_SECONDS.fact);   // effective = 0.5; still above floor, so force-mark
+  markPruned(E.get(1, 2), now);
+  E.reinforceRecall(["1", "2"], []);
+  const after = E.get(1, 2);
+  assert.strictEqual(after.pruned_at, null, "reinforce revives");
+  assert.strictEqual(after.last_reactivated_at, now);
+  assert.strictEqual(after.hebbian.weight, 0.5 + E.alphaPP, "decayed+α, not original+α");
+  assert.strictEqual(after.created_at, T0);
+});
+
+test("hard vacuum drops pruned edges and is explicit (does not run from pruneSweep)", () => {
+  const file = tmp("p-vac.edges.json");
+  const E = new EdgeStore(file, { now: () => T0 });
+  putCombo(E, 1, 2, 0, 0.10);
+  putCombo(E, 3, 4, 0, 0.70);
+  E.pruneSweep();
+  assert.strictEqual(E.size, 2, "sweep is soft");
+  assert.strictEqual(E.vacuum(), 1, "vacuum returns remaining count, like JsonlStore");
+  assert.strictEqual(E.get(1, 2), undefined, "pruned row is gone");
+  assert.ok(E.get(3, 4), "active row kept");
+  const E2 = new EdgeStore(file, { now: () => T0 });
+  assert.strictEqual(E2.size, 1);
+  assert.strictEqual(E2.get(1, 2), undefined);
+});
+
+test("pruneSweep with nothing to prune does not rewrite the sidecar", () => {
+  const file = tmp("p-nowrite.edges.json");
+  const E = new EdgeStore(file, { now: () => T0 });
+  putCombo(E, 1, 2, 1.0, 0.70);
+  E.save();
+  const before = fs.readFileSync(file, "utf8");
+  const mtime = fs.statSync(file).mtimeMs;
+  assert.strictEqual(E.pruneSweep(), 0);
+  assert.strictEqual(fs.readFileSync(file, "utf8"), before);
+  assert.strictEqual(fs.statSync(file).mtimeMs, mtime);
+});
+
+test("shouldPrune helpers: the two-signal conjunction is the whole predicate", () => {
+  const strong = makeEdge(1, 2, {
+    origin: "save-time-neighbor", now: T0, hebbianWeight: 0,
+    semantic: { value: 0.70, src_versions: { a: 1, b: 1 } },
+  });
+  const weak = makeEdge(3, 4, {
+    origin: "save-time-neighbor", now: T0, hebbianWeight: 0,
+    semantic: { value: 0.10, src_versions: { a: 1, b: 1 } },
+  });
+  assert.strictEqual(isSemanticallyWeak(strong), false);
+  assert.strictEqual(isSemanticallyWeak(weak), true);
+  assert.strictEqual(isUnreinforced(strong, T0), true);
+  assert.strictEqual(shouldPrune(strong, T0), false, "strong unreinforced must not prune");
+  assert.strictEqual(shouldPrune(weak, T0), true);
+  markPruned(weak, T0);
+  assert.strictEqual(shouldPrune(weak, T0), false, "already pruned → sweep no-op");
+  reactivateEdge(weak, T0);
+  assert.strictEqual(weak.pruned_at, null);
+  assert.strictEqual(weak.prune_count, 1);
 });
 
 // ------------------------------------------------- ROC/TBR field signals (RM-00)
@@ -2360,6 +2574,156 @@ async function asyncTests() {
     // The point: a fresh id is accepted (not stuck after save-2 was claimed).
     assert.ok(edges().hasProcessed("save-2"));
     assert.ok(edges().hasProcessed("save-3"));
+  });
+
+  // ------------------------------------------------ Phase 0.4 live path
+  // Prune is EXPLICIT (pruneSweep / MCP startup), never recall/save.
+  // Reactivation is a consequence of save/edit touching an endpoint.
+  section("Phase 0.4 live path (soft prune off the hot path, reactivation on save/edit)");
+
+  await atest("recall does not prune: a weak unreinforced edge stays active", async () => {
+    const { core, store, edges, edgesPath } = liveField("c-04-recall.edges.jsonl", true);
+    await core.save(DIABETIC);
+    await core.save(LEMON);
+    await core.save(MEETING);
+    const E = edges();
+    const meetingId = store.current().find((m) => m.text === MEETING).id;
+    const diabeticId = store.current().find((m) => m.text === DIABETIC).id;
+    E.put(makeEdge(meetingId, diabeticId, {
+      origin: "save-time-neighbor", now: T0, hebbianWeight: 0,
+      semantic: { value: 0.10, src_versions: { a: 1, b: 1 } },
+    }));
+    E.save();
+    const before = fs.readFileSync(edgesPath, "utf8");
+    await core.recall(DESSERT_Q, 1);
+    assert.strictEqual(E.get(meetingId, diabeticId).pruned_at, null,
+      "recall must not prune (maintenance is pruneSweep, not the hot path)");
+    // Sidecar may have grown a co-recall edge; the weak row itself is unpruned.
+    assert.ok(JSON.parse(fs.readFileSync(edgesPath, "utf8")).edges[edgeKey(meetingId, diabeticId)].pruned_at == null);
+    void before;
+  });
+
+  await atest("a normal save does not prune existing edges", async () => {
+    const vecs = { a: [1, 0, 0], b: vecAtCos(0.80), c: [0, 0, 1] };
+    const embed = async (texts) => texts.map((t) => vecs[t] || [0, 1, 0]);
+    const { store, core, edges } = saveTimeCore("c-04-save.jsonl", embed);
+    await core.save("a");
+    await core.save("b");
+    const idA = store.current().find((m) => m.text === "a").id;
+    const idB = store.current().find((m) => m.text === "b").id;
+    // Plant a prune-eligible edge that save() must not sweep.
+    edges().put(makeEdge(idA, 999, {
+      origin: "save-time-neighbor", now: T0, hebbianWeight: 0,
+      semantic: { value: 0.10, src_versions: { a: 1, b: 1 } },
+    }));
+    await core.save("c");
+    assert.strictEqual(edges().get(idA, 999).pruned_at, null,
+      "save must not run pruneSweep");
+    assert.strictEqual(edges().get(idA, idB).pruned_at, null);
+  });
+
+  await atest("edit of an endpoint reactivates its pruned incident edge; created_at and weight survive", async () => {
+    const { core, store, edges, edgesPath } = liveField("c-04-edit.jsonl", true);
+    await core.save(DIABETIC);
+    await core.save(LEMON);
+    await core.save(MEETING);
+    const E = edges();
+    const meetingId = store.current().find((m) => m.text === MEETING).id;
+    const diabeticId = store.current().find((m) => m.text === DIABETIC).id;
+    const planted = E.put(makeEdge(meetingId, diabeticId, {
+      origin: "co-activation", now: T0, hebbianWeight: 0.4,
+      semantic: { value: 0.10, src_versions: { a: 1, b: 1 } },
+    }));
+    markPruned(planted, T0);
+    E.save();
+    assert.ok(E.get(meetingId, diabeticId).pruned_at);
+    const sidecarBefore = fs.readFileSync(edgesPath, "utf8");
+    await core.edit(meetingId, MEETING);
+    const after = E.get(meetingId, diabeticId);
+    assert.strictEqual(after.pruned_at, null, "edit touching the endpoint revived it");
+    assert.strictEqual(after.created_at, T0);
+    assert.strictEqual(after.prune_count, 1);
+    assert.strictEqual(after.last_reactivated_at, T0, "frozen clock stamps now=T0");
+    assert.strictEqual(after.hebbian.weight, 0.4, "weight not reset to full / zero");
+    assert.notStrictEqual(fs.readFileSync(edgesPath, "utf8"), sidecarBefore,
+      "reactivation is the one edge write edit is allowed");
+    const j = JSON.parse(fs.readFileSync(edgesPath, "utf8"));
+    assert.ok(j.processed_ids.indexOf("rpc-edit") < 0, "edit still must not stamp a dedup id");
+  });
+
+  await atest("edit with no pruned incident edges still writes nothing to the sidecar", async () => {
+    // Belt on the 0.3 test: reactivation is conditional. No pruned rows → I5-class no-write.
+    const { core, store, edgesPath } = liveField("c-04-edit-noop.jsonl", true);
+    await core.save(DIABETIC);
+    await core.save(LEMON);
+    await core.save(MEETING);
+    await core.recall(DESSERT_Q, 1);
+    const before = fs.readFileSync(edgesPath, "utf8");
+    const id = store.current().find((m) => m.text === MEETING).id;
+    await core.edit(id, MEETING);
+    assert.strictEqual(fs.readFileSync(edgesPath, "utf8"), before);
+  });
+
+  await atest("confirming save (exact restatement) reactivates incident pruned edges", async () => {
+    const { core, store, edges } = liveField("c-04-confirm.jsonl", true);
+    await core.save(MEETING);
+    const id = store.current().find((m) => m.text === MEETING).id;
+    const planted = edges().put(makeEdge(id, 999, {
+      origin: "save-time-neighbor", now: T0, hebbianWeight: 0,
+      semantic: { value: 0.10, src_versions: { a: 1, b: 1 } },
+    }));
+    markPruned(planted, T0);
+    const msg = await core.save(MEETING);
+    assert.ok(/Already remembered/.test(msg));
+    assert.strictEqual(edges().get(id, 999).pruned_at, null);
+    assert.strictEqual(edges().get(id, 999).prune_count, 1);
+    assert.strictEqual(edges().get(id, 999).last_reactivated_at, T0);
+  });
+
+  await atest("save-time bind reactivates a pruned existing edge rather than creating a duplicate", async () => {
+    const vecs = { a: [1, 0, 0], b: vecAtCos(0.80) };
+    const embed = async (texts) => texts.map((t) => vecs[t] || [0, 0, 1]);
+    const { store, core, edges } = saveTimeCore("c-04-bind-re.jsonl", embed);
+    await core.save("a");
+    const recA = store.current().find((m) => m.text === "a");
+    const recB = {
+      id: 4242, text: "b", embedding: vecs.b, embedding_version: 1,
+    };
+    const planted = edges().put(makeEdge(recA.id, recB.id, {
+      origin: "save-time-neighbor", now: T0, hebbianWeight: 0.22,
+      semantic: { value: 0.80, src_versions: { a: 1, b: 1 } },
+    }));
+    markPruned(planted, T0);
+    const created = planted.created_at;
+    const result = bindSaveTimeNeighbors(recB, [recA], edges());
+    assert.ok(result.wrote);
+    const after = edges().get(recA.id, recB.id);
+    assert.strictEqual(after.pruned_at, null);
+    assert.strictEqual(after.created_at, created, "in-place revive, not a new row");
+    assert.strictEqual(after.hebbian.weight, 0.22, "Hebbian carried");
+    assert.strictEqual(after.prune_count, 1);
+    assert.strictEqual(edges().size, 1, "no duplicate edge");
+  });
+
+  await atest("pruneSweep of a strong unreinforced bridge does not regress constraint rescue", async () => {
+    const { core, store, edges } = liveField("c-04-rescue.jsonl", true);
+    await core.save(DIABETIC);
+    await core.save(LEMON);
+    await core.save(MEETING);
+    const lemonId = store.current().find((m) => m.text === LEMON).id;
+    const diabeticId = store.current().find((m) => m.text === DIABETIC).id;
+    // The save-time lemon↔diabetic edge is semantically strong (cos 0.60) and
+    // unreinforced (weight 0). A merged scalar would prune it.
+    const bridge = edges().get(lemonId, diabeticId);
+    assert.ok(bridge, "save-time bind created the rescue bridge");
+    assert.strictEqual(bridge.hebbian.weight, 0);
+    assert.ok(bridge.semantic.value >= 0.45);
+    const n = edges().pruneSweep();
+    assert.strictEqual(edges().get(lemonId, diabeticId).pruned_at, null,
+      "two-signal rule: strong unreinforced bridge survives");
+    void n;
+    const out = await core.recall(DESSERT_Q, 1);
+    assert.ok(/diabetic/.test(out), "constraint rescue still fires after the sweep");
   });
 }
 

@@ -224,18 +224,33 @@ travel with `RM-07` when it does land, but the *scan* did not force the date.
       not stamp a dedup record (transition table). Relates to `W-04` ([[BUGS]]) — orthogonal
       (same-process retry vs cross-process last-writer-wins).
 
-### 0.4 — Soft pruning
-- [ ] **An edge whose Hebbian signal decays to zero is not pruned if semantic still clears the
+### 0.4 — Soft pruning ✅
+- [x] **An edge whose Hebbian signal decays to zero is not pruned if semantic still clears the
       gate** — it reverts to an unreinforced semantic edge. Prune only edges that are *both*
-      unreinforced and semantically weak. *(This is why the two signals can't share one scalar: a
-      merged weight would prune a semantically-strong, rarely-recalled pair and break constraint
-      rescue — [[RESULTS]] field experiment #2.)*
-- [ ] **Soft prune first** (I8): mark inactive, set `pruned_at`, keep the record. Pruned edges do
-      not participate in retrieval. Hard compaction later, explicit — mirror `vacuum()`.
-- [ ] **Reactivation is server-side only** (guards I1): a consequence of an existing mutation
-      (`save`/`edit` touching an endpoint), never a new tool. Revive in place; `created_at`
-      preserved; `hebbian.weight` carries its decayed value; `pruned_at` → `null` while
-      `prune_count`/`first_pruned_at`/`last_reactivated_at` keep bounded history.
+      unreinforced (`effectiveHebbian < HEBBIAN_PRUNE_FLOOR`, 1e-6) and semantically weak
+      (`semantic.value < SEMANTIC_PRUNE_GATE`). *(This is why the two signals can't share one
+      scalar: a merged weight would prune a semantically-strong, rarely-recalled pair and break
+      constraint rescue — [[RESULTS]] field experiment #2.)*
+- [x] **Soft prune first** (I8): mark inactive, set `pruned_at`, `prune_count++`, keep the
+      record. `incident()` / `bonus()` / `weight()` skip `pruned_at != null`. Hard compaction
+      is `EdgeStore.vacuum()`, explicit — mirror `JsonlStore.vacuum()`. Never automatic on
+      read. `pruneSweep()` is the same class of operation as record `vacuum()`: MCP startup
+      or on demand, **never** `recall()` / `save()`.
+- [x] **Reactivation is server-side only** (guards I1): a consequence of an existing mutation
+      (`save`/`edit` touching an endpoint, or `reinforceRecall` of the pair), never a new tool.
+      Revive in place; `created_at` preserved; `hebbian.weight` / `hebbian.last_updated` carried
+      (do not stamp `last_updated` — that would snap effective weight back to full);
+      `pruned_at` → `null` while `prune_count`/`first_pruned_at`/`last_reactivated_at` keep
+      bounded history.
+
+#### Prune gate (0.4) — named, deliberate
+
+| Constant | Value | Why this number |
+|---|---|---|
+| `SEMANTIC_PRUNE_GATE` | **0.25** | Equal to `SAVE_TIME_MIN_COS`. Below it, today's save-time bind would not even create the edge — it is not worth persisting as structure. Raising this to recall `minSim` 0.55 (or the constraint-rescue gate 0.45) would drop the 0.25–0.45 persist-net, including bridges stage-2 rescue can still walk. Do not silently unify the three. |
+| `HEBBIAN_PRUNE_FLOOR` | **1e-6** | "~0" for the learned signal. The retired epoch floor of 0.05 would mark a single α=0.1 bump pruned after one half-life; that is not decayed-to-zero. `tanh(1e-6)·maxBonus` is a rounding error on any gate. |
+
+Conjunction is the whole predicate. Reinforced+weak stays (Hebbian is enough). Unreinforced+strong stays (the failure-signature case). Only unreinforced+weak is marked `pruned_at`. Empty/null semantic counts as weak.
 
 ### 0.5 — Phase 0 tests *(see Test plan below)*
 ### 0.6 — Threat-model sketch *(design only; `RM-16` implementation stays gated to Phase 2)*
@@ -311,7 +326,9 @@ batched through the `AccessLog` pattern. Telemetry does not get to violate an in
       clock → weight + `last_updated` unchanged, *then* genuine reinforcement does change
       them. Live path: 100 field-on recalls do not decay an uninvolved edge and do not
       increment the leftover `recalls` counter. Co-recall reinforcement is retained.
-- [ ] Reactivation preserves history (`created_at` unmoved, `prune_count === 1`, weight carried).
+- [x] Reactivation preserves history (`created_at` unmoved, `prune_count === 1`, weight carried).
+      *(0.4: `reactivateEdge` / `reactivateIncident`; live path: `edit` of an endpoint, confirming
+      `save`, save-time bind of a pruned pair, `reinforceRecall` of a pruned pair.)*
 - [x] Save-time edges (creation, K=5, 0.25 threshold, fewer-than-K, weight starts 0,
       semantic cached with canonical `src_versions`, origin `save-time-neighbor`;
       embedder-down binds nothing; `edit()` bumps version so the incident edge reads
@@ -319,9 +336,10 @@ batched through the `AccessLog` pattern. Telemetry does not get to violate an in
 - [x] Reinforcement after long inactivity materializes decay first.
       *(module-level: one fact half-life idle → stored = decayed+α, not original+α;
       Δt=0 matches the pre-0.3 / Ledger number. Live path uses the same `_bump`.)*
-- [ ] Soft-pruned edges survive persistence; duplicate reinforcement / request-ID dedup.
+- [x] Soft-pruned edges survive persistence; duplicate reinforcement / request-ID dedup.
       *(request-ID half is 0.3: same id once, two ids both apply, no-id always applies,
-      LRU eviction, one sidecar write holds id+weight. Soft-prune persistence is 0.4.)*
+      LRU eviction, one sidecar write holds id+weight. Soft-prune persistence is 0.4:
+      `pruned_at` survives reload; `incident()` skips it; `vacuum()` is the hard drop.)*
 - [ ] Interrupted/failed persistence, atomic recovery.
 - [x] **Field fails open (I3):** corrupt sidecar → recall still returns cosine.
 - [x] Negatives: recall writes nothing to the edge store **on the decay account**; edit
@@ -337,7 +355,7 @@ batched through the `AccessLog` pattern. Telemetry does not get to violate an in
 
 | | Object | Signal | Law | Clock | Owner |
 |---|---|---|---|---|---|
-| **Learned-edge decay** | an *edge* | `hebbian.weight` | half-life `w·2^(−Δt/H)` then prune | **wall-clock** (this doc) | `RM-21` / Phase 0.2 |
+| **Learned-edge decay** | an *edge* | `hebbian.weight` | half-life `w·2^(−Δt/H)` then soft-prune iff also semantically weak | **wall-clock** (this doc) | `RM-21` / Phase 0.2+0.4 |
 | **Importance decay** | a *record* | `importance` | `importance·exp(−λ·Δt)`, refreshed on access/confirm | wall-clock | `RM-08` / [[0006-constraints-decay-pruning]] |
 
 Never wire one into the other — a single `Δt` for both couples association strength to record

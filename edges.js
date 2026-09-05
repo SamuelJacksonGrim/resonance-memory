@@ -34,7 +34,13 @@
  * stored value after a long idle). MCP request-ID idempotency lives here too:
  * a bounded LRU of processed JSON-RPC ids is kept INSIDE this sidecar so one
  * writeFileDurable commits the dedup record and the weight change together.
- * reinforceRecall is retained. Semantic never fades.
+ * Phase 0.4 soft-prunes (I8): an explicit pruneSweep() — never recall/save —
+ * marks an edge inactive only when it is BOTH unreinforced (effectiveHebbian
+ * ~0) AND semantically weak (below SEMANTIC_PRUNE_GATE). A strong-semantic
+ * idle edge stays; that is the two-signal rule that protects constraint
+ * rescue (RESULTS field experiment #2). Hard drop is vacuum(), also explicit.
+ * Reactivation is a consequence of save/edit/reinforce touching an endpoint,
+ * never a fifth tool (I1). reinforceRecall is retained. Semantic never fades.
  *
  * The asymmetry is load-bearing (docs/phases/phase-0-edge-substrate.md):
  *
@@ -315,6 +321,67 @@ function effectiveHebbian(edge, now, opts = {}) {
   return w * Math.pow(2, -dt / halfLife);
 }
 
+// -------------------------------------------------------------- soft prune (Phase 0.4 / I8)
+//
+// Two-signal rule — the reason semantic and Hebbian are stored separately.
+// Prune ONLY if BOTH (a) the learned signal has faded to ~0 AND (b) the
+// cached semantic score is below SEMANTIC_PRUNE_GATE. An unreinforced but
+// semantically-strong edge is NOT pruned: it reverts to a plain semantic
+// edge and stays available for constraint-rescue. A merged scalar would
+// prune that pair and regress field experiment #2 (RESULTS.md).
+//
+// SEMANTIC_PRUNE_GATE = 0.25, equal to SAVE_TIME_MIN_COS (memory-core.js).
+// Below this, today's save-time bind would not even create the edge; it is
+// not "worth persisting as structure." Using the recall minSim (0.55) or
+// the constraint-rescue gate (0.45) would drop the 0.25–0.45 persist-net
+// — including bridges that stage-2 rescue (0.45) can still walk. Do not
+// silently raise this. HEBBIAN_PRUNE_FLOOR is "~0" for the learned signal:
+// the retired epoch floor of 0.05 would mark a single α=0.1 bump pruned
+// after one half-life, which is not decayed-to-zero. tanh(1e-6)*maxBonus
+// is a rounding error on any gate.
+//
+// Soft prune (I8): set pruned_at, bump prune_count, keep the record.
+// incident()/bonus()/weight() already skip pruned_at != null. Hard drop
+// is vacuum(), explicit, never on a read. pruneSweep is the same class of
+// operation as JsonlStore.vacuum — startup or on demand, never recall/save.
+
+const SEMANTIC_PRUNE_GATE = 0.25;          // = SAVE_TIME_MIN_COS; see above
+const HEBBIAN_PRUNE_FLOOR = 1e-6;          // effectiveHebbian below this is ~0
+
+function isSemanticallyWeak(edge) {
+  const v = edge && edge.semantic ? edge.semantic.value : null;
+  return typeof v !== "number" || !Number.isFinite(v) || v < SEMANTIC_PRUNE_GATE;
+}
+
+function isUnreinforced(edge, now, opts) {
+  return effectiveHebbian(edge, now, opts || {}) < HEBBIAN_PRUNE_FLOOR;
+}
+
+function shouldPrune(edge, now, opts) {
+  if (!edge || edge.pruned_at) return false;
+  return isUnreinforced(edge, now, opts) && isSemanticallyWeak(edge);
+}
+
+function markPruned(edge, now) {
+  if (!edge || edge.pruned_at) return edge;
+  const when = now || isoNow();
+  edge.pruned_at = when;
+  edge.prune_count = (typeof edge.prune_count === "number" ? edge.prune_count : 0) + 1;
+  if (!edge.first_pruned_at) edge.first_pruned_at = when;
+  return edge;
+}
+
+// Revive in place. created_at / hebbian / prune_count / first_pruned_at
+// stay put — provenance and the decayed weight survive; only current-state
+// (pruned_at) flips. last_reactivated_at is the O(1) history I8 allows
+// instead of an array of prune events.
+function reactivateEdge(edge, now) {
+  if (!edge || !edge.pruned_at) return edge;
+  edge.pruned_at = null;
+  edge.last_reactivated_at = now || isoNow();
+  return edge;
+}
+
 // -------------------------------------------------------------- sidecar I/O
 
 function looksLikeRecord(v) {
@@ -585,6 +652,9 @@ class EdgeStore {
 
   // Incident edges for an id. Slice C uses this to absorb field.js's
   // Map<id, [{id, sim}]> neighbour lists without scanning the store twice.
+  // Pruned edges are excluded from retrieval (I8: the record stays; this
+  // is the "does not participate" half). reactivateIncident scans the
+  // full table because this helper cannot see them.
   incident(id) {
     const s = String(id);
     const out = [];
@@ -593,6 +663,75 @@ class EdgeStore {
       if (e.a === s || e.b === s) out.push(e);
     }
     return out;
+  }
+
+  hasPruned() {
+    for (const e of this.edges.values()) if (e.pruned_at) return true;
+    return false;
+  }
+
+  /*
+   * Explicit maintenance sweep (Phase 0.4). Mirror JsonlStore.vacuum:
+   * startup or on demand, NEVER recall/save. Marks (does not drop) every
+   * edge that is both unreinforced and semantically weak. Returns how
+   * many newly pruned. Writes the sidecar only if something changed, so
+   * a no-op sweep at MCP start does not bump mtime.
+   */
+  pruneSweep(opts = {}) {
+    const now = opts.now != null ? opts.now : this.now();
+    const hebOpts = {
+      type: opts.type,
+      namespace: opts.namespace,
+      halfLife: opts.halfLife,
+      halfLives: opts.halfLives || this.halfLives,
+    };
+    let n = 0;
+    for (const e of this.edges.values()) {
+      const type = typeof opts.typeFn === "function" ? opts.typeFn(e.a, e.b) : hebOpts.type;
+      if (shouldPrune(e, now, Object.assign({}, hebOpts, { type }))) {
+        markPruned(e, now);
+        n++;
+      }
+    }
+    if (n) this.save();
+    return n;
+  }
+
+  /*
+   * Hard compaction: actually drop pruned records. Explicit, like
+   * JsonlStore.vacuum. Never called from recall/save, never from
+   * pruneSweep, never from the constructor. I8 forbids silent removal;
+   * this is the operator saying "yes, drop them."
+   */
+  vacuum() {
+    let dropped = 0;
+    for (const [k, e] of [...this.edges]) {
+      if (e.pruned_at) {
+        this.edges.delete(k);
+        dropped++;
+      }
+    }
+    if (dropped) this.save();
+    return this.edges.size;
+  }
+
+  /*
+   * Revive every pruned edge incident to `id`. Returns the number revived.
+   * Caller persists (same posture as _bump — the mutation's save() is the
+   * write). Does not walk incident() because that helper skips pruned_at.
+   */
+  reactivateIncident(id, now) {
+    const s = String(id);
+    const when = now != null ? now : this.now();
+    let n = 0;
+    for (const e of this.edges.values()) {
+      if (!e.pruned_at) continue;
+      if (e.a === s || e.b === s) {
+        reactivateEdge(e, when);
+        n++;
+      }
+    }
+    return n;
   }
 
   // ------------------------------------------------ Hebbian (ex-ledger.js)
@@ -644,8 +783,11 @@ class EdgeStore {
       // long idle is the "ghost weight": reinforcement would bypass the
       // fade that reads already see via effectiveHebbian. After this
       // write, stored weight and effective weight coincide at `now`.
-      // setHebbian leaves semantic / provenance / pruned_at alone
-      // (two-signal rule; reactivation is 0.4).
+      // setHebbian leaves semantic / provenance alone (two-signal rule).
+      // A pruned edge is revived in place first (transition table:
+      // reinforce → pruned_at = null); created_at and the decayed weight
+      // are not reset.
+      if (existing.pruned_at) reactivateEdge(existing, now);
       const type = typeof opts.typeFn === "function" ? opts.typeFn(a, b) : opts.type;
       const wEff = effectiveHebbian(existing, now, {
         type,
@@ -728,4 +870,11 @@ module.exports = {
   DEFAULT_HALF_LIFE_TYPE,
   DAY,
   HOUR,
+  SEMANTIC_PRUNE_GATE,
+  HEBBIAN_PRUNE_FLOOR,
+  isSemanticallyWeak,
+  isUnreinforced,
+  shouldPrune,
+  markPruned,
+  reactivateEdge,
 };

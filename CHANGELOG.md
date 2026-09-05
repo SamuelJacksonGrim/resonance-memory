@@ -17,6 +17,18 @@ Beta-readiness pass:
   "revisit only if hosted resale looms" trigger the backlog pre-registered, now pulled.
 
 ### Added
+- **Soft pruning + server-side reactivation (Phase 0.4 / I8).** An explicit
+  `pruneSweep()` (MCP startup or on demand — never `recall`/`save`) marks an
+  edge `pruned_at` only when it is **both** unreinforced (`effectiveHebbian <
+  1e-6`) **and** semantically weak (`semantic.value < SEMANTIC_PRUNE_GATE`
+  0.25, the save-time bind floor). An idle but semantically-strong edge stays
+  so constraint-rescue cannot regress (RESULTS field experiment #2). The
+  record is kept; `incident()` skips it. Hard drop is `EdgeStore.vacuum()`,
+  also explicit. Reactivation is a consequence of `save`/`edit`/`reinforce`
+  touching an endpoint: in-place, `created_at` preserved, Hebbian weight
+  carried (not snapped to full), bounded `prune_count` history. No fifth
+  tool. Golden did not move (eval never calls the sweep). See
+  [`docs/phases/phase-0-edge-substrate.md`](docs/phases/phase-0-edge-substrate.md).
 - **Materialize-on-mutation + MCP request-ID idempotency (Phase 0.3).** A reinforcing
   write first stores `effectiveHebbian(edge, now)` as `hebbian.weight`, then applies α,
   then stamps `hebbian.last_updated` — reinforcement cannot bypass accumulated decay

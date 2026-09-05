@@ -43,7 +43,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { EdgeStore } = require("./edges.js");
+const { EdgeStore, hebbianDecayType } = require("./edges.js");
 const { JsonlStore } = require("./store.js");
 const { createCore, defaultGetEdges } = require("./memory-core.js");
 const { WarmField } = require("./warm.js");
@@ -89,11 +89,12 @@ const EMBED_MODEL = process.env.EMBED_MODEL || "text-embedding-nomic-embed-text-
 
 fs.mkdirSync(path.dirname(STORE_PATH), { recursive: true });
 
-// Unified edge sidecar (Phase 0 / Slice C), constructed lazily on first field
-// use so the live toggle can turn it on without a restart. Persists to
-// <store>.edges.json — NEVER .assoc.json, so an old shipped Ledger cannot
-// open the new format and misparse it. A leftover .assoc.json is migrated
-// one-way on first load and left untouched (legacy / read-only-for-migration).
+// Unified edge sidecar (Phase 0 / Slice C). Constructed on first use (field-on
+// recall, save-time bind, or the startup pruneSweep) so the live toggle needs
+// no restart. Persists to <store>.edges.json — NEVER .assoc.json, so an old
+// shipped Ledger cannot open the new format and misparse it. A leftover
+// .assoc.json is migrated one-way on first load and left untouched
+// (legacy / read-only-for-migration).
 let _edges = null;
 function getEdgeStore() {
   if (!_edges) _edges = new EdgeStore(STORE_PATH + ".edges.json");
@@ -222,6 +223,17 @@ async function handle(req) {
 
 // Compact soft-deleted rows once at startup (keeps the file bounded; embeddings kept).
 try { if (store.hasDeleted()) store.vacuum(); } catch { /* non-fatal */ }
+// Soft-prune faded+weak edges (Phase 0.4 / I8). Explicit maintenance, same
+// class as vacuum() — startup or on demand, NEVER recall/save. That is the
+// golden guardrail: eval never starts the MCP server, so this sweep cannot
+// move RM-00. Hard drop of pruned edges is EdgeStore.vacuum(), on demand.
+try {
+  const E = getEdgeStore();
+  const byId = new Map(store.all().map((r) => [String(r.id), r]));
+  E.pruneSweep({
+    typeFn: (a, b) => hebbianDecayType(byId.get(String(a)), byId.get(String(b))),
+  });
+} catch { /* non-fatal: maintenance must never break startup */ }
 
 let buf = "";
 process.stdin.setEncoding("utf8");
