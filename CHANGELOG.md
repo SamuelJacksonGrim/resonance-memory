@@ -17,6 +17,17 @@ Beta-readiness pass:
   "revisit only if hosted resale looms" trigger the backlog pre-registered, now pulled.
 
 ### Added
+- **RM-02.c `--dedup-existing` backfill.** Offline pass for stores written
+  before 02.b. Dry-run is the default (`node entry.js --dedup-existing` /
+  `npm run dedup-existing`); `--apply` performs it as one durable rewrite.
+  Same `detectNearDuplicate` / `pickMergeSurvivor` / `mergeBandPatches` as
+  `save()` — file-order, each record vs earlier survivors — so the offline
+  pass and the write path cannot disagree. Restatement losers already on
+  disk are superseded, not deleted (I8); vectorless rows are skipped if
+  the embedder is down. Second `--apply` is a no-op. Measured on a pre-02.b
+  `eval/duplicates` fixture: `duplicate_rate` 0.3182 → **0.0000**, `recall@5`
+  held at **1.0000**. Golden unmoved. RM-02 is done. See
+  [`eval/RESULTS.md`](eval/RESULTS.md).
 - **RM-02.b cosine-banded dedup/merge at save.** First measured A/B in the
   project. After embed, `save()` compares the new vector to already-stored
   ones: cosine ≥ `DEDUP_HI` (0.95) is a restatement (bump `last_confirmed` +

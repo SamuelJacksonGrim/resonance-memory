@@ -573,8 +573,56 @@ the group mapping did not break.
 Cosine-banded dedup is **on by default** in `save()` (unlike the field):
 worst case on a miss is "append as before"; a hit never hard-deletes (I8:
 restatement keeps the original; merge links the loser with `superseded_by`).
-No vector (embedder down) → append, don't crash. 02.c is the
-`--dedup-existing` dry-run backfill for stores written before this slice.
+No vector (embedder down) → append, don't crash.
+
+---
+
+# RM-02.c — `--dedup-existing` backfill (offline pass)
+
+**Date:** 2026-09-05 · **Product behaviour:** `save()` / `recall()` untouched
+(CLI/maintenance path). Same bands, same `detectNearDuplicate` /
+`pickMergeSurvivor` / `mergeBandPatches` as 02.b — the planner lives in
+`memory-core.js` so the offline pass and the write path cannot disagree.
+**Reproduce:** the corpus fixture is built inside `test.js` ("duplicates
+corpus backfill"); golden: `node eval/run.js` → **No regressions vs golden.**
+
+This is the retroactive pass for stores written **before 02.b**. Exact
+restatement already existed (RM-04), so a pre-02.b store still carries the
+four HI extras and three mid extras — the 02.a baseline.
+
+## Pass order
+
+File order (JSONL insertion). Each current record is treated as an incoming
+`save()` against the survivors of earlier records. That is why `--apply`
+twice is a no-op: after one pass every remaining current pair is below
+`DEDUP_LO` (or vectorless, which we refuse to merge blind). Dry-run is the
+default; `--apply` is one `store.updateMany` → `writeFileDurable` (I5).
+Restatement losers already on disk are superseded, not deleted (I8) — so
+`current()` matches sequential save, while `all()` keeps the extra rows.
+
+## Backfill result (pre-02.b fixture)
+
+`eval/corpora/duplicates.jsonl` writes, save-time dedup **bypassed**, the
+second byte-identical `coffee-order` dropped (already collapsed by RM-04).
+22 current records, 7 extras. Dry-run plan: 4 HI restatements (penicillin,
+tea, peanuts) + 3 mid merges (job, cat, diabetic); 8 controls untouched.
+
+```
+current           22 → 15
+duplicate_rate    0.3182 → 0.0000   (extras 7 → 0, G*=15)
+recall@5          1.0000            (17/17 queries still hit)
+```
+
+Same after-column as 02.b's sequential save. Online-vs-offline equivalence
+(synthetic fixture in `test.js`): `current()` texts match one-by-one
+`save()`. Second `--apply` writes nothing. Vectorless row + dead embedder
+→ skipped, not merged.
+
+## Decision
+
+`--dedup-existing` ships as a CLI (dry-run default). RM-02 acceptance is
+fully met: the 50% bar was cleared by 02.b at save-time, and 02.c applies
+the same decision to stores that never went through that path.
 
 ---
 

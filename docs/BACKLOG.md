@@ -97,7 +97,7 @@ Design: [`proposed/0001`](proposed/0001-write-pipeline.md).
 
 ---
 
-### `RM-02` — Deduplication and merge · **M** · `in progress` — 02.a + 02.b shipped
+### `RM-02` — Deduplication and merge · **M** · ✅ `done` — 02.a + 02.b + 02.c shipped
 
 - [x] **02.a measurement seed**: metric registry (`recall_at_k`, `duplicate_rate`),
       `eval/corpora/duplicates.jsonl`, pre-dedup baseline + pre-declared 50% bar in
@@ -108,11 +108,19 @@ Design: [`proposed/0001`](proposed/0001-write-pipeline.md).
       text, union the metadata, link the loser with `superseded_by`.
 - [x] Thresholds are config, not constants, and are **tuned on `RM-00`, not vibes**.
       (`DEDUP_HI` 0.95 / `DEDUP_LO` 0.88; env + live-config; A/B in RESULTS.md.)
-- [ ] Backfill mode: `--dedup-existing` reports what it *would* merge before doing it.
+- [x] Backfill mode: `--dedup-existing` reports what it *would* merge before doing it.
+      Dry-run is the default; `--apply` performs one durable rewrite. Same
+      `detectNearDuplicate` / `pickMergeSurvivor` / `mergeBandPatches` as save()
+      (file-order pass, each record vs earlier survivors). Second `--apply` is a
+      no-op. Vectorless rows are skipped, not merged blind.
 
 **Acceptance:** `duplicate_rate` drops ≥50% on `eval/duplicates` with zero recall@5 regression.
 **Met (02.b):** 0.3182 → **0.0000** (100% drop), `recall@5` held at **1.0000**. See
 [`eval/RESULTS.md`](../eval/RESULTS.md) RM-02.b.
+**Met (02.c):** the same 02.a-shaped store (save-time dedup bypassed) backfills
+to the same after-column: dry-run plan is 4 HI restatements + 3 mid merges;
+`--apply` → `duplicate_rate` 0.3182 → **0.0000**, `recall@5` held at **1.0000**.
+See [`eval/RESULTS.md`](../eval/RESULTS.md) RM-02.c.
 
 ---
 

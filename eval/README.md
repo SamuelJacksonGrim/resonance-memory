@@ -64,8 +64,9 @@ A/B numbers, not pass/fail — `node eval/run.js` still gates only the contains/
 scorecard, and measurement corpora (`kind: "duplicates"`, `gate: false`) are skipped there so
 a new fixture cannot flip golden. Run them with `node eval/measure.js` (reuses `pipeline.js`
 → `memory-core.js`; field off so rank stays cosine). See `RESULTS.md` ("RM-02.a") for the
-pre-dedup baseline and the pre-declared 50% bar, and ("RM-02.b") for the measured win:
-`duplicate_rate` 0.3182 → 0.0000, `recall@5` held at 1.0000.
+pre-dedup baseline and the pre-declared 50% bar, ("RM-02.b") for the measured win at
+save-time, and ("RM-02.c") for the `--dedup-existing` backfill of a pre-02.b store:
+`duplicate_rate` 0.3182 → 0.0000, `recall@5` held at 1.0000. RM-02 is done.
 
 ## Layout
 

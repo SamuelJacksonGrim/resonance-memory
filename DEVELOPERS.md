@@ -13,13 +13,14 @@ an opaque `id`.
 | `record.js` | The shared record schema (incl. temporal fields and `embedding_version`), durable atomic writes, and the access sidecar. |
 | `store.js` | `JsonlStore` — the storage backend behind the Store seam. Separate module so it's testable without the stdio loop. |
 | `test.js` | Dependency-free test suite: `npm test`. |
-| `package.json` | No dependencies — scripts only (`test`, `build`, `panel`, `mcp`, `seed`, `inspect`). Sole source of the version string; `server.js` reads it so `serverInfo` can't drift. |
+| `package.json` | No dependencies — scripts only (`test`, `build`, `panel`, `mcp`, `seed`, `inspect`, `dedup-existing`). Sole source of the version string; `server.js` reads it so `serverInfo` can't drift. |
 | `field.js` | Associative layer (Phase 2a): kNN semantic graph over stored vectors; neighborhood expansion. |
 | `ledger.js` | Retired Hebbian sidecar (Phase 2b). Off the live path; kept as the epoch-decay reference. |
 | `edges.js` | Unified persistent edge store (Phase 0): two-signal record + one-way `.assoc.json` → `.edges.json` migration. On the live recall path. Save-time semantic neighbors persist on `save()` (K=5, min cosine 0.25); recall still uses `field.js`. Hebbian decay is lazy wall-clock via `effectiveHebbian` (I6). Reinforce materializes the decayed weight before applying α; MCP request-ID dedup LRU lives in the sidecar (Phase 0.3). Soft prune (0.4 / I8) is an explicit `pruneSweep()` (not recall/save); reactivation is in-place on save/edit of an endpoint. |
 | `panel.js` | Local 127.0.0.1 control panel: field toggle, Connect/Disconnect, association graph view, heartbeat auto-shutdown. |
 | `install.js` | Detect + wire into LM Studio / Claude Desktop MCP config (preserves other servers, leaves `.bak`). |
-| `entry.js` | Bundle dispatch: `--mcp` → server, `--install`/`--uninstall` → installer, else → panel. |
+| `entry.js` | Bundle dispatch: `--mcp` → server, `--install`/`--uninstall` → installer, `--dedup-existing` → RM-02.c backfill (dry-run default), else → panel. |
+| `dedup-existing.js` | RM-02.c CLI. Reports (or `--apply`s) cosine-banded restatements/merges on a store written before 02.b. Calls `dedupExisting()` in `memory-core.js` — same bands as `save()`, no second decision. |
 | `build-exe.js` | Embed runtime assets → esbuild → Node SEA blob → postject → flip PE subsystem to GUI → stage `dist/`. |
 | `embedded-assets.js` | **Generated** each build (gitignored): `demo-seed.jsonl` + `system-prompt.md` baked in as strings so the shipped exe is one self-contained file. |
 | `inspect_sidecar.js` | Dependency-free telemetry for the Hebbian ledger. |
@@ -44,6 +45,11 @@ an opaque `id`.
   Save also runs cosine-banded dedup (RM-02.b): ≥ 0.95 restates, 0.88–0.95 merges
   (longer original text, loser linked with `superseded_by`). Thresholds are config
   (`RESONANCE_DEDUP_HI` / `RESONANCE_DEDUP_LO`).
+- **`--dedup-existing`** (RM-02.c) is the offline pass for stores written before
+  02.b. Dry-run default (`npm run dedup-existing`); `--apply` is one durable
+  rewrite. File-order, each record vs earlier survivors — the same
+  `detectNearDuplicate` decision as `save()`. Vectorless rows skip if the
+  embedder is down. Second `--apply` is a no-op.
 
 ## Build
 

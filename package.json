@@ -16,6 +16,7 @@
     "panel": "node panel.js",
     "seed": "node build-demo-seed.js",
     "inspect": "node inspect_sidecar.js",
+    "dedup-existing": "node entry.js --dedup-existing",
     "eval": "node eval/run.js",
     "measure": "node eval/measure.js"
   },

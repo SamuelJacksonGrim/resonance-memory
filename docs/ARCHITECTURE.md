@@ -96,7 +96,7 @@ and the eval harness can never drift.
 
 ---
 
-## 3. The three run modes
+## 3. The run modes
 
 The shipped binary is one file that dispatches on `process.argv[2]` (`entry.js`):
 
@@ -105,20 +105,21 @@ The shipped binary is one file that dispatches on `process.argv[2]` (`entry.js`)
 | `memory --mcp` | **MCP server** | `server.js` | The JSON-RPC 2.0 stdio loop an AI client talks to. The product's core. |
 | `memory` (double-click) | **Control panel** | `panel.js` | A local `127.0.0.1:9090` web UI: field toggle, Connect/Disconnect, the 3D association graph, one-click embedder setup. |
 | `memory --install` / `--uninstall` | **Installer** | `install.js` | Wires the exe into LM Studio / Claude Desktop MCP config (or removes it). |
+| `memory --dedup-existing` [`--apply`] | **Backfill** | `dedup-existing.js` | RM-02.c: report (or apply) cosine-banded restatements/merges on a store written before 02.b. Dry-run default. Not a fifth verb. |
 
-All three share the same substrate modules, so a memory saved through the MCP server is the
-same record the panel renders and the installer's target reads.
+All four share the same substrate modules, so a memory saved through the MCP server is the
+same record the panel renders, the installer targets, and `--dedup-existing` scans.
 
 ```
                          entry.js  (argv dispatch)
-              ┌───────────────┼────────────────────┐
-          --mcp            (default)            --install/--uninstall
-              │                │                        │
-          server.js        panel.js                install.js
-              │                │
-              └──────┬─────────┘
-                     ▼
-              memory-core.js   ← the four verbs, ONE implementation
+         ┌───────────────┬────────────┼────────────────────┐
+      --mcp          (default)   --install/--uninstall  --dedup-existing
+         │                │              │                    │
+     server.js        panel.js      install.js         dedup-existing.js
+         │                │                                   │
+         └──────┬─────────┴───────────────────────────────────┘
+                ▼
+         memory-core.js   ← the four verbs + the 02.c planner, ONE implementation
                      │
         ┌────────────┼────────────┬──────────────┐
         ▼            ▼            ▼              ▼
@@ -137,9 +138,10 @@ same record the panel renders and the installer's target reads.
 
 | File | Role | Depends on |
 |---|---|---|
-| `entry.js` | Mode dispatch on `argv`. | server / panel / install |
+| `entry.js` | Mode dispatch on `argv`. | server / panel / install / dedup-existing |
 | `server.js` | MCP server. Declares the four tool schemas + descriptions, wires the *environment* (network embedder, live field toggle, lazy EdgeStore) into the shared core, runs the stdio JSON-RPC loop, vacuums soft-deletes and `pruneSweep`s faded+weak edges at startup. Reads the version from `package.json` so `serverInfo` can't drift. | `memory-core`, `store`, `edges`, `package.json` |
-| `memory-core.js` | **The four cognitive verbs, as one implementation.** `createCore({ store, embed, fieldEnabled, getEdgeStore, dedupThresholds })` → `{ save, recall, edit, remove }`. Everything environment-specific is *injected*. This is the code both `server.js` and `eval/pipeline.js` run — the RM-00 golden is the proof they never diverge. | `field`, `record` |
+| `memory-core.js` | **The four cognitive verbs, as one implementation.** `createCore({ store, embed, fieldEnabled, getEdgeStore, dedupThresholds })` → `{ save, recall, edit, remove }`. Also `dedupExisting` / `planDedupExisting` (RM-02.c) so `--dedup-existing` cannot fork the 02.b bands. Everything environment-specific is *injected*. This is the code both `server.js` and `eval/pipeline.js` run — the RM-00 golden is the proof they never diverge. | `field`, `record` |
+| `dedup-existing.js` | RM-02.c CLI. Dry-run default; `--apply` is one durable rewrite. Thin wrapper over `dedupExisting()` — no second decision. | `memory-core`, `store` |
 | `record.js` | The shared record schema (`normalize()`), durable atomic writes (`writeFileDurable()`), the access sidecar (`AccessLog`), and the lexical heuristics (constraint typing, historical-query detection, supersession cues, cosine-banded `detectNearDuplicate`). Owned here so server and panel agree on a record byte-for-byte. | stdlib only |
 | `store.js` | `JsonlStore` — the flat-JSONL backend behind the Store seam. Constructible and testable without the stdio loop; a SQLite backend can replace it with the same method surface. | `record` |
 | `field.js` | Associative layer (Phase 2a): a kNN semantic graph over stored vectors, neighborhood expansion, and constraint rescue. No new embedding calls, no LLM extraction. | stdlib only |
@@ -198,7 +200,10 @@ argument is always the smallest possible thing (`content`, `query`, or `id`).
    `RESONANCE_DEDUP_LO` + live-config `dedup_hi` / `dedup_lo`), tuned on `eval/duplicates`
    (tea 0.9522 is the tightest HI; controls ≤ ~0.69). Scan is O(N) cosine, same cost
    class as the 0.1 save-time bind. Dedup runs *before* RM-03: a near-identical
-   restatement is the same fact, not a correction.
+   restatement is the same fact, not a correction. Stores written before this
+   slice: `--dedup-existing` (dry-run default; `--apply` mutates) walks the
+   current store in file order with the **same** decision (`planDedupExisting`
+   in `memory-core.js`). One `updateMany` / `writeFileDurable`. Not a fifth verb.
 5. **Supersession check (RM-03 v1).** `detectSupersession()` fires only when the new text
    carries an explicit correction cue ("actually", "now", "no longer", "moved"…) *and* it is
    the argmax-similar current memory above a floor. On a hit, the old row is retired
@@ -423,8 +428,8 @@ it reads `eval/embeddings.cache.json` and never touches the network or an API ke
   scorecard as the new golden. Measurement corpora (`duplicates`) are skipped here.
 - `eval/measure.js` runs reporting metrics from the registry in `eval/metrics.js`
   (`recall_at_k`, `duplicate_rate`; add more with `register(...)`). A/B numbers, not the
-  golden gate. See `eval/RESULTS.md` (RM-02.a baseline, RM-02.b A/B: dup_rate
-  0.3182 → 0.0000, recall@5 held at 1.0000).
+  golden gate. See `eval/RESULTS.md` (RM-02.a baseline, RM-02.b A/B and RM-02.c
+  backfill: dup_rate 0.3182 → 0.0000, recall@5 held at 1.0000).
 - Current scorecard: **27/31 checks**, field lifts 3 cases fail→pass and the golden gate holds.
 
 `npm test` (57 tests) covers the substrate directly; `npm run eval` covers recall behavior.

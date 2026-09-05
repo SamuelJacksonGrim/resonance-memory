@@ -38,9 +38,10 @@ roadmap, and per-repo backlog live in the companion repo
 
 | File | Role |
 |---|---|
-| `entry.js` | Bundle entry point / mode dispatch: `--mcp` → server, `--install`/`--uninstall` → installer, else → panel. |
+| `entry.js` | Bundle entry point / mode dispatch: `--mcp` → server, `--install`/`--uninstall` → installer, `--dedup-existing` → RM-02.c backfill (dry-run default; `--apply` mutates), else → panel. |
+| `dedup-existing.js` | RM-02.c CLI: scan a pre-02.b store, report (or apply) the same banded restatements/merges `save()` would have made. Thin wrapper over `dedupExisting()` in `memory-core.js` — no second decision. |
 | `server.js` | The MCP server. Declares the four verbs (tool schemas + descriptions), wires the environment (network embed, live field toggle, lazy ledger) into the shared core, and runs the JSON-RPC stdio loop. Reads the version from `package.json` so `serverInfo` can't drift. |
-| `memory-core.js` | **The four cognitive verbs, as ONE implementation.** `createCore({ store, embed, fieldEnabled, getEdgeStore, dedupThresholds })` returns `{ save, recall, edit, remove }`. Everything environment-specific is *injected*, nothing reached for — so `server.js` (network embedder) and `eval/pipeline.js` (cached embedder) build on the exact same code. This is deliberate: two copies of the recall path is the drift the RM-00 harness exists to catch. |
+| `memory-core.js` | **The four cognitive verbs, as ONE implementation.** `createCore({ store, embed, fieldEnabled, getEdgeStore, dedupThresholds })` returns `{ save, recall, edit, remove }`. Also owns `dedupExisting` / `planDedupExisting` (RM-02.c) so the `--dedup-existing` backfill cannot fork the 02.b bands. Everything environment-specific is *injected*, nothing reached for — so `server.js` (network embedder) and `eval/pipeline.js` (cached embedder) build on the exact same code. This is deliberate: two copies of the recall path is the drift the RM-00 harness exists to catch. |
 | `record.js` | The shared record schema (`normalize()`), durable atomic writes (`writeFileDurable()`), the access sidecar (`AccessLog`), and the lexical heuristics (constraint typing, historical-query detection, supersession cues + `detectSupersession`, cosine-banded `detectNearDuplicate` + `pickMergeSurvivor`). Owned here so the server and panel agree on a record byte-for-byte. |
 | `store.js` | `JsonlStore` — the flat-JSONL storage backend behind the Store seam. Constructed and testable without the stdio loop; a SQLite/Lantern backend can replace it with the same method surface (see `docs/proposed/0005`). |
 | `field.js` | Associative layer (Phase 2a): a kNN semantic graph over stored vectors, neighborhood expansion, and constraint rescue. No new embedding calls, no LLM extraction — built from vectors already stored at save. |
@@ -83,6 +84,8 @@ npm run panel     # open the control panel locally (node panel.js)
 npm run build     # build the single-file executable (node build-exe.js)
 npm run seed      # regenerate demo-seed.jsonl (needs a live embedder)
 npm run inspect   # Hebbian ledger telemetry
+npm run dedup-existing            # RM-02.c backfill dry-run (mutates nothing)
+npm run dedup-existing -- --apply # perform the plan as one durable rewrite
 npm run eval      # run the RM-00 eval harness (offline, deterministic)
 npm run eval -- --accept        # lock the current scorecard in as golden.json
 npm run eval -- --filter <id>   # run only cases whose id starts with <id>
@@ -108,6 +111,9 @@ new golden case: `EVAL_REFRESH=1 npm run eval`. For a measurement corpus (`dupli
    tuned on `eval/duplicates`. Then RM-03 cue-gated supersession, then append. A record
    that got a real vector also binds its top-5 semantic neighbors (cosine ≥ 0.25) into
    the EdgeStore; Hebbian weight starts at 0. Recall does not read those edges yet.
+   Stores written *before* 02.b still carry the extras: `--dedup-existing` (dry-run
+   default; `--apply` to mutate) runs the same bands over the current store, file
+   order, one durable rewrite. Not a fifth verb — a CLI maintenance path.
 2. **Recall**: `recall_memory({ query })` → embed only the query → cosine-rank stored
    vectors → return the top-k, each prefixed with `[id N]`. Keyword-overlap fallback if the
    embedder is unreachable. With the field on, a `Related:` section is appended from the

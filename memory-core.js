@@ -59,7 +59,7 @@ const {
   WarmField, shouldSpread, WARM_EDGE_CAP, emitWarmTrace,
 } = require("./warm.js");
 const {
-  normalize, isHistoricalQuery, detectSupersession, supersedePatches,
+  normalize, isCurrent, isHistoricalQuery, detectSupersession, supersedePatches,
   detectNearDuplicate, pickMergeSurvivor,
 } = require("./record.js");
 const { makeEdge, setSemantic, semanticValid, hebbianDecayType, reactivateEdge } = require("./edges.js");
@@ -180,6 +180,251 @@ function cosine(a, b) {
   let dot = 0, na = 0, nb = 0;
   for (let i = 0; i < a.length; i++) { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; }
   return na && nb ? dot / (Math.sqrt(na) * Math.sqrt(nb)) : 0;
+}
+
+function hasVector(r) {
+  return r && Array.isArray(r.embedding) && r.embedding.length > 0;
+}
+
+/*
+ * Shared mid-band merge payload (RM-02.b save + RM-02.c backfill).
+ * One helper so the online path and `--dedup-existing` cannot disagree
+ * on survivor/loser, union metadata, or the supersedePatches shape.
+ * Survivor text is one of the two originals (pickMergeSurvivor); the
+ * loser is linked, never hard-deleted (I8).
+ */
+function mergeBandPatches(incoming, existing, now) {
+  const survivor = pickMergeSurvivor(existing, incoming);
+  const loser = survivor === incoming ? existing : incoming;
+  const p = supersedePatches(loser, survivor, now);
+  const union = {
+    last_confirmed: now,
+    is_constraint: !!(existing.is_constraint || incoming.is_constraint),
+    access_count: (existing.access_count || 0) + (incoming.access_count || 0) + 1,
+  };
+  if (existing.source === "user_stated" || incoming.source === "user_stated") {
+    union.source = "user_stated";
+  }
+  return {
+    survivor, loser, union,
+    oldPatch: p.old,
+    newPatch: Object.assign({}, p.new, union),
+  };
+}
+
+function restateSurvivorPatch(existing, now) {
+  return {
+    last_confirmed: now,
+    access_count: (existing.access_count || 0) + 1,
+  };
+}
+
+/*
+ * Offline banded-dedup plan (RM-02.c `--dedup-existing`).
+ *
+ * Pass order: FILE ORDER (JSONL insertion). Each current record is treated
+ * as an incoming `save()` against the survivors of earlier records, using
+ * the SAME detectNearDuplicate + pickMergeSurvivor + mergeBandPatches
+ * decision as the live write path. That is why a second `--apply` is a
+ * no-op: after one pass every remaining current pair is below DEDUP_LO
+ * (or vectorless, which we refuse to merge blind).
+ *
+ * Restatement difference vs save(): the incoming row already exists on
+ * disk, so we supersede it (valid_to + superseded_by) instead of never
+ * appending it. current() matches sequential save; all() keeps the loser
+ * (I8 — backfill never hard-deletes). Exact-text match is free and does
+ * not need a vector (same as save()'s first guard).
+ *
+ * Pure: returns a plan. Caller owns persistence (applyDedupExisting /
+ * store.updateMany → one writeFileDurable).
+ */
+function planDedupExisting(records, opts = {}) {
+  const hi = typeof opts.hi === "number" ? opts.hi : DEDUP_HI;
+  const lo = typeof opts.lo === "number" ? opts.lo : DEDUP_LO;
+  const cosineFn = opts.cosineFn || cosine;
+  const now = opts.now || new Date().toISOString();
+  const current = (records || []).filter(isCurrent);
+  const survivors = [];
+  const restatements = [];
+  const merges = [];
+  const skipped = [];
+  const patches = Object.create(null);
+  const state = new Map();
+
+  function working(rec) {
+    const k = String(rec.id);
+    if (!state.has(k)) state.set(k, Object.assign({}, rec));
+    return state.get(k);
+  }
+  function patch(id, p) {
+    const k = String(id);
+    patches[k] = Object.assign(patches[k] || {}, p);
+    const w = state.get(k);
+    if (w) Object.assign(w, p);
+  }
+
+  for (const rec of current) {
+    const w = working(rec);
+    if (w.valid_to) continue;
+
+    // Byte-identical confirm (save()'s free first guard). Does not need
+    // a vector — identity is not a blind merge.
+    const same = survivors.find((s) => s.text === w.text && !s.valid_to);
+    if (same) {
+      const sw = working(same);
+      restatements.push({
+        action: "restate",
+        incomingId: w.id,
+        incomingText: w.text,
+        matchId: sw.id,
+        matchText: sw.text,
+        cosine: 1,
+      });
+      patch(sw.id, restateSurvivorPatch(sw, now));
+      patch(w.id, supersedePatches(w, sw, now).old);
+      continue;
+    }
+
+    if (!hasVector(w)) {
+      skipped.push({ id: w.id, text: w.text, reason: "no vector" });
+      survivors.push(w);
+      continue;
+    }
+
+    const dup = detectNearDuplicate(w, survivors, cosineFn, { hi, lo });
+    if (dup && dup.action === "restate") {
+      const sw = working(dup.match);
+      restatements.push({
+        action: "restate",
+        incomingId: w.id,
+        incomingText: w.text,
+        matchId: sw.id,
+        matchText: sw.text,
+        cosine: dup.cosine,
+      });
+      patch(sw.id, restateSurvivorPatch(sw, now));
+      patch(w.id, supersedePatches(w, sw, now).old);
+      continue;
+    }
+
+    if (dup && dup.action === "merge") {
+      const existing = working(dup.match);
+      const incoming = w;
+      const m = mergeBandPatches(incoming, existing, now);
+      merges.push({
+        action: "merge",
+        survivorId: m.survivor.id,
+        survivorText: m.survivor.text,
+        loserId: m.loser.id,
+        loserText: m.loser.text,
+        cosine: dup.cosine,
+      });
+      if (m.survivor === incoming) {
+        patch(incoming.id, m.newPatch);
+        patch(existing.id, m.oldPatch);
+        const idx = survivors.findIndex((s) => String(s.id) === String(existing.id));
+        if (idx >= 0) survivors.splice(idx, 1);
+        survivors.push(working(incoming));
+      } else {
+        patch(incoming.id, m.oldPatch);
+        patch(existing.id, m.newPatch);
+      }
+      continue;
+    }
+
+    survivors.push(w);
+  }
+
+  const beforeCount = current.length;
+  const afterCount = survivors.filter((s) => !s.valid_to).length;
+  const extras = restatements.length + merges.length;
+  return {
+    passOrder: "file-order (insertion); each record vs survivors of earlier records (same as save())",
+    hi, lo, now,
+    beforeCount,
+    afterCount,
+    restatements,
+    merges,
+    skipped,
+    patches,
+    extras,
+    duplicateRateBefore: beforeCount ? extras / beforeCount : 0,
+    duplicateRateAfter: 0,
+    nothingToDo: restatements.length === 0 && merges.length === 0,
+  };
+}
+
+/*
+ * Persist a plan in ONE durable rewrite (I5). Never a per-pair
+ * store.update — that would be N atomic windows and a crash could
+ * leave a half-applied pass. extraPatches (e.g. first-time vector
+ * backfill on legacy rows) merge into the same write.
+ *
+ * Nothing to patch → no write (second --apply is a no-op, mtime
+ * unchanged).
+ */
+function applyDedupExisting(store, plan, extraPatches) {
+  const merged = Object.create(null);
+  for (const src of [extraPatches || {}, (plan && plan.patches) || {}]) {
+    for (const id of Object.keys(src)) {
+      merged[id] = Object.assign(merged[id] || {}, src[id]);
+    }
+  }
+  if (!Object.keys(merged).length) return { wrote: false };
+  store.updateMany(merged);
+  return { wrote: true };
+}
+
+/*
+ * Full RM-02.c pass: optionally (re)embed vectorless current rows,
+ * plan against the same bands as save(), apply only when asked.
+ * Embedder down → skip those rows (report "no vector"), don't crash,
+ * don't merge blind. Successfully computed vectors are included in
+ * the apply write so a second pass does not re-embed.
+ *
+ * Dry-run (apply=false, the DEFAULT) mutates NOTHING — embeddings
+ * are used in-memory for the plan only.
+ */
+async function dedupExisting({ store, embed, apply = false, now, thresholds } = {}) {
+  if (!store || typeof store.all !== "function") {
+    throw new Error("dedupExisting: store is required");
+  }
+  const all = store.all();
+  const embedPatches = Object.create(null);
+  const vectorless = all.filter((r) => isCurrent(r) && !hasVector(r));
+  if (vectorless.length && typeof embed === "function") {
+    try {
+      const vecs = await embed(vectorless.map((r) => r.text));
+      vectorless.forEach((r, i) => {
+        const v = vecs[i];
+        if (Array.isArray(v) && v.length) {
+          r.embedding = v;
+          embedPatches[String(r.id)] = { embedding: v };
+        }
+      });
+    } catch { /* planner will skip remaining vectorless rows */ }
+  }
+
+  let bands = { hi: DEDUP_HI, lo: DEDUP_LO };
+  try {
+    const t = typeof thresholds === "function" ? thresholds() : thresholds;
+    if (t && typeof t.hi === "number" && typeof t.lo === "number") bands = t;
+  } catch { /* injected getter must never break the backfill */ }
+
+  const plan = planDedupExisting(all, {
+    cosineFn: cosine,
+    hi: bands.hi,
+    lo: bands.lo,
+    now: now || new Date().toISOString(),
+  });
+  plan.vectorBackfills = Object.keys(embedPatches).length;
+  if (apply) {
+    const result = applyDedupExisting(store, plan, embedPatches);
+    plan.wrote = result.wrote;
+  } else {
+    plan.wrote = false;
+  }
+  return plan;
 }
 
 /*
@@ -365,37 +610,23 @@ function createCore({
   // access_count, do not append. access_count is a retention signal (I2:
   // never rank). The original text stays; nothing is lost (I8).
   function confirmRestatement(existing, now) {
-    store.update(existing.id, {
-      last_confirmed: now,
-      access_count: (existing.access_count || 0) + 1,
-    });
+    store.update(existing.id, restateSurvivorPatch(existing, now));
     tryReactivateIncident(existing.id);  // save touching an existing endpoint (0.4)
     tryPrimeSave(existing.id);
     return "Already remembered — confirmed it's still current. (" + store.current().length + " memories total.)";
   }
 
-  // Mid-band merge. Reuses supersedePatches (RM-03 machinery) so the loser
-  // is linked with superseded_by and recoverable, never hard-deleted (I8).
-  // Survivor text is one of the two originals (pickMergeSurvivor) — never a
-  // blend. Metadata is unioned onto the survivor.
+  // Mid-band merge. Shared mergeBandPatches so `--dedup-existing` cannot
+  // diverge from save() (RM-02.c). Loser is linked with superseded_by,
+  // never hard-deleted (I8). Survivor text is one of the two originals.
   function commitMerge(incoming, existing, mems, now, requestId) {
-    const survivor = pickMergeSurvivor(existing, incoming);
-    const loser = survivor === incoming ? existing : incoming;
-    const p = supersedePatches(loser, survivor, now);
-    const union = {
-      last_confirmed: now,
-      is_constraint: !!(existing.is_constraint || incoming.is_constraint),
-      access_count: (existing.access_count || 0) + (incoming.access_count || 0) + 1,
-    };
-    if (existing.source === "user_stated" || incoming.source === "user_stated") {
-      union.source = "user_stated";
-    }
+    const m = mergeBandPatches(incoming, existing, now);
 
-    if (survivor === incoming) {
-      Object.assign(incoming, p.new, union);
+    if (m.survivor === incoming) {
+      Object.assign(incoming, m.newPatch);
       store.add(incoming);
-      store.update(existing.id, p.old);
-      tryBindSaveTime(incoming, mems.filter((m) => String(m.id) !== String(existing.id)), requestId);
+      store.update(existing.id, m.oldPatch);
+      tryBindSaveTime(incoming, mems.filter((m2) => String(m2.id) !== String(existing.id)), requestId);
       tryPrimeSave(incoming.id);
       return "Saved — merged a near-duplicate, retiring memory " + existing.id +
              ". (" + store.current().length + " memories total.)";
@@ -403,9 +634,9 @@ function createCore({
 
     // Existing text is longer or equal: keep it current, persist the
     // incoming as already-superseded so the shorter wording is recoverable.
-    Object.assign(incoming, p.old);
+    Object.assign(incoming, m.oldPatch);
     store.add(incoming);
-    store.update(existing.id, Object.assign({}, p.new, union));
+    store.update(existing.id, m.newPatch);
     tryReactivateIncident(existing.id);
     tryPrimeSave(existing.id);
     return "Saved — merged a near-duplicate into memory " + existing.id +
@@ -650,4 +881,6 @@ module.exports = {
   createCore, cosine, keywordScore, defaultGetEdges, asEdgeMap,
   bindSaveTimeNeighbors, SAVE_TIME_K, SAVE_TIME_MIN_COS,
   DEDUP_HI, DEDUP_LO, readDedupThresholds,
+  planDedupExisting, applyDedupExisting, dedupExisting,
+  mergeBandPatches, restateSurvivorPatch,
 };

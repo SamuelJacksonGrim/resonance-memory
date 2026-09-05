@@ -1776,6 +1776,7 @@ const {
   createCore, defaultGetEdges, cosine: coreCosine,
   bindSaveTimeNeighbors, SAVE_TIME_K, SAVE_TIME_MIN_COS,
   DEDUP_HI, DEDUP_LO, readDedupThresholds,
+  dedupExisting,
 } = require("./memory-core.js");
 
 const LAMBDA_TURN = 0.357;
@@ -2171,6 +2172,292 @@ async function asyncTests() {
       "duplicate_rate " + r.metrics.duplicate_rate + " must drop ≥50% from 0.3182");
     assert.strictEqual(r.metrics.recall_at_k, 1,
       "recall@5 must hold (controls not over-merged); misses=" + (r.recall_at_k.misses || []).join(","));
+  });
+
+  section("RM-02.c --dedup-existing backfill");
+
+  // Independent 3-D unit axes so tea/cat/dog groups cannot cosine-bleed.
+  function axisAt(axis, cos) {
+    const c = Number(cos);
+    const s = Math.sqrt(Math.max(0, 1 - c * c));
+    if (axis === 0) return [c, s, 0];
+    if (axis === 1) return [0, c, s];
+    return [0, 0, 1];
+  }
+  const TEA_A = "I prefer tea over coffee";
+  const TEA_B = "I like tea more than coffee";
+  const CAT_A = "I have a cat named Koneko";
+  const CAT_B = "I have a black cat named Koneko";
+  const DOG = "I have a dog named Rex";
+  const FIXTURE_TABLE = {
+    [TEA_A]: [1, 0, 0],
+    [TEA_B]: axisAt(0, 0.9522),
+    [CAT_A]: [0, 1, 0],
+    [CAT_B]: axisAt(1, 0.9435),
+    [DOG]: [0, 0, 1],
+  };
+  const FIXTURE_TEXTS = [TEA_A, TEA_B, CAT_A, CAT_B, DOG];
+  const T_BACKFILL = "2026-09-05T12:00:00.000Z";
+
+  function seedRaw(file, rows) {
+    const store = new JsonlStore(tmp(file));
+    const t0 = "2026-01-01T00:00:00.000Z";
+    for (const row of rows) {
+      store.add(normalize({
+        id: store.nextId(),
+        created: t0, modified: t0, text: row.text,
+        embedding: row.embedding != null ? row.embedding : null,
+        valid_from: t0, last_confirmed: t0,
+        access_count: row.access_count || 0,
+      }));
+    }
+    return store;
+  }
+  function seedFixture(file, texts) {
+    return seedRaw(file, (texts || FIXTURE_TEXTS).map((t) => ({
+      text: t, embedding: FIXTURE_TABLE[t] ? FIXTURE_TABLE[t].slice() : null,
+    })));
+  }
+  function currentTexts(store) {
+    return store.current().map((r) => r.text).sort();
+  }
+
+  await atest("dry-run mutates NOTHING (bytes + mtime) and reports the known plan", async () => {
+    const store = seedFixture("dedup-ex-dry.jsonl");
+    const before = fs.readFileSync(store.file, "utf8");
+    const mtime = fs.statSync(store.file).mtimeMs;
+    const plan = await dedupExisting({ store, apply: false, now: T_BACKFILL });
+    assert.strictEqual(plan.wrote, false, "dry-run must not apply");
+    assert.strictEqual(fs.readFileSync(store.file, "utf8"), before, "store bytes unchanged");
+    assert.strictEqual(fs.statSync(store.file).mtimeMs, mtime, "mtime unchanged");
+    assert.strictEqual(plan.restatements.length, 1, "tea paraphrase is a restatement");
+    assert.strictEqual(plan.restatements[0].incomingText, TEA_B);
+    assert.strictEqual(plan.restatements[0].matchText, TEA_A);
+    assert.strictEqual(plan.merges.length, 1, "cat pair is a mid-band merge");
+    assert.strictEqual(plan.merges[0].survivorText, CAT_B, "longer original survives");
+    assert.strictEqual(plan.merges[0].loserText, CAT_A);
+    assert.ok(!plan.restatements.some((r) => r.incomingText === DOG || r.matchText === DOG));
+    assert.ok(!plan.merges.some((m) => m.survivorText === DOG || m.loserText === DOG),
+      "control dog must not enter the plan");
+    assert.strictEqual(plan.beforeCount, 5);
+    assert.strictEqual(plan.afterCount, 3);
+    assert.strictEqual(plan.skipped.length, 0);
+    const { formatPlan } = require("./dedup-existing.js");
+    const out = formatPlan(plan, { apply: false, storePath: store.file });
+    assert.ok(/dry-run/i.test(out));
+    assert.ok(/Nothing written/i.test(out));
+    assert.ok(/Restatements \(1\)/.test(out));
+    assert.ok(/Merges \(1\)/.test(out));
+  });
+
+  await atest("apply end state matches sequential save() through 02.b (current texts)", async () => {
+    const embed = async (texts) => texts.map((t) => (FIXTURE_TABLE[t] || [0, 0, 1]).slice());
+    const online = new JsonlStore(tmp("dedup-ex-online.jsonl"));
+    const core = createCore({ store: online, embed });
+    for (const t of FIXTURE_TEXTS) await core.save(t);
+
+    const offline = seedFixture("dedup-ex-offline.jsonl");
+    const seeded = offline.all().length;
+    const plan = await dedupExisting({ store: offline, apply: true, now: T_BACKFILL });
+    assert.strictEqual(plan.wrote, true);
+    assert.deepStrictEqual(currentTexts(offline), currentTexts(online),
+      "offline backfill current() must match one-by-one save()");
+    assert.strictEqual(offline.current().length, 3, "tea + cat + dog");
+    assert.strictEqual(offline.all().length, seeded, "I8: backfill never hard-deletes");
+    const tea = offline.current().find((r) => r.text === TEA_A);
+    assert.ok(tea, "HI restatement keeps the earlier original");
+    const cat = offline.current().find((r) => r.text === CAT_B);
+    assert.ok(cat, "mid merge keeps the longer original");
+    const catLoser = offline.active().find((r) => r.text === CAT_A);
+    assert.ok(catLoser && catLoser.superseded_by === cat.id && catLoser.valid_to,
+      "merge loser is superseded, not deleted");
+    const teaLoser = offline.active().find((r) => r.text === TEA_B);
+    assert.ok(teaLoser && teaLoser.superseded_by === tea.id,
+      "already-stored restatement is superseded (I8) rather than dropped");
+  });
+
+  await atest("second --apply is a no-op; clean store reports nothing to do", async () => {
+    const store = seedFixture("dedup-ex-idem.jsonl");
+    await dedupExisting({ store, apply: true, now: T_BACKFILL });
+    const before = fs.readFileSync(store.file, "utf8");
+    const mtime = fs.statSync(store.file).mtimeMs;
+    const again = await dedupExisting({ store, apply: true, now: T_BACKFILL });
+    assert.ok(again.nothingToDo, "nothing left to merge");
+    assert.strictEqual(again.wrote, false, "second apply must not rewrite");
+    assert.strictEqual(again.restatements.length, 0);
+    assert.strictEqual(again.merges.length, 0);
+    assert.strictEqual(fs.readFileSync(store.file, "utf8"), before);
+    assert.strictEqual(fs.statSync(store.file).mtimeMs, mtime);
+
+    const clean = seedRaw("dedup-ex-clean.jsonl", [
+      { text: "alpha", embedding: [1, 0, 0] },
+      { text: "beta", embedding: [0, 1, 0] },
+    ]);
+    const p = await dedupExisting({ store: clean, apply: true });
+    assert.ok(p.nothingToDo);
+    assert.strictEqual(p.wrote, false);
+    assert.strictEqual(clean.current().length, 2);
+  });
+
+  await atest("vectorless row is skipped, not merged (embedder down)", async () => {
+    const store = seedRaw("dedup-ex-novec.jsonl", [
+      { text: TEA_A, embedding: [1, 0, 0] },
+      { text: TEA_B, embedding: null },
+    ]);
+    const before = fs.readFileSync(store.file, "utf8");
+    const embed = async () => { throw new Error("embedder down"); };
+    const plan = await dedupExisting({ store, embed, apply: true, now: T_BACKFILL });
+    assert.strictEqual(plan.skipped.length, 1);
+    assert.strictEqual(plan.skipped[0].reason, "no vector");
+    assert.strictEqual(plan.restatements.length, 0, "must not merge blind");
+    assert.strictEqual(plan.merges.length, 0);
+    assert.strictEqual(store.current().length, 2, "both still current");
+    assert.strictEqual(fs.readFileSync(store.file, "utf8"), before,
+      "apply with nothing to patch must not rewrite");
+  });
+
+  await atest("vectorless row re-embeds then restates when the embedder is up", async () => {
+    const store = seedRaw("dedup-ex-fill.jsonl", [
+      { text: TEA_A, embedding: [1, 0, 0] },
+      { text: TEA_B, embedding: null },
+    ]);
+    const embed = async (texts) => texts.map((t) => (FIXTURE_TABLE[t] || [1, 0, 0]).slice());
+    const plan = await dedupExisting({ store, embed, apply: true, now: T_BACKFILL });
+    assert.strictEqual(plan.skipped.length, 0);
+    assert.strictEqual(plan.vectorBackfills, 1);
+    assert.strictEqual(plan.restatements.length, 1);
+    assert.strictEqual(store.current().length, 1);
+    const loser = store.active().find((r) => r.text === TEA_B);
+    assert.ok(loser && Array.isArray(loser.embedding) && loser.embedding.length,
+      "filled vector is persisted on the superseded row too");
+  });
+
+  await atest("apply is one durable rewrite (I5) and loses no memory (I8)", async () => {
+    const store = seedFixture("dedup-ex-i5.jsonl");
+    const nSeeded = store.all().length;
+    let many = 0, one = 0;
+    const origMany = store.updateMany.bind(store);
+    const origOne = store.update.bind(store);
+    store.updateMany = function () { many++; return origMany.apply(this, arguments); };
+    store.update = function () { one++; return origOne.apply(this, arguments); };
+    await dedupExisting({ store, apply: true, now: T_BACKFILL });
+    assert.strictEqual(many, 1, "one updateMany → one writeFileDurable");
+    assert.strictEqual(one, 0, "never a per-pair store.update");
+    const dir = path.dirname(store.file);
+    const marker = "." + path.basename(store.file) + ".";
+    const tmps = fs.readdirSync(dir).filter((n) => n.indexOf(marker) === 0 && n.slice(-4) === ".tmp");
+    assert.strictEqual(tmps.length, 0, "writeFileDurable leaves no temp files");
+    const raw = fs.readFileSync(store.file, "utf8");
+    const lines = raw.split("\n").filter(Boolean);
+    assert.ok(raw.endsWith("\n"));
+    for (const line of lines) JSON.parse(line);  // every line parseable — not truncated
+    assert.strictEqual(store.all().length, nSeeded, "I8: survivors + superseded both present");
+    assert.ok(store.active().every((r) => !r.deleted), "no hard/soft-delete of losers");
+  });
+
+  await atest("CLI --dedup-existing (entry.js) dry-run default; --apply required to mutate", async () => {
+    const { spawnSync } = require("child_process");
+    const store = seedFixture("dedup-ex-cli.jsonl");
+    const before = fs.readFileSync(store.file, "utf8");
+    const entry = path.join(__dirname, "entry.js");
+    const env = Object.assign({}, process.env);
+    delete env.RESONANCE_DEDUP_HI;
+    delete env.RESONANCE_DEDUP_LO;
+    delete env.RESONANCE_MEMORY_CONFIG;
+    const dry = spawnSync(process.execPath, [entry, "--dedup-existing", "--json", store.file], {
+      encoding: "utf8", timeout: 15000, env,
+    });
+    assert.strictEqual(dry.status, 0, "dry-run exit: " + (dry.stderr || dry.stdout));
+    const report = JSON.parse(dry.stdout);
+    assert.strictEqual(report.applied, false);
+    assert.strictEqual(report.wrote, false);
+    assert.strictEqual(report.restatements.length, 1);
+    assert.strictEqual(report.merges.length, 1);
+    assert.strictEqual(fs.readFileSync(store.file, "utf8"), before, "CLI dry-run mutates nothing");
+
+    const applied = spawnSync(process.execPath, [entry, "--dedup-existing", "--apply", "--json", store.file], {
+      encoding: "utf8", timeout: 15000, env,
+    });
+    assert.strictEqual(applied.status, 0, "apply exit: " + (applied.stderr || applied.stdout));
+    const after = JSON.parse(applied.stdout);
+    assert.strictEqual(after.applied, true);
+    assert.strictEqual(after.wrote, true);
+    assert.strictEqual(after.afterCount, 3);
+    assert.notStrictEqual(fs.readFileSync(store.file, "utf8"), before);
+    assert.strictEqual(new JsonlStore(store.file).current().length, 3);
+  });
+
+  await atest("duplicates corpus backfill: plan matches groups; dup_rate 0.3182→0; recall@5 holds", async () => {
+    const { embed } = require("./eval/embed-cache.js");
+    const { loadScenarios, resolveRelevant } = require("./eval/measure.js");
+    const { groupsFromWrites, explainMetric, parsePrimaryHits } = require("./eval/metrics.js");
+    const scenarios = loadScenarios(path.join(__dirname, "eval", "corpora", "duplicates.jsonl"));
+    const writes = scenarios[0].writes;
+    const groups = groupsFromWrites(writes);
+    const textToGroup = {};
+    for (const w of writes) textToGroup[w.text] = w.dup_group;
+
+    // Pre-02.b shape: exact restatement already existed, so drop the second
+    // byte-identical coffee-order write. 22 current, 7 extras (4 HI + 3 mid).
+    const seenExact = new Set();
+    const pre02b = [];
+    for (const w of writes) {
+      if (w.band === "exact") {
+        if (seenExact.has(w.text)) continue;
+        seenExact.add(w.text);
+      }
+      pre02b.push(w);
+    }
+    const vecs = await embed(pre02b.map((w) => w.text));
+    const store = new JsonlStore(tmp("dedup-ex-corpus.jsonl"));
+    for (let i = 0; i < pre02b.length; i++) {
+      store.add(normalize({
+        id: i + 1,
+        text: pre02b[i].text,
+        embedding: vecs[i],
+        created: "2026-01-01T00:00:00.000Z",
+      }));
+    }
+    const beforeBytes = fs.readFileSync(store.file, "utf8");
+    const beforeDup = explainMetric("duplicate_rate", { records: store.current() }, { groups });
+    assert.strictEqual(beforeDup.extras, 7);
+    assert.ok(Math.abs(beforeDup.rate - 7 / 22) < 1e-9, "pre-02.b baseline 0.3182");
+
+    const dry = await dedupExisting({ store, apply: false, now: T_BACKFILL });
+    assert.strictEqual(fs.readFileSync(store.file, "utf8"), beforeBytes, "corpus dry-run is a no-write");
+    const restateGroups = new Set(dry.restatements.map((r) => textToGroup[r.incomingText]));
+    const mergeGroups = new Set(dry.merges.map((m) => textToGroup[m.loserText] || textToGroup[m.survivorText]));
+    assert.ok(restateGroups.has("penicillin") && restateGroups.has("tea") && restateGroups.has("peanuts"),
+      "HI groups are restatements");
+    assert.ok(!restateGroups.has("coffee-order"), "exact pair already collapsed in this fixture");
+    assert.ok(mergeGroups.has("job") && mergeGroups.has("cat") && mergeGroups.has("diabetic"),
+      "mid groups are merges");
+    for (const g of ["dog", "peanut-allergy", "standup", "mechanic", "name", "night-owl", "sister-bday", "garage"]) {
+      assert.ok(!restateGroups.has(g) && !mergeGroups.has(g), "control " + g + " must not collapse");
+    }
+    assert.strictEqual(dry.restatements.length, 4, "4 HI extras");
+    assert.strictEqual(dry.merges.length, 3, "3 mid extras");
+    assert.strictEqual(dry.afterCount, 15);
+
+    const applied = await dedupExisting({ store, apply: true, now: T_BACKFILL });
+    assert.strictEqual(applied.wrote, true);
+    const recs = store.current();
+    const afterDup = explainMetric("duplicate_rate", { records: recs }, { groups });
+    assert.strictEqual(afterDup.rate, 0, "duplicate_rate dropped to 0");
+    assert.strictEqual(recs.length, 15);
+
+    const core = createCore({ store, embed });
+    let hits = 0;
+    const misses = [];
+    for (const q of scenarios[0].queries) {
+      const output = await core.recall(q.query, 5);
+      const ranked = parsePrimaryHits(output).map((h) => String(h.id));
+      const relevant = resolveRelevant(q, recs, groups).map(String);
+      if (relevant.some((id) => ranked.indexOf(id) >= 0)) hits++;
+      else misses.push(q.id);
+    }
+    assert.strictEqual(hits, scenarios[0].queries.length,
+      "recall@5 held; misses=" + misses.join(","));
   });
 
   section("edit() embedding safety");
