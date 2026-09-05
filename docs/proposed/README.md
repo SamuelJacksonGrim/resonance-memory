@@ -10,10 +10,11 @@ before anyone writes the implementation.
 | [0002](0002-temporal-supersession.md) | Temporal metadata and supersession | `RM-03`, `RM-04` | **schema shipped** (`RM-04`); logic proposed (`RM-03`) |
 | [0003](0003-hybrid-retrieval.md) | Hybrid retrieval (semantic + keyword + graph) via RRF | `RM-05` | proposed ⚠️ |
 | [0004](0004-scoping.md) | Scoping: multi-user, multi-agent, session vs long-term | `RM-06` | proposed |
-| [0005](0005-store-abstraction.md) | Store abstraction and the SQLite backend | `RM-07` | proposed (`store.js` seam extracted) |
+| [0005](0005-store-abstraction.md) | Store abstraction and the SQLite backend | `RM-07` | proposed (`store.js` seam extracted; backend decision in [0010](0010-sqlite-backend.md)) |
 | [0006](0006-constraints-decay-pruning.md) | Soft constraints, *importance* decay, pruning | `RM-08` | proposed — **scope likely much smaller than written**; measure first. *Substrate-level (learned-edge) decay moved to [`phase-0`](../phases/phase-0-edge-substrate.md).* |
 | [0007](0007-eval-harness.md) | The evaluation harness | `RM-00` | proposed |
 | [0009](0009-edge-threat-model.md) | Edge-substrate threat-model sketch | `RM-16` (feeds; does not build) | **sketch** — Phase 0.6. Implementation stays gated to Phase 2 / the 2.2 promotion gate |
+| [0010](0010-sqlite-backend.md) | SQLite backend behind the Store seam | `RM-07` | **proposed (spike measured)** — `node:sqlite` + BLOB + JS cosine; sqlite-vec works but is slower at 10k–100k |
 
 > **Phase specs live in [`../phases/`](../phases/), not here.** These `proposed/` docs are RFC-style
 > *rationale* — reference material a phase links to. The edge-substrate design that was drafted here
@@ -38,7 +39,9 @@ If you're picking this up cold:
 4. **[0001](0001-write-pipeline.md)** — how facts get cleaned before they're stored.
 5. **[0005](0005-store-abstraction.md)** — the storage seam. The data-loss half of what this
    doc describes is **fixed** (see [`../BUGS.md`](../BUGS.md) `BUG-001`/`BUG-002`); the
-   remaining O(N) parse/rewrite is what SQLite is for.
+   remaining O(N) parse/rewrite is what SQLite is for. **[0010](0010-sqlite-backend.md)** is
+   the measured backend: `node:sqlite` in the SEA, BLOB + JS cosine, lossless JSONL
+   export. Spike: [`spike/rm-07-sqlite/`](../../spike/rm-07-sqlite/).
 6. **[0003](0003-hybrid-retrieval.md)** — the one with an invariant fight in it.
 7. **[`phase-0`](../phases/phase-0-edge-substrate.md)** *(in `phases/`, not here)* — unify
    `field.js` and `ledger.js` into one persistent edge store with two signals
@@ -64,4 +67,4 @@ If you're picking this up cold:
 
 ## Related
 
-[[ROADMAP]] · [[ARCHITECTURE]] · [[BACKLOG]] · [[0001-write-pipeline]] · [[0002-temporal-supersession]] · [[0003-hybrid-retrieval]] · [[0004-scoping]] · [[0005-store-abstraction]] · [[0006-constraints-decay-pruning]] · [[0007-eval-harness]] · [[0009-edge-threat-model]] · [[phase-0-edge-substrate]] · [[phase-2-retrieval-dynamics]]
+[[ROADMAP]] · [[ARCHITECTURE]] · [[BACKLOG]] · [[0001-write-pipeline]] · [[0002-temporal-supersession]] · [[0003-hybrid-retrieval]] · [[0004-scoping]] · [[0005-store-abstraction]] · [[0006-constraints-decay-pruning]] · [[0007-eval-harness]] · [[0009-edge-threat-model]] · [[0010-sqlite-backend]] · [[phase-0-edge-substrate]] · [[phase-2-retrieval-dynamics]]

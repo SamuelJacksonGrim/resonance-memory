@@ -321,12 +321,15 @@ deletions, ever.
       tested without starting the MCP stdio loop.
 - [ ] Formalize the documented `Store` interface (`touch`, `searchDense`, `searchSparse`) —
       the seam exists now but still leaks JSONL assumptions.
-- [ ] Add `SqliteStore` — `sqlite-vec` for vectors, FTS5 for the `RM-05` keyword arm (which
-      makes hybrid retrieval nearly free), WAL mode, incremental writes.
-      **`node:sqlite` is confirmed available** on the Node 22 runtime (`DatabaseSync`,
-      `StatementSync`, `backup`), which settles the dependency question in `proposed/0005`:
-      no native module, no threat to the single-file SEA build. Whether the `sqlite-vec`
-      extension loads inside SEA is the one part still unknown.
+- [ ] Add `SqliteStore` — WAL, incremental writes, FTS5 for the `RM-05` keyword arm.
+      **Design + spike (2026-09-05):** [`proposed/0010`](proposed/0010-sqlite-backend.md),
+      numbers in [`spike/rm-07-sqlite/results.md`](../spike/rm-07-sqlite/results.md).
+      `node:sqlite` works *inside a SEA* (mini-smoke on Node 24.18.0 / sqlite 3.53.1).
+      sqlite-vec `loadExtension` works and matches brute cosine (Δ 6.5e-8) but is
+      *slower* than RAM JS cosine at 10k–100k — **not the v1 vector path**. Recommended:
+      BLOB + in-process Float32 cache + JS cosine; JSONL export/import for sovereignty.
+      Cached field-off recall p95: 10.4 ms @10k, **57.9 ms @50k** (JSONL cannot load),
+      107.6 ms @100k. Implementation waits on sign-off of 0010's open decisions.
 - [ ] Conformance test suite both backends must pass identically.
 - [ ] Transparent one-way migration on first run, with a `.bak`.
 - [ ] JSONL stays the default until SQLite passes conformance + eval parity.
@@ -334,7 +337,8 @@ deletions, ever.
 **Acceptance:** 100k memories, recall p95 <100ms, no full-file rewrite; both backends
 byte-identical on the eval scorecard.
 
-Design: [`proposed/0005`](proposed/0005-store-abstraction.md).
+Design: [`proposed/0005`](proposed/0005-store-abstraction.md) (seam) ·
+[`proposed/0010`](proposed/0010-sqlite-backend.md) (measured backend).
 
 ---
 

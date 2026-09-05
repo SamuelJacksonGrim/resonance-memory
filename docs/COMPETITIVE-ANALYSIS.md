@@ -12,7 +12,10 @@ because this market's published benchmarks are actively disputed (see §4).*
 > "applies supersession but can't detect it" to "detects explicit corrections and applies them,
 > fuller heuristics still open." **Provenance (`source`) is now seeded in the record schema**
 > (the `RM-16` groundwork). The write path (extraction, cosine-banded dedup) and hybrid
-> retrieval remain the real open gaps.
+> retrieval remain the real open gaps. **RM-07 SQLite is designed, not shipped**
+> ([`proposed/0010`](proposed/0010-sqlite-backend.md)): S1 made it a measured GO (JSONL
+> cannot load 50k); the spike says `node:sqlite` + BLOB + JS cosine, with lossless JSONL
+> export as the anti-lock-in path (§6 claim 5).
 
 The goal of this document is not to cheer. It is to answer three questions honestly:
 
@@ -146,7 +149,8 @@ Honest scoring of Resonance Memory **today** (`v0.2.0`, August 2026) against the
 | Multi-user / agent scoping | ✅ | ✅ | ✅ | ❌ | `RM-06` |
 | Session vs long-term separation | ✅ | ✅ | ✅ | ❌ | `RM-06` |
 | Idle/sleep-time consolidation | 🟡 | ✅ | ✅ | ❌ | `RM-10` |
-| Pluggable store backend | ✅ | ✅ | ✅ | 🟡 *(seam extracted, one impl)* | `RM-07` |
+| Pluggable store backend | ✅ | ✅ | ✅ | 🟡 *(seam extracted, one impl; SQLite spike measured, [`proposed/0010`](proposed/0010-sqlite-backend.md))* | `RM-07` |
+| Lossless export / anti-lock-in | 🟡 | 🟡 | 🟡 | 🟡 *(JSONL is the store today; SQLite design keeps JSONL as the interchange format — you can leave)* | `RM-07` |
 | Eval harness / regression suite | ✅ | ✅ | ✅ | ✅ *(offline, deterministic, golden-gated)* | `RM-00` ✅ |
 | Provenance on records (poisoning defense) | 🟡 | 🟡 | 🟡 | 🟡 *(`source` field seeded; recall-weighting + filter open)* | `RM-16` |
 | SDKs | ✅ | ✅ | ✅ | ❌ | `RM-12` |
@@ -186,6 +190,14 @@ Three claims we can defend, and should lead with:
    the repo and runs offline in under a minute — no cloud, no API key. "Verify our claims on
    your own machine" is a claim the hosted vendors structurally cannot match, and it sidesteps
    the LOCOMO number war entirely (§4).
+5. **You can leave.** *(Design, RM-07 / [`proposed/0010`](proposed/0010-sqlite-backend.md).)*
+   The working copy may be SQLite for speed; the interchange format is the same JSONL RM
+   already uses, lossless in both directions. Copy the store between devices, or export and
+   hand it to a competing provider. Hosted Mem0/Zep *are* the lock-in — your memory lives in
+   their cloud so leaving costs a migration you don't control. Local-only is necessary but
+   not sufficient (VEKTOR et al. are local too); **export that a competitor can read without
+   our exe** is the anti-hoarding claim. Not yet a shipped verb — it's a CLI/maintenance
+   path on purpose (four verbs stay four).
 
 Three claims we must **not** make until earned (updated August 2026):
 - ❌ "Beats Mem0 on LOCOMO" — still don't enter the number war (§4). `RM-00` has landed, so we

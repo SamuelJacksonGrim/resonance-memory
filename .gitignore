@@ -27,6 +27,10 @@ config.json
 eval/substrate/.cache/
 eval/substrate/last-run.json
 
+# RM-07 spike: vendor binaries + scratch DBs. The JS and results.md ARE tracked.
+spike/rm-07-sqlite/vendor/
+spike/rm-07-sqlite/tmp/
+
 # Local backups
 *.bak
 *.bak-*

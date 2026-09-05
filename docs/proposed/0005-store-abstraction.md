@@ -2,6 +2,15 @@
 
 **Status:** proposed · **Backlog:** `RM-07` · **Depends on:** `RM-00`
 
+> **Spike measured 2026-09-05.** The seam in this doc still stands. The *backend
+> choice* (`node:sqlite` vs `better-sqlite3`, sqlite-vec vs BLOB+JS cosine, one-way
+> vs reversible migration) is decided with numbers in
+> [`0010-sqlite-backend.md`](0010-sqlite-backend.md). Short version: `node:sqlite`
+> works inside a SEA; sqlite-vec loads and matches brute cosine to 1e-7 but is
+> *slower* than a RAM Float32 scan at 10k–100k; JSONL export/import is lossless.
+> Do not implement from this file's "sqlite-vec virtual table" sketch without
+> reading 0010.
+
 ## Problem
 
 `DEVELOPERS.md` claims a swappable `Store` abstraction so the backend can be swapped without
@@ -230,4 +239,4 @@ test so no future backend reintroduces it.
 
 ## Related
 
-[[BACKLOG]] · [[ARCHITECTURE]] · [[BUGS]] · [[proposed/README]]
+[[BACKLOG]] · [[ARCHITECTURE]] · [[BUGS]] · [[0010-sqlite-backend]] · [[proposed/README]]

@@ -193,13 +193,13 @@ Not substrate work; what makes it runnable by anyone. Scope + acceptance: `BACKL
 |---|---|---|
 | `RM-01` | Write-side extraction (heuristics first; local LLM optional, off by default, never blocks save) | ✅ 01.a+01.b+01.c (messy precision 0.26→1.00; messy-hard live Tier 2 A/B in RESULTS.md) |
 | `RM-02` | Near-duplicate detection + merge | ✅ 02.a+02.b+02.c (A/B + backfill: dup_rate 0.3182→0.0000, recall@5 held) |
-| `RM-07` | SQLite backend behind the Store seam (`sqlite-vec` + FTS5) | ⬜ |
+| `RM-07` | SQLite backend behind the Store seam (`node:sqlite` + BLOB/JS cosine; FTS5 later) | ⬜ design+spike in [`proposed/0010`](proposed/0010-sqlite-backend.md) |
 | `RM-11` | Cross-platform builds + signing | ⬜ |
 | `RM-12` | SDKs against a documented local HTTP API | ⬜ |
 | `RM-13` | Opt-in local-only telemetry + failure-report bundle | ⬜ |
 | `RM-15` | Longitudinal coherence soak test | ⬜ |
 | `RM-16` | Poisoning / injection defense | ⬜ **gates Phase 2.2 promotion** — threat sketch: [`0009`](proposed/0009-edge-threat-model.md) |
-| `RM-17` | Export / import / backup | ⬜ — priority rises once the sidecar holds irreplaceable state |
+| `RM-17` | Export / import / backup | ⬜ — JSONL export is load-bearing for RM-07 data-sovereignty ([`0010`](proposed/0010-sqlite-backend.md)); full backup/panel UX still open |
 | `RM-18` | Encryption at rest (optional) | ⬜ |
 | `RM-19` | Recall explainability | ⬜ — near-free once 2.2 tracing exists |
 | `RM-20` | First-run quality | ⬜ |

@@ -1112,6 +1112,31 @@ Parse, not cosine, is the field-off latency. Field-on is `buildEdges`.
 Reproduce: `node eval/substrate/scale.js` (offline after the cache fill).
 `--quick` is N=1k; `--no-field` skips the 91 s 10k field-on cell.
 
+### S1 follow-up — RM-07 spike (SQLite prototype, 2026-09-05)
+
+Not a product Store. `memory-core.js` unchanged. Full write-up:
+[`docs/proposed/0010-sqlite-backend.md`](../docs/proposed/0010-sqlite-backend.md),
+numbers in [`spike/rm-07-sqlite/results.md`](../spike/rm-07-sqlite/results.md).
+
+JSONL's load wall is gone. A `node:sqlite` prototype with BLOB vectors **loads
+50k and 100k**. Field-off `recall()` through the JsonlStore surface, with an
+in-process vector cache (hydrate once):
+
+| N | JSONL S1 p95 | SQLite cached p95 | load |
+|---|---|---|---|
+| 10k | 488.7 ms | **10.4 ms** | both |
+| 50k | cannot load (834 MB) | **57.9 ms** | SQLite yes (196 MB) |
+| 100k | cannot load | **107.6 ms** | SQLite yes (393 MB) |
+
+Packed cosine alone is 48 ms at 100k. sqlite-vec *does* load via
+`node:sqlite` `loadExtension` and matches brute cosine (Δ 6.5e-8) but is
+**slower** than RAM JS cosine at these sizes (159 ms at 100k). The S1
+hypothesis holds: parse was the bottleneck, not cosine. Recommended v1 path
+is BLOB + JS cosine, no vector extension.
+
+Mini-SEA smoke: `node:sqlite` runs inside a Node 24.18.0 SEA
+(`SEA node:sqlite OK`).
+
 ---
 
 ---
