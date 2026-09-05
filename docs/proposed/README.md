@@ -40,7 +40,7 @@ If you're picking this up cold:
 6. **[0003](0003-hybrid-retrieval.md)** — the one with an invariant fight in it.
 7. **[`phase-0`](../phases/phase-0-edge-substrate.md)** *(in `phases/`, not here)* — the current
    work: unify `field.js` and `ledger.js` into one persistent edge store with two signals
-   (semantic = derived, learned = source-of-truth). Where `I6` becomes true and where activation
+   (semantic = derived, learned = source-of-truth). Where `I6` became true (0.2) and where activation
    plugs in.
 
 ## Conventions

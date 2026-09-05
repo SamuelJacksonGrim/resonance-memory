@@ -22,11 +22,13 @@
  * ledger.js is the retired Hebbian sidecar (epoch-decayed `.assoc.json`);
  * this module absorbed it. One undirected edge record, two independently
  * stored signals. Slice C put this on the live recall path: EdgeStore is
- * the Hebbian source of truth (bonus / reinforce / tick / save). Phase 0.1
- * persists save-time semantic neighbors here (K=5, min cosine 0.25, Hebbian
- * weight 0); recall still computes the semantic kNN in field.js (minSim 0.55)
- * and does not read the cached semantic signal yet. The golden gate is the
- * proof that persist-on-save did not change recall numbers.
+ * the Hebbian source of truth (bonus / reinforce / save). Phase 0.1 persists
+ * save-time semantic neighbors here (K=5, min cosine 0.25, Hebbian weight 0);
+ * recall still computes the semantic kNN in field.js (minSim 0.55) and does
+ * not read the cached semantic signal yet. Phase 0.2 replaced the recall-epoch
+ * clock: Hebbian decay is lazy wall-clock via effectiveHebbian (computed on
+ * read, never stored). recall() no longer calls tick() — that is I6.
+ * reinforceRecall is retained. Semantic never fades.
  *
  * The asymmetry is load-bearing (docs/phases/phase-0-edge-substrate.md):
  *
@@ -182,6 +184,97 @@ function setHebbian(edge, weight, lastUpdated) {
   return edge;
 }
 
+// -------------------------------------------------------------- wall-clock decay (Phase 0.2 / I6)
+//
+// Learned-edge decay is a FUNCTION of elapsed time, not a process. There is no
+// background loop and no recall-count clock. Reading computes the faded weight
+// from (now − hebbian.last_updated) and DOES NOT write it (transition table:
+// recall computes decay, does not store it). Materializing that value back
+// onto hebbian.weight is 0.3, on mutation.
+//
+// Semantic is a structural fact and never fades. Mixing this clock with the
+// retired tick()/decay() epoch math is the dual-clock bug — don't.
+//
+// Half-lives are PARAMETERS, not hard constants (phase-0 §0.2). Units are
+// seconds. λ = ln(2)/H so the law is w·2^(−Δt/H). Starting values:
+//   constraint  ~30 days   apex rules should outlast a session
+//   fact        ~7 days    default; most edges
+//   working     ~1 hour    in-flight context (no record field yet; callers pass type)
+// These are the same surface RM-08's *record* importance decay will share;
+// the two decays stay distinct (edge vs record, this vs RM-08).
+
+const SECOND = 1;
+const HOUR = 3600;
+const DAY = 86400;
+
+const HALF_LIFE_SECONDS = {
+  constraint: 30 * DAY,
+  fact: 7 * DAY,
+  working: 1 * HOUR,
+};
+const DEFAULT_HALF_LIFE_TYPE = "fact";
+
+function lambdaFromHalfLife(halfLifeSeconds) {
+  const h = Number(halfLifeSeconds);
+  // Non-positive / non-finite → no decay (fail open; a bad parameter must
+  // not wipe learned weight). Caller can still pass a custom H.
+  if (!Number.isFinite(h) || h <= 0) return 0;
+  return Math.LN2 / h;
+}
+
+function halfLifeFor(typeOrNs, table) {
+  const map = table || HALF_LIFE_SECONDS;
+  if (typeOrNs != null && typeof map[typeOrNs] === "number") return map[typeOrNs];
+  return map[DEFAULT_HALF_LIFE_TYPE];
+}
+
+/*
+ * Pick the half-life class of an undirected edge from its endpoints.
+ * A constraint on either side uses the long (30d) class — apex-rule
+ * associations should outlast a session. No `working` kind exists on
+ * records yet (RM-08 / Phase 3); callers that have one pass type
+ * explicitly. Default is fact.
+ */
+function hebbianDecayType(recA, recB) {
+  if ((recA && recA.is_constraint) || (recB && recB.is_constraint)) return "constraint";
+  return DEFAULT_HALF_LIFE_TYPE;
+}
+
+function toEpochMs(t) {
+  if (t == null) return NaN;
+  if (typeof t === "number") return t;
+  if (t instanceof Date) return t.getTime();
+  return Date.parse(String(t));
+}
+
+// Clamp so a backwards clock cannot amplify a weight (I6 failure: a read
+// that *raises* effective weight). Unparseable timestamps → Δt = 0, same
+// fail-open as a missing last_updated: don't NaN the bonus.
+function elapsedSeconds(now, lastUpdated) {
+  const nowMs = toEpochMs(now);
+  const thenMs = toEpochMs(lastUpdated);
+  if (!Number.isFinite(nowMs) || !Number.isFinite(thenMs)) return 0;
+  return Math.max(0, (nowMs - thenMs) / 1000);
+}
+
+/*
+ * Computed Hebbian weight at `now`. Does not write the edge.
+ *   w_eff = w · 2^(−Δt / H)     H from type/namespace, or opts.halfLife
+ * Δt is in seconds, clamped ≥ 0. Semantic is not consulted.
+ */
+function effectiveHebbian(edge, now, opts = {}) {
+  if (!edge || !edge.hebbian) return 0;
+  const w = typeof edge.hebbian.weight === "number" ? edge.hebbian.weight : 0;
+  if (w === 0) return 0;
+  const halfLife = opts.halfLife != null
+    ? opts.halfLife
+    : halfLifeFor(opts.type || opts.namespace, opts.halfLives);
+  if (!Number.isFinite(halfLife) || halfLife <= 0) return w;
+  const dt = elapsedSeconds(now, edge.hebbian.last_updated);
+  if (dt === 0) return w;
+  return w * Math.pow(2, -dt / halfLife);
+}
+
 // -------------------------------------------------------------- sidecar I/O
 
 function looksLikeRecord(v) {
@@ -262,8 +355,11 @@ function migrateAssoc(j, now) {
 function envelope(edges, recalls) {
   const obj = {};
   for (const [k, rec] of edges) obj[k] = rec;
-  // `recalls` is the epoch-decay clock (ledger.js tick()). Wall-clock decay
-  // is 0.2; mixing the two is a dual-clock bug, so this field stays until then.
+  // `recalls` is leftover from the epoch-decay clock (ledger.js tick()).
+  // Phase 0.2 moved decay to wall-clock via effectiveHebbian; the live path
+  // no longer increments this. Kept so a sidecar round-trip does not drop a
+  // field old files still carry. Mixing this with wall-clock is the
+  // dual-clock bug — do not resume ticking it.
   return { kind: SIDECAR_KIND, version: SIDECAR_VERSION, recalls: recalls || 0, edges: obj };
 }
 
@@ -296,10 +392,13 @@ class EdgeStore {
     // must not move the numbers (Slice C / I2 / I9).
     this.alphaPP = opts.alphaPP != null ? opts.alphaPP : 0.1;   // primary <-> primary
     this.alphaPN = opts.alphaPN != null ? opts.alphaPN : 0.02;  // primary <-> neighborhood
-    this.beta = opts.beta != null ? opts.beta : 0.95;           // decay retention
-    this.floor = opts.floor != null ? opts.floor : 0.05;        // prune threshold
-    this.epoch = opts.epoch != null ? opts.epoch : 10;          // decay every N recalls
+    this.beta = opts.beta != null ? opts.beta : 0.95;           // retired epoch decay retention
+    this.floor = opts.floor != null ? opts.floor : 0.05;        // retired epoch prune threshold
+    this.epoch = opts.epoch != null ? opts.epoch : 10;          // retired: decay every N recalls
     this.maxBonus = opts.maxBonus != null ? opts.maxBonus : 0.3;
+    // Wall-clock half-lives (seconds). Override per type/namespace via
+    // opts.halfLives; bonus/effectiveWeight read this table.
+    this.halfLives = Object.assign({}, HALF_LIFE_SECONDS, opts.halfLives || {});
     this.legacyFile = opts.legacyFile || null;
     this.edges = new Map();
     this.recalls = 0;
@@ -396,10 +495,16 @@ class EdgeStore {
   }
 
   // ------------------------------------------------ Hebbian (ex-ledger.js)
-  // These four methods ARE the live-path contract memory-core.js calls
-  // (bonus / reinforceRecall / tick / save). Math is copied from Ledger,
-  // not re-derived — a drifted constant here would move the golden.
+  // Live-path contract memory-core.js calls: bonus / reinforceRecall / save.
+  // bonus uses effectiveHebbian (wall-clock, computed, not stored).
+  // reinforceRecall is the 0.1/2b differentiator — RETAINED, untouched
+  // (materializing decay before applying α is 0.3, not this slice).
+  // tick() is retired from the live path (I6); kept below so Ledger-parity
+  // tests and eval/decay-probe.js can still replay the epoch math.
 
+  // Stored source of truth — not decayed. Discovery must not read this
+  // for the bonus; use effectiveWeight / bonus, which go through
+  // effectiveHebbian.
   weight(a, b) {
     const e = this.get(a, b);
     if (!e || e.pruned_at) return 0;
@@ -407,8 +512,25 @@ class EdgeStore {
     return typeof w === "number" ? w : 0;
   }
 
-  // bounded Hebbian bonus: 0 at weight 0, asymptotic to maxBonus, never exceeds it
-  bonus(a, b) { const w = this.weight(a, b); return w > 0 ? this.maxBonus * Math.tanh(w) : 0; }
+  effectiveWeight(a, b, opts = {}) {
+    const e = this.get(a, b);
+    if (!e || e.pruned_at) return 0;
+    return effectiveHebbian(e, opts.now != null ? opts.now : this.now(), {
+      type: opts.type,
+      namespace: opts.namespace,
+      halfLife: opts.halfLife,
+      halfLives: opts.halfLives || this.halfLives,
+    });
+  }
+
+  // bounded Hebbian bonus: 0 at weight 0, asymptotic to maxBonus, never exceeds it.
+  // Uses the *effective* (wall-clock-decayed) weight so discovery sees faded
+  // associations without a write (I6). Under a frozen clock or Δt≈0 this is
+  // byte-identical to tanh(stored), which is why the golden can stay put.
+  bonus(a, b, opts) {
+    const w = this.effectiveWeight(a, b, opts || {});
+    return w > 0 ? this.maxBonus * Math.tanh(w) : 0;
+  }
 
   _bump(a, b, alpha) {
     if (alpha <= 0 || String(a) === String(b)) return;
@@ -416,7 +538,8 @@ class EdgeStore {
     const now = this.now();
     if (existing) {
       // setHebbian leaves semantic bytes alone (two-signal rule). Stamp
-      // last_updated on reinforce only — decay must not (0.2's clock).
+      // last_updated on reinforce only. Do NOT materialize decay first —
+      // that is 0.3; this slice only changes how decay is COMPUTED.
       setHebbian(existing, (existing.hebbian.weight || 0) + alpha, now);
       return;
     }
@@ -428,6 +551,7 @@ class EdgeStore {
   }
 
   // Reinforce one recall event given the provenance of the returned ids.
+  // Untouched in 0.2 — co-recall is the differentiator I6 preserves.
   reinforceRecall(primaryIds, neighborhoodIds) {
     for (let i = 0; i < primaryIds.length; i++)
       for (let j = i + 1; j < primaryIds.length; j++)
@@ -438,8 +562,10 @@ class EdgeStore {
     // neighborhood <-> neighborhood: alpha 0, intentionally skipped
   }
 
-  // Advance the epoch clock; decay + prune on the boundary.
-  // Recall-count, not wall-clock — 0.2 replaces this. Do not mix them.
+  // RETIRED from the live path in 0.2 (I6). Recall-count, not wall-clock.
+  // memory-core no longer calls this. Kept so tests can prove EdgeStore's
+  // copy of Ledger's epoch math is byte-identical, and so decay-probe.js
+  // can replay the old timescale. Do not mix with effectiveHebbian.
   tick() {
     this.recalls += 1;
     if (this.epoch > 0 && this.recalls % this.epoch === 0) this.decay();
@@ -470,4 +596,13 @@ module.exports = {
   SIDECAR_KIND,
   SIDECAR_VERSION,
   EdgeStore,
+  effectiveHebbian,
+  lambdaFromHalfLife,
+  halfLifeFor,
+  hebbianDecayType,
+  elapsedSeconds,
+  HALF_LIFE_SECONDS,
+  DEFAULT_HALF_LIFE_TYPE,
+  DAY,
+  HOUR,
 };

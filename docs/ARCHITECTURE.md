@@ -30,7 +30,7 @@ operation is event-driven — observe state at time *T*, compute temporal effect
 validity), retrieve or mutate, persist durable changes — and then nothing runs until the next
 event. Autonomous cognition belongs in the *consuming agent*, never in the memory layer; the MCP
 boundary is that line. This is why decay is *computed at access* from an elapsed-time delta
-rather than ticked by a loop (the move `RM-21`/Phase 0.2 completes — see `I6`).
+rather than ticked by a loop (the move `RM-21`/Phase 0.2 completed — see `I6`).
 
 ---
 
@@ -55,7 +55,7 @@ than the code supports is worse than none — it stops anyone from looking.
 | **I3** | **The associative layer fails open.** The entire field/ledger path is wrapped in a `try/catch` that must never break recall; losing it degrades to plain cosine. | ✅ held | `memory-core.js` field block |
 | **I4** | **Embed once at save; the server owns all metadata; the model assigns none of it.** A `Store` seam sits behind the verbs so the backend swaps without touching the MCP API. | ✅ held¹ | `memory-core.js` `save`; `store.js` |
 | **I5** | **Durable writes; no *unbounded* write on a read path.** Every store rewrite goes through `writeFileDurable()` (temp → fsync → atomic rename); recall performs zero store writes in steady state. | ✅ held¹ | `record.js`; `BUG-001`/`BUG-002` |
-| **I6** | **Reading does not drive the decay clock.** Co-recall *reinforcement* is retained (it is the differentiator); what must change is that edge **decay** stops being clocked by recall count and moves to wall-clock time. | ⬜ **target — Phase 0.2** | see below; `phases/phase-0` |
+| **I6** | **Reading does not drive the decay clock.** Co-recall *reinforcement* is retained (it is the differentiator); edge **decay** is lazy wall-clock, computed at access via `effectiveHebbian`, never stored, never ticked by recall count. | ✅ held (Phase 0.2) | `edges.js` `effectiveHebbian`; `memory-core.js` recall (no `tick()`) |
 | **I7** | **Activation never persists.** Spreading activation (Phase 1) is seeded per query, attenuated per hop, bounded, and never written to the edge store. | ⬜ n/a until Phase 1 | `phases/phase-0` |
 | **I8** | **No silent removal.** *Record* deletes are soft (`deleted`, compacted at `vacuum()`) and supersession keeps a non-overlapping validity chain. **Edge pruning is the open gap:** `ledger.decay()` drops below-floor edges with **no marker** today; Phase 0.4 makes it soft (`pruned_at`, reactivatable). | ✅ held (records) · ⬜ edges — Phase 0.4 | `store.js` `vacuum`; `ledger.js` `decay`; `phases/phase-0` |
 | **I9** | **Discovery nominates; it does not appoint.** The field/ledger *expand* the candidate set (the `Related:` block); they never reorder the primary cosine result. Primary results are **byte-identical** field on or off. | ✅ held | `memory-core.js` recall |
@@ -65,14 +65,13 @@ embedder was down is stored vectorless and back-filled on a later recall (one bo
 write on a read path, for legacy/outage rows only). The exception heals itself the first time
 the row is recalled with the embedder up.
 
-**I6, precisely** (the one label that could mislead an implementer): today `recall` calls
-`ledger.reinforceRecall(...)` **and then** `ledger.tick()`, and `tick()` advances a
-**recall-count** clock (`recalls % epoch`, `epoch = 10`) that triggers `decay()`. Two
-consequences: a store that is never recalled never decays, and read *frequency* — not elapsed
-time — governs fading. Phase 0.2 replaces that clock with **lazy wall-clock decay computed at
-access time**, and leaves `reinforceRecall` exactly as it is. "Reading ≠ reinforcement" in
-`ROADMAP.md` is shorthand for *"reading no longer drives the **decay clock**"* — co-recall
-still reinforces. Design and edge state-transition table:
+**I6, precisely** (the one label that could mislead an implementer): `recall` still calls
+`reinforceRecall` (co-recall is the differentiator) but **no longer** calls `tick()`. Decay
+is `effectiveHebbian(edge, now)`: `w · 2^(−Δt/H)` from `now − hebbian.last_updated`, computed
+on read, not written. A store recalled N times under a frozen clock shows zero learned-edge
+decay. "Reading ≠ reinforcement" in `ROADMAP.md` is shorthand for *"reading no longer drives
+the **decay clock**"* — co-recall still reinforces. Half-lives (parameters, seconds):
+constraint ~30d, fact ~7d, working ~1h. Design and edge state-transition table:
 [`phases/phase-0`](phases/phase-0-edge-substrate.md).
 
 **On I2 vs I2b — two different strengths of "no."** I2 was originally *"ranking = cosine only,"*
@@ -143,7 +142,7 @@ same record the panel renders and the installer's target reads.
 | `store.js` | `JsonlStore` — the flat-JSONL backend behind the Store seam. Constructible and testable without the stdio loop; a SQLite backend can replace it with the same method surface. | `record` |
 | `field.js` | Associative layer (Phase 2a): a kNN semantic graph over stored vectors, neighborhood expansion, and constraint rescue. No new embedding calls, no LLM extraction. | stdlib only |
 | `ledger.js` | Retired Hebbian sidecar (Phase 2b). Off the live path as of Slice C; kept so tests can compare EdgeStore bonuses against the shipped epoch-decay math. | `record` |
-| `edges.js` | Unified persistent edge store (Phase 0 / `RM-21`): one undirected record, two independent signals (`semantic` derived cache validated by version comparison, `hebbian` source of truth), typed provenance, one-way `.assoc.json` → `.edges.json` migration (`kind: "resonance-edges"`). **On the live recall path** — Hebbian bonus/reinforce/tick/save; `field.js` still builds the semantic kNN at recall. | `record` |
+| `edges.js` | Unified persistent edge store (Phase 0 / `RM-21`): one undirected record, two independent signals (`semantic` derived cache validated by version comparison, `hebbian` source of truth), typed provenance, one-way `.assoc.json` → `.edges.json` migration (`kind: "resonance-edges"`). **On the live recall path** — Hebbian bonus (via `effectiveHebbian`)/reinforce/save. Decay is lazy wall-clock (I6); `tick()` is retired. `field.js` still builds the semantic kNN at recall. | `record` |
 | `panel.js` | The `127.0.0.1` control panel (largest file): field toggle, Connect/Disconnect, the 3D association-graph view, demo graph, heartbeat auto-shutdown. | `install`, `field`, `engine`, `edges`, `record`, `embedded-assets` |
 | `install.js` | Detect + wire into LM Studio / Claude Desktop MCP config. Preserves other configured servers, leaves a `.bak`. | stdlib only |
 | `engine.js` | One-click embedder setup for the panel: drives LM Studio's bundled `lms` CLI to start the server, download the Nomic embedder, load it, and verify the endpoint answers. Pure convenience — the MCP server never needs it. | stdlib + `fetch` |
@@ -220,9 +219,10 @@ argument is always the smallest possible thing (`content`, `query`, or `id`).
    `neighborhood()` one hop from the returned seeds, and run `reachableConstraints()` to rescue
    apex rules (a "diabetic" memory reachable through a "lemon bars" bridge) that sit far down
    cosine. Merge into a `Related:` block, reinforce Hebbian weights on the EdgeStore
-   provenance-discounted, tick the recall-epoch decay clock. Writes go to `<store>.edges.json`
-   (never the JSONL store). The entire block is inside a `try/catch` — it can never break the
-   primary result.
+   provenance-discounted. The discovery bonus uses `effectiveHebbian` (wall-clock half-life,
+   computed, not stored). `tick()` is not called (I6). Writes go to `<store>.edges.json`
+   (never the JSONL store) from `reinforceRecall` only. The entire block is inside a
+   `try/catch` — it can never break the primary result.
 
 ### `edit_memory({ id, content })`
 
@@ -321,8 +321,10 @@ properties, preserved byte-for-byte from the retired `Ledger`:
 - **Provenance-discounted reinforcement** — primary↔primary at full `alpha`, primary↔neighborhood
   discounted, neighborhood↔neighborhood zero. The graph learns from the user's queries, not from
   its own guesses. This provenance instinct is what `RM-16` generalizes to the whole write path.
-- **Decay + prune** every N recalls (epoch clock, not wall-clock — 0.2 replaces this). Unused
-  associations fade.
+- **Decay** is lazy wall-clock via `effectiveHebbian` (`w · 2^(−Δt/H)` from
+  `hebbian.last_updated`; H is a per-type half-life in seconds). Computed on read, not
+  stored. Unused associations fade with elapsed time, not recall count (I6). Soft prune
+  of a fully-faded edge is Phase 0.4.
 
 Neither layer ever reorders the primary cosine result — invariant #3 / I9. A corrupt sidecar
 fails open to empty (bonus 0); recall still returns cosine (I3).
@@ -436,8 +438,9 @@ recall path:
   independent signals** — semantic (derived / recomputable from vectors) and learned
   (source-of-truth / irreplaceable). The record + sidecar live in `edges.js` and are on
   the live recall path (Slice C). Save-time semantic neighbors persist in 0.1; recall
-  still computes semantic kNN in `field.js` until a later gated switchover. I6 becomes
-  true in 0.2. It is a **migration, not greenfield** — existing `.assoc.json` sidecars
+  still computes semantic kNN in `field.js` until a later gated switchover. I6 is held
+  as of 0.2 (lazy wall-clock decay; `tick()` gone from recall). It is a **migration, not
+  greenfield** — existing `.assoc.json` sidecars
   are carried into `.edges.json` one-way (`RM-21`, design in
   [`phases/phase-0`](phases/phase-0-edge-substrate.md)).
 - **New store backend** → implement the `JsonlStore` method surface (`RM-07`, SQLite).

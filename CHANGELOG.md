@@ -17,6 +17,16 @@ Beta-readiness pass:
   "revisit only if hosted resale looms" trigger the backlog pre-registered, now pulled.
 
 ### Added
+- **Lazy wall-clock Hebbian decay (Phase 0.2 / I6).** Decay applies to `hebbian.weight` only
+  (semantic never fades) and is **computed on read** via `effectiveHebbian(edge, now)` —
+  `w · 2^(−Δt/H)`, `λ = ln(2)/H`, `Δt = max(0, now − last_updated)` in seconds. It is not
+  written back (materialization-on-mutation is 0.3). The recall-epoch `tick()` is gone from
+  the live path: reading no longer drives the decay clock. `reinforceRecall` is retained.
+  Starting half-lives (parameters, not constants): constraint ~30 days, fact ~7 days,
+  working ~1 hour. Per-type/namespace override via `opts.halfLives` / `hebbianDecayType`.
+  Golden did not move (eval cases are single-recall on a fresh store; epoch ticks never
+  fired, and Δt≈0 in an instant eval). See
+  [`docs/phases/phase-0-edge-substrate.md`](docs/phases/phase-0-edge-substrate.md).
 - **Save-time semantic edges (Phase 0.1).** On `save()` of a record with a real vector, persist
   its top-5 neighbors above cosine 0.25 into the EdgeStore (`semantic.value` + canonical
   `src_versions`, `hebbian.weight = 0`, origin `save-time-neighbor`). Embedder down → bind
@@ -32,8 +42,8 @@ Beta-readiness pass:
   edge came to exist; `migrated_from` is a separate fact). Existing `.assoc.json`
   sidecars migrate losslessly and one-way into `<store>.edges.json` (`kind: "resonance-edges"`;
   an old-format reader refuses rather than dropping edges). **On the live recall path:**
-  Hebbian bonus/reinforce/tick/save go through EdgeStore; `ledger.js` is retired from
-  recall. Semantic kNN + constraint-rescue still run in `field.js` at recall; save-time
+  Hebbian bonus/reinforce/save go through EdgeStore (`tick()` retired in 0.2); `ledger.js`
+  is retired from recall. Semantic kNN + constraint-rescue still run in `field.js` at recall; save-time
   neighbor persist is the 0.1 entry above. See
   [`docs/phases/phase-0-edge-substrate.md`](docs/phases/phase-0-edge-substrate.md).
 - **`embedding_version` on every memory** (Phase 0.0 schema). `record.js` `normalize()`

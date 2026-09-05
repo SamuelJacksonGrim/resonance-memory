@@ -86,10 +86,13 @@ pair     cosine   learning              forgetting
 gluten   0.530    1 co-recall to cross  80 recalls to decay back
 budget   0.466    3 co-recalls          10 recalls
 ```
-Co-activation lifts a sub-threshold edge over the 0.55 gate in **1–3 activations**; decay
-removes it in **10–80 recalls** (scaled by margin over the gate). "Learns through use, fades
-without it" is real — at the ledger level. Its *retrieval* impact is bottlenecked by the same
-misaligned topology above: a fast learner on a bad map still arrives in the wrong place.
+Co-activation lifts a sub-threshold edge over the 0.55 gate in **1–3 activations**; the
+retired epoch clock removed it in **10–80 recalls** (scaled by margin over the gate). As of
+Phase 0.2 the live law is wall-clock half-life (`effectiveHebbian`, facts ~7 days), so an
+instant eval no longer fades anything — the probe's forget column is the old timescale,
+kept inspectable via `tick()`. "Learns through use, fades without it" is real. Its
+*retrieval* impact is bottlenecked by the same misaligned topology above: a fast learner
+on a bad map still arrives in the wrong place.
 
 ### 4. Documented gaps (not regressions — improvements when closed)
 - **Contradiction detection (`contra-job`, `contra-city`): fails.** Nothing wires supersession

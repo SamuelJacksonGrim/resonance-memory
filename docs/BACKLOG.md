@@ -157,9 +157,10 @@ Design: [`proposed/0002`](proposed/0002-temporal-supersession.md).
       **Cost sweep:** `eval/save-time-cost.js`; pre-declared p95 budget 250 ms; measured p95 at
       N=100k is 77.1 ms → **NO-GO on forcing `RM-07` from this slice.** Table in
       [`phases/phase-0`](phases/phase-0-edge-substrate.md). Recall still uses `field.js`.
-- [ ] **0.2** **Lazy wall-clock decay of the learned signal** (configurable half-life), replacing
+- [x] **0.2** **Lazy wall-clock decay of the learned signal** (configurable half-life), replacing
       the recall-count clock (`ledger.tick`). `reinforceRecall` untouched — **this is where `I6`
-      becomes true.** Not `RM-08` *importance* decay (different object, different law — see there).
+      became true.** Not `RM-08` *importance* decay (different object, different law — see there).
+      Starting half-lives (parameters, seconds): constraint 30d · fact 7d · working 1h.
 - [ ] **0.3** Materialize-on-mutation + MCP request-ID idempotency. **Dedup record and weight
       change must commit atomically** (I5 makes each write durable, not the *pair* atomic — keep
       the dedup LRU inside the sidecar); if not atomic, order dedup-first. Relates to `W-04`.

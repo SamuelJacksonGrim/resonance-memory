@@ -118,11 +118,12 @@ function main() {
   const nearFloor = edges.filter(e => e.weight < 0.1).length;       // about to be pruned
   const consolidated = edges.filter(e => e.weight >= 0.5).length;   // strongly learned
   console.log("### 1. Equilibrium & breathing");
-  console.log(`- recall counter (decay clock): ${recalls}  (decay fires every 10)`);
+  console.log(`- leftover epoch counter:       ${recalls}  (not the decay clock as of 0.2)`);
   console.log(`- total active edges:           ${total}`);
   console.log(`- near prune floor (<0.1):      ${nearFloor}`);
   console.log(`- consolidated (>=0.5):         ${consolidated}`);
-  console.log(`  watch: total should rise in a session, then fall as recalls tick.`);
+  console.log(`  decay is lazy wall-clock (effectiveHebbian); stored weights do not fade`);
+  console.log(`  until a mutation materializes them (0.3). Watch last_updated vs now.`);
   console.log(`  red flag: total climbs day over day and never falls -> hairball.\n`);
   if (total === 0) { console.log("Ledger is empty. Nothing more to report.\n"); return; }
 
@@ -157,8 +158,9 @@ function main() {
   const bytes = fs.statSync(SIDECAR_PATH).size;
   console.log("### 4. Distribution & size");
   console.log(`- max / avg / min weight: ${ws[0].toFixed(3)} / ${(sum / total).toFixed(3)} / ${ws[ws.length - 1].toFixed(3)}`);
-  console.log(`- sidecar file size:      ${bytes} bytes  (saved every 10th recall)`);
-  console.log(`  perf is only a concern if this grows large; decay is what keeps it small.\n`);
+  console.log(`- sidecar file size:      ${bytes} bytes  (rewritten on reinforce, not on a decay tick)`);
+  console.log(`  perf is only a concern if this grows large; wall-clock decay fades the`);
+  console.log(`  learned signal on read, and 0.4 will prune the ones that go idle.\n`);
 }
 
 main();

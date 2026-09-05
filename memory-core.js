@@ -31,8 +31,9 @@
  *   fieldEnabled  () -> boolean   (live config read in prod, a fixed flag in eval)
  *   getEdgeStore  () -> EdgeStore (lazy: built on first field-on recall OR first
  *                                  save-time bind. Field toggle needs no restart.
- *                                  Duck-typed: bonus/reinforceRecall/tick/save;
- *                                  save-time bind also needs get/put.)
+ *                                  Duck-typed: bonus/reinforceRecall/save;
+ *                                  save-time bind also needs get/put.
+ *                                  tick() is retired — I6, Phase 0.2.)
  *   getLedger     () -> same surface as getEdgeStore; kept as a fallback alias so
  *                       a leftover injector still works. Live path uses getEdgeStore.
  *   warmEnabled   () -> boolean   (RESONANCE_WARM_FIELD; default off)
@@ -54,7 +55,7 @@ const {
 const {
   normalize, isHistoricalQuery, detectSupersession, supersedePatches,
 } = require("./record.js");
-const { makeEdge, setSemantic, semanticValid } = require("./edges.js");
+const { makeEdge, setSemantic, semanticValid, hebbianDecayType } = require("./edges.js");
 
 // Reciprocal-kNN edge construction (RM-00 field experiment, 2026-08-01). Directional
 // kNN let a one-sided "hub" node bleed into a seed's neighborhood as a false positive
@@ -101,9 +102,13 @@ const SAVE_TIME_MIN_COS = 0.25;
  * neighborhood on large stores (WARM_EDGE_CAP gates spread(), not Related:).
  */
 function defaultGetEdges(mems, L) {
-  return field.buildEdges(mems || [], {
+  const list = mems || [];
+  const byId = new Map(list.map((m) => [String(m.id), m]));
+  return field.buildEdges(list, {
     k: 2, minSim: 0.55,
-    bonus: L ? (a, b) => L.bonus(a, b) : () => 0,
+    bonus: L ? (a, b) => L.bonus(a, b, {
+      type: hebbianDecayType(byId.get(String(a)), byId.get(String(b))),
+    }) : () => 0,
     mutual: FIELD_MUTUAL,
   });
 }
@@ -371,7 +376,13 @@ function createCore({
       try {
         const L = hebbianStore();
         if (L) {
-          const bonus = (a, b) => L.bonus(a, b);
+          const byId = new Map(mems.map((m) => [String(m.id), m]));
+          // Discovery bonus uses the wall-clock-decayed weight (effectiveHebbian),
+          // never the stored one. Type picks the half-life (constraint ~30d /
+          // fact ~7d). Computed on read — no write (I6).
+          const bonus = (a, b) => L.bonus(a, b, {
+            type: hebbianDecayType(byId.get(String(a)), byId.get(String(b))),
+          });
           const edges = field.buildEdges(mems, { k: 2, minSim: 0.55, bonus, mutual: FIELD_MUTUAL });
           // General neighborhood: forward one hop from the RETURNED seeds (unchanged).
           const rel = field.neighborhood(edges, ranked.map((m) => m.id), { hops: 1, max: 4 });
@@ -388,13 +399,13 @@ function createCore({
             merged.push(e);
           }
           if (merged.length) {
-            const byId = new Map(mems.map((m) => [String(m.id), m]));
             out += "\n\nRelated:\n" + merged.map((e) => "- [id " + e.id + "] " + byId.get(String(e.id)).text).join("\n");
           }
           // Hebbian reinforcement on the returned payload, provenance-discounted.
           // Writes the SIDECAR (.edges.json), never the JSONL store (I5 / BUG-002).
+          // Decay is NOT ticked here — I6: reading must not drive the decay clock.
+          // reinforceRecall is retained (the differentiator); tick() is gone.
           L.reinforceRecall(ranked.map((m) => m.id), merged.map((e) => e.id));
-          L.tick();
           L.save();
         }
       } catch { /* the field is additive; never let it break recall */ }

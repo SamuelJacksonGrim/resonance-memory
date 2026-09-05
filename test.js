@@ -540,10 +540,15 @@ const {
   sidecarKind, readLegacyAssoc, migrateAssoc, siblingAssocPath,
   IncompatibleEdgeFormatError,
   SIDECAR_KIND, SIDECAR_VERSION, EdgeStore,
+  effectiveHebbian, lambdaFromHalfLife, halfLifeFor, hebbianDecayType,
+  elapsedSeconds, HALF_LIFE_SECONDS, DEFAULT_HALF_LIFE_TYPE, DAY, HOUR,
 } = require("./edges.js");
 const { Ledger } = require("./ledger.js");
 
 const T0 = "2026-09-05T00:00:00.000Z";
+function plusIso(iso, seconds) {
+  return new Date(Date.parse(iso) + seconds * 1000).toISOString();
+}
 
 test("edgeKey is undirected: A↔B and B↔A are one edge", () => {
   assert.strictEqual(edgeKey(1, 2), edgeKey(2, 1));
@@ -899,12 +904,154 @@ test("migrated .assoc.json produces the same Hebbian bonuses as shipped Ledger",
   assert.strictEqual(E.recalls, L.recalls, "epoch clock imported");
 });
 
-test("epoch decay does not stamp hebbian.last_updated (that clock is 0.2)", () => {
+test("retired epoch decay does not stamp hebbian.last_updated (live clock is wall-clock)", () => {
+  // tick() is off the live path as of 0.2; this only proves the retired copy
+  // still matches Ledger and does not mix clocks if someone replays it.
   const E = new EdgeStore(tmp("decay-stamp.edges.json"), { now: () => T0 });
   E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 1.0 }));
   for (let i = 0; i < 10; i++) E.tick();
   assert.ok(E.weight(1, 2) < 1.0, "decayed");
   assert.strictEqual(E.get(1, 2).hebbian.last_updated, T0, "epoch decay must not mix in wall-clock");
+});
+
+// --- Phase 0.2: lazy wall-clock Hebbian decay (I6) -------------------------
+// Fake/injectable clock throughout. Decay is COMPUTED, never stored.
+section("Phase 0.2 lazy wall-clock decay (I6)");
+
+test("half-life parameters are seconds and match the spec starting values", () => {
+  assert.strictEqual(HALF_LIFE_SECONDS.constraint, 30 * DAY, "constraints ~30 days");
+  assert.strictEqual(HALF_LIFE_SECONDS.fact, 7 * DAY, "facts ~7 days");
+  assert.strictEqual(HALF_LIFE_SECONDS.working, 1 * HOUR, "working ~1 hour");
+  assert.strictEqual(DEFAULT_HALF_LIFE_TYPE, "fact");
+  assert.strictEqual(halfLifeFor("constraint"), 30 * DAY);
+  assert.strictEqual(halfLifeFor("working"), 1 * HOUR);
+  assert.strictEqual(halfLifeFor("no-such-type"), HALF_LIFE_SECONDS.fact, "unknown type → fact");
+  assert.strictEqual(halfLifeFor("ns-custom", { "ns-custom": 99, fact: 7 * DAY }), 99, "namespace lookup");
+  const lam = lambdaFromHalfLife(HALF_LIFE_SECONDS.fact);
+  assert.ok(Math.abs(lam - Math.LN2 / HALF_LIFE_SECONDS.fact) < 1e-15, "λ = ln(2)/H");
+  assert.strictEqual(lambdaFromHalfLife(0), 0, "non-positive H → no decay (fail open)");
+  assert.strictEqual(lambdaFromHalfLife(-10), 0);
+});
+
+test("hebbianDecayType: a constraint endpoint gets the long half-life class", () => {
+  assert.strictEqual(hebbianDecayType({ is_constraint: true }, { is_constraint: false }), "constraint");
+  assert.strictEqual(hebbianDecayType({ is_constraint: false }, { is_constraint: true }), "constraint");
+  assert.strictEqual(hebbianDecayType({ is_constraint: false }, { is_constraint: false }), "fact");
+  assert.strictEqual(hebbianDecayType(null, null), "fact");
+});
+
+test("I6 proof: 100 reads under a FROZEN clock leave stored weight + last_updated unmoved; then reinforce does change them", () => {
+  let now = T0;
+  const E = new EdgeStore(tmp("i6-frozen.edges.json"), { now: () => now });
+  const e0 = E.put(makeEdge(1, 2, {
+    origin: "co-activation", now: T0, hebbianWeight: 1.0,
+    semantic: { value: 0.72, src_versions: { a: 1, b: 1 } },
+  }));
+  const hebSnap = JSON.parse(JSON.stringify(e0.hebbian));
+  const semSnap = JSON.parse(JSON.stringify(e0.semantic));
+  for (let i = 0; i < 100; i++) {
+    E.bonus(1, 2);
+    E.effectiveWeight(1, 2);
+    E.weight(1, 2);
+    effectiveHebbian(E.get(1, 2), now);
+  }
+  const after = E.get(1, 2);
+  assert.deepStrictEqual(after.hebbian, hebSnap, "stored Hebbian bytes unmoved by reads (I6)");
+  assert.deepStrictEqual(after.semantic, semSnap, "semantic unmoved by reads");
+  assert.strictEqual(effectiveHebbian(after, now), 1.0, "frozen clock → effective == stored");
+  // Genuine reinforcement, after the clock has moved, MUST change both.
+  now = plusIso(T0, 60);
+  E.reinforceRecall(["1", "2"], []);
+  const bumped = E.get(1, 2);
+  assert.ok(bumped.hebbian.weight > 1.0, "reinforceRecall still strengthens (retained path)");
+  assert.strictEqual(bumped.hebbian.last_updated, now, "reinforce stamps last_updated");
+  assert.deepStrictEqual(bumped.semantic, semSnap, "reinforce leaves semantic alone");
+});
+
+test("weight halves at exactly one half-life (w·2^(−Δt/H))", () => {
+  const e = makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 0.8 });
+  const H = HALF_LIFE_SECONDS.fact;
+  assert.strictEqual(effectiveHebbian(e, T0, { type: "fact" }), 0.8, "Δt=0 → stored");
+  assert.strictEqual(effectiveHebbian(e, plusIso(T0, H), { type: "fact" }), 0.4, "exactly one H → half");
+  assert.strictEqual(effectiveHebbian(e, plusIso(T0, 2 * H), { type: "fact" }), 0.2, "two H → quarter");
+  // λ form agrees with the power-of-two form at one half-life.
+  const viaLambda = 0.8 * Math.exp(-lambdaFromHalfLife(H) * H);
+  assert.ok(Math.abs(viaLambda - 0.4) < 1e-12, "w·exp(−λH) ≈ w/2");
+});
+
+test("decay at multiple elapsed times; monotonic in Δt", () => {
+  const e = makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 1.0 });
+  const H = HALF_LIFE_SECONDS.fact;
+  const samples = [0, H / 4, H / 2, H, 2 * H, 10 * H].map((dt) => ({
+    dt, w: effectiveHebbian(e, plusIso(T0, dt), { type: "fact" }),
+  }));
+  for (let i = 1; i < samples.length; i++) {
+    assert.ok(samples[i].w < samples[i - 1].w,
+      "monotonic: Δt=" + samples[i].dt + " must be strictly smaller than Δt=" + samples[i - 1].dt);
+  }
+  assert.strictEqual(samples[0].w, 1.0);
+  assert.ok(samples[samples.length - 1].w < 0.01, "long elapsed → nearly gone (not pruned; that's 0.4)");
+});
+
+test("negative clock delta clamps to no decay (cannot amplify)", () => {
+  const e = makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 0.6 });
+  const past = plusIso(T0, -86400);
+  assert.strictEqual(elapsedSeconds(past, T0), 0);
+  assert.strictEqual(effectiveHebbian(e, past, { type: "fact" }), 0.6, "backwards clock → stored, not amplified");
+  assert.ok(effectiveHebbian(e, plusIso(T0, 1), { type: "fact" }) < 0.6, "forward still decays");
+});
+
+test("semantic does NOT decay while Hebbian does", () => {
+  let now = T0;
+  const E = new EdgeStore(tmp("sem-vs-heb.edges.json"), { now: () => now });
+  E.put(makeEdge(1, 2, {
+    origin: "save-time-neighbor", now: T0, hebbianWeight: 1.0,
+    semantic: { value: 0.81, src_versions: { a: 1, b: 1 } },
+  }));
+  const semSnap = JSON.parse(JSON.stringify(E.get(1, 2).semantic));
+  now = plusIso(T0, HALF_LIFE_SECONDS.fact);
+  assert.strictEqual(E.weight(1, 2), 1.0, "stored Hebbian unmoved (computed, not written)");
+  assert.strictEqual(E.effectiveWeight(1, 2), 0.5);
+  assert.deepStrictEqual(E.get(1, 2).semantic, semSnap, "semantic is structural and does not fade");
+  assert.strictEqual(E.get(1, 2).hebbian.last_updated, T0, "read must not stamp last_updated");
+});
+
+test("bonus uses effectiveHebbian, not the stored weight", () => {
+  let now = T0;
+  const E = new EdgeStore(tmp("bonus-eff.edges.json"), { now: () => now });
+  E.put(makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 1.0 }));
+  assert.strictEqual(E.bonus(1, 2), 0.3 * Math.tanh(1.0), "Δt=0 → tanh(stored)");
+  now = plusIso(T0, HALF_LIFE_SECONDS.fact);
+  assert.strictEqual(E.weight(1, 2), 1.0, "stored still 1");
+  assert.ok(Math.abs(E.bonus(1, 2) - 0.3 * Math.tanh(0.5)) < 1e-12, "bonus tracks faded weight");
+});
+
+test("per-type/namespace half-lives: constraint fades slower than fact, fact slower than working", () => {
+  const e = makeEdge(1, 2, { origin: "co-activation", now: T0, hebbianWeight: 1.0 });
+  const t = plusIso(T0, HOUR);   // 1 hour elapsed
+  const wC = effectiveHebbian(e, t, { type: "constraint" });
+  const wF = effectiveHebbian(e, t, { type: "fact" });
+  const wW = effectiveHebbian(e, t, { type: "working" });
+  const wNs = effectiveHebbian(e, t, { namespace: "working" });
+  assert.ok(wC > wF && wF > wW, "30d > 7d > 1h at the same Δt");
+  assert.strictEqual(wW, 0.5, "working half-life is 1 hour → exactly half");
+  assert.strictEqual(wNs, wW, "namespace uses the same table as type");
+  // Custom table override.
+  assert.strictEqual(effectiveHebbian(e, plusIso(T0, 10), { halfLife: 10 }), 0.5);
+});
+
+test("decay-to-zero (computed) leaves the edge alive with semantic intact", () => {
+  let now = T0;
+  const E = new EdgeStore(tmp("decay-zero.edges.json"), { now: () => now });
+  E.put(makeEdge(1, 2, {
+    origin: "save-time-neighbor", now: T0, hebbianWeight: 0.4,
+    semantic: { value: 0.66, src_versions: { a: 1, b: 1 } },
+  }));
+  now = plusIso(T0, 100 * HALF_LIFE_SECONDS.fact);   // ~700 days
+  assert.ok(E.effectiveWeight(1, 2) < 1e-12, "Hebbian faded to ~0");
+  assert.ok(E.get(1, 2), "edge still present (prune is 0.4, not this slice)");
+  assert.strictEqual(E.get(1, 2).semantic.value, 0.66, "semantic intact at computed-zero");
+  assert.strictEqual(E.weight(1, 2), 0.4, "stored weight is the source of truth, unmoved");
 });
 
 // ------------------------------------------------- ROC/TBR field signals (RM-00)
@@ -1499,7 +1646,7 @@ async function asyncTests() {
       fieldEnabled: () => fieldOn,
       getEdgeStore,
     });
-    return { store, core, edgesPath };
+    return { store, core, edgesPath, edges: () => getEdgeStore() };
   }
 
   await atest("constraint-rescue still fires through recall (field experiment #2)", async () => {
@@ -1587,7 +1734,7 @@ async function asyncTests() {
     assert.strictEqual(fs.existsSync(assocPath), false, "must not write the retired .assoc.json");
     const j = JSON.parse(fs.readFileSync(edgesPath, "utf8"));
     assert.strictEqual(j.kind, SIDECAR_KIND);
-    assert.ok(j.recalls >= 1, "epoch clock ticked");
+    assert.strictEqual(j.recalls, 0, "epoch clock is no longer advanced on recall (I6)");
     assert.ok(Object.keys(j.edges).length >= 1, "co-recall wrote at least one Hebbian edge");
   });
 
@@ -1637,6 +1784,80 @@ async function asyncTests() {
     assert.strictEqual(fs.readFileSync(assoc, "utf8").includes("resonance-edges"), false,
       ".assoc.json must stay the old format (untouched)");
     void out;
+  });
+
+  await atest("I6: 100 field-on recalls under a frozen clock do not decay an uninvolved edge; reinforce still strengthens co-recalled ones", async () => {
+    // Headline live-path proof. Old tick() would have multiplied every stored
+    // weight by 0.95 on the 10th/20th/... recall. After 0.2 the decay clock
+    // is wall-clock, and this clock is frozen, so stored Hebbian of an edge
+    // that is NOT co-recalled must be byte-identical after 100 recalls.
+    const { core, store, edgesPath, edges } = liveField("c-i6.jsonl", true);
+    await core.save(DIABETIC);
+    await core.save(LEMON);
+    await core.save(MEETING);
+    const E = edges();   // same instance recall() will mutate — a second load would be overwritten
+    const diabeticId = store.current().find((m) => m.text === DIABETIC).id;
+    const lemonId = store.current().find((m) => m.text === LEMON).id;
+    const meetingId = store.current().find((m) => m.text === MEETING).id;
+    // Uninvolved pair: meeting is orthogonal to the dessert query, so it
+    // will not land in primary or Related. Seed a learned weight on it.
+    E.put(makeEdge(meetingId, diabeticId, {
+      origin: "co-activation", now: T0, hebbianWeight: 1.0,
+      semantic: { value: 0.4, src_versions: { a: 1, b: 1 } },
+    }));
+    E.save();
+    const snapHeb = JSON.parse(JSON.stringify(E.get(meetingId, diabeticId).hebbian));
+    const snapSem = JSON.parse(JSON.stringify(E.get(meetingId, diabeticId).semantic));
+    const recallsBefore = E.recalls;
+    for (let i = 0; i < 100; i++) await core.recall(DESSERT_Q, 1);
+    const live = new EdgeStore(edgesPath, { now: () => T0 });   // reload from disk
+    const uninvolved = live.get(meetingId, diabeticId);
+    assert.deepStrictEqual(uninvolved.hebbian, snapHeb,
+      "uninvolved edge: stored weight + last_updated unmoved after 100 recalls (I6)");
+    assert.deepStrictEqual(uninvolved.semantic, snapSem, "semantic unmoved");
+    assert.strictEqual(live.recalls, recallsBefore, "recall-epoch clock must not advance");
+    // Co-recalled lemon↔diabetic DID strengthen — reinforcement is retained.
+    const learned = live.weight(lemonId, diabeticId);
+    assert.ok(learned > 0, "co-recall reinforcement still writes Hebbian weight");
+    // And a genuine reinforceRecall on the uninvolved pair does change it.
+    live.reinforceRecall([String(meetingId), String(diabeticId)], []);
+    assert.ok(live.weight(meetingId, diabeticId) > 1.0, "genuine reinforcement still works");
+    assert.strictEqual(live.get(meetingId, diabeticId).hebbian.last_updated, T0,
+      "frozen clock: last_updated stamps to now, which is still T0 — weight is the signal it fired");
+  });
+
+  await atest("I6: recall writes nothing to the edge store on the decay account", async () => {
+    // Pair with the I5 test: sidecar writes from reinforceRecall are allowed;
+    // decay itself must not move last_updated or stored weight of any edge
+    // that was not reinforced this turn.
+    const { core, store, edges } = liveField("c-i6-decay-write.jsonl", true);
+    await core.save(DIABETIC);
+    await core.save(LEMON);
+    await core.save(MEETING);
+    const E = edges();
+    const meetingId = store.current().find((m) => m.text === MEETING).id;
+    const diabeticId = store.current().find((m) => m.text === DIABETIC).id;
+    E.put(makeEdge(meetingId, diabeticId, { origin: "co-activation", now: T0, hebbianWeight: 0.5 }));
+    E.save();
+    const before = JSON.parse(JSON.stringify(E.get(meetingId, diabeticId)));
+    await core.recall(DESSERT_Q, 1);
+    const after = E.get(meetingId, diabeticId);
+    assert.strictEqual(after.hebbian.weight, before.hebbian.weight, "decay must not rewrite stored weight");
+    assert.strictEqual(after.hebbian.last_updated, before.hebbian.last_updated, "decay must not stamp last_updated");
+  });
+
+  await atest("reinforceRecall is retained: a co-recalled pair gets stronger", async () => {
+    const { core, store, edges } = liveField("c-reinf-kept.jsonl", true);
+    await core.save(DIABETIC);
+    await core.save(LEMON);
+    await core.save(MEETING);
+    const lemonId = store.current().find((m) => m.text === LEMON).id;
+    const diabeticId = store.current().find((m) => m.text === DIABETIC).id;
+    const E = edges();
+    const before = E.weight(lemonId, diabeticId);
+    await core.recall(DESSERT_Q, 1);
+    const after = E.weight(lemonId, diabeticId);
+    assert.ok(after > before, "co-surfaced lemon↔diabetic gained Hebbian weight");
   });
 
   // ------------------------------------------------ Phase 0.1: save-time semantic edges

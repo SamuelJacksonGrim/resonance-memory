@@ -17,7 +17,8 @@ not unified:
 
 ```
 field.js    semantic edges    ephemeral   rebuilt every recall    not persisted
-ledger.js   learned weights   persistent  epoch-decayed           JSON sidecar
+ledger.js   learned weights   persistent  epoch-decayed (retired) JSON sidecar
+edges.js    both signals      persistent  Hebbian wall-clock      .edges.json
 ```
 
 Save-time edges are meant to be persisted, to compete, and to accrue Hebbian weight over time.
@@ -35,7 +36,7 @@ independently observable). **One edge substrate, two signals.**
 |---|---|---|
 | Source | Derived from stored embeddings | Accumulated from use |
 | If lost | Recomputable | **Gone forever** |
-| Decays? | **No** — a structural fact, not a memory trace | Yes. Wall-clock once 0.2 lands; recall-count today |
+| Decays? | **No** — a structural fact, not a memory trace | Yes. Lazy wall-clock half-life (0.2); computed, not stored |
 | Invalidated by | `edit()` re-embedding either endpoint | Nothing |
 
 ```
@@ -178,16 +179,31 @@ already in BACKLOG. Caveat: a dense 100k-record graph (~250k unique K=5 edges) w
 extrapolate the sidecar rewrite toward/over 250 ms on its own — incremental sidecar writes
 travel with `RM-07` when it does land, but the *scan* did not force the date.
 
-### 0.2 — Lazy wall-clock decay 🔀 *(replaces `ledger.js tick()/decay()`)*
-- [ ] Decay applies to **`hebbian.weight` only** (semantic is structural, does not fade).
-- [ ] `effectiveHebbian(edge, now)` decaying from `now − hebbian.last_updated`; remove the
-      recall-epoch clock; no background loop.
-- [ ] **Reading never resets decay — this is where I6 becomes true** (today `recall()` calls
-      `tick()`; that call goes away). `reinforceRecall` is untouched.
-- [ ] Configurable **half-life**, not raw lambda: `lambda = ln(2)/halfLife`; per-type/namespace
-      half-lives; normalize to seconds; clamp `delta = max(0, now − last_updated)`; verify
-      monotonic. Start: constraints ~30d · facts ~7d · working ~1h (**parameters, not constants**).
+### 0.2 — Lazy wall-clock decay ✅ *(replaces `ledger.js tick()/decay()`)*
+- [x] Decay applies to **`hebbian.weight` only** (semantic is structural, does not fade).
+- [x] `effectiveHebbian(edge, now)` decaying from `now − hebbian.last_updated`; remove the
+      recall-epoch clock; no background loop. (`edges.js`; `memory-core.js` recall no longer
+      calls `tick()`. `tick()` remains on EdgeStore as the retired Ledger-parity copy —
+      live path does not invoke it.)
+- [x] **Reading never resets decay — this is where I6 became true.** `reinforceRecall` is
+      untouched. Proof: 100 reads under a frozen clock leave `hebbian.weight` +
+      `hebbian.last_updated` byte-identical; a genuine `reinforceRecall` then changes them.
+- [x] Configurable **half-life**, not raw lambda: `lambda = ln(2)/halfLife`; per-type/namespace
+      half-lives; normalize to seconds; clamp `delta = max(0, now − last_updated)`; verified
+      monotonic. Shipped starting parameters (`HALF_LIFE_SECONDS` in `edges.js` — **parameters,
+      not constants**):
+
+      | type / namespace | half-life | seconds |
+      |---|---|---|
+      | `constraint` | ~30 days | `30 * 86400` |
+      | `fact` (default) | ~7 days | `7 * 86400` |
+      | `working` | ~1 hour | `3600` |
+
+      An edge whose either endpoint is `is_constraint` uses the constraint class
+      (`hebbianDecayType`). Override per store via `opts.halfLives` / `opts.halfLife`.
 - [ ] Ships with `RM-08` (same decay/pruning surface) — see [[0006-constraints-decay-pruning]].
+      The half-life table is the shared surface; `RM-08` *record* importance decay is still
+      a separate law on a separate object.
 
 ### 0.3 — Materialize on mutation & idempotency
 - [ ] On mutation: materialize effective weight → apply reinforcement to *that* → store → stamp
@@ -272,19 +288,22 @@ batched through the `AccessLog` pattern. Telemetry does not get to violate an in
 
 ## Test plan *(fake clock throughout; every transition-table row incl. the negatives)*
 
-- [ ] Decay at multiple elapsed times · half-life math · negative clock deltas.
+- [x] Decay at multiple elapsed times · half-life math · negative clock deltas.
 - [x] Persistence/reload; legacy `.assoc.json` migration (weight lands, nothing dropped).
 - [x] **Signals stay separate** (reinforce → semantic unmoved; decay to zero → edge survives).
-      *(reinforce half: `setHebbian` leaves `semantic` byte-identical. Decay-to-zero survival
-      is re-tested when 0.2/0.4 land.)*
+      *(reinforce: `setHebbian` leaves `semantic` byte-identical. 0.2: computed decay-to-zero
+      leaves the edge present with semantic intact; stored weight is unmoved. Soft-prune of
+      the zero-Hebbian case is 0.4.)*
 - [x] **Stale semantic structurally detectable** (edit → version++ → incident edges fail
       `src_versions` on read, no event run; also: persist memory, crash before touching edges,
       edge still seen stale).
       *(module-level: bump the version argument to `semanticValid`, no invalidate() exists.
       The edit() wiring + crash-before-edge-write case is Slice C.)*
 - [x] `edit()` with a dead embedder does **not** increment `embedding_version`.
-- [ ] **Reading does not reinforce (I6):** read one edge 100× → weight + `last_updated` unchanged,
-      *then* genuine reinforcement does change them.
+- [x] **Reading does not drive the decay clock (I6):** read one edge 100× under a frozen
+      clock → weight + `last_updated` unchanged, *then* genuine reinforcement does change
+      them. Live path: 100 field-on recalls do not decay an uninvolved edge and do not
+      increment the leftover `recalls` counter. Co-recall reinforcement is retained.
 - [ ] Reactivation preserves history (`created_at` unmoved, `prune_count === 1`, weight carried).
 - [x] Save-time edges (creation, K=5, 0.25 threshold, fewer-than-K, weight starts 0,
       semantic cached with canonical `src_versions`, origin `save-time-neighbor`;
@@ -294,10 +313,12 @@ batched through the `AccessLog` pattern. Telemetry does not get to violate an in
 - [ ] Soft-pruned edges survive persistence; duplicate reinforcement / request-ID dedup.
 - [ ] Interrupted/failed persistence, atomic recovery.
 - [x] **Field fails open (I3):** corrupt sidecar → recall still returns cosine.
-- [ ] Negatives: recall writes nothing to the edge store; edit writes nothing to the edge store.
-      *(edit: tested, no edge write. recall-the-verb still co-issues `reinforceRecall` + `tick`
-      + sidecar save, as Ledger did — that write is the SIDECAR, not the JSONL store (I5).
-      A reinforce-free read path is 0.2 / I6.)*
+- [x] Negatives: recall writes nothing to the edge store **on the decay account**; edit
+      writes nothing to the edge store.
+      *(edit: tested, no edge write. recall-the-verb still co-issues `reinforceRecall` +
+      sidecar save — that write is the SIDECAR, not the JSONL store (I5), and is the
+      retained co-recall path. `tick()` is gone. Decay does not move `last_updated` or
+      stored weight.)*
 
 ---
 
