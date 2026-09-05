@@ -50,7 +50,7 @@ compete on **reproducibility**, which hosted vendors structurally cannot match. 
 
 | Area | Position | Owned by |
 |---|---|---|
-| Evaluation | **No longer a gap.** `RM-00` shipped: offline, deterministic, golden-gated. IR metrics (recall@k, MRR, staleness, dup-rate) not built — Phase 2.5. | `RM-00`, `eval/` |
+| Evaluation | **No longer a gap.** `RM-00` shipped: offline, deterministic, golden-gated. Reporting metrics: `recall@k` + `duplicate_rate` shipped (RM-02.a registry); MRR / staleness still open — Phase 2.5. | `RM-00`, `eval/` |
 | Write path | **The real gap.** `RM-04` + `RM-03` v1 landed; `RM-01`/`RM-02` have not. | `RM-01`–`RM-04` |
 | Substrate | **Unified.** One edge table, two signals (semantic derived, Hebbian source-of-truth). Phase 0 exit met (0.6). | Phase 0 ✅, `ARCHITECTURE.md` |
 | Distribution | **Ahead.** Single file, zero terminal, no API key. | `DEVELOPERS.md` |

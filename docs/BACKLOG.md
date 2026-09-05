@@ -21,13 +21,15 @@ the substrate. If an item seems to need a fifth verb, the design is wrong.
 Build `eval/` with seeded, offline, reproducible scoring.
 
 - [x] Fixture corpora in `eval/corpora/*.jsonl`: `basic`, `contradictions`, `constraints`,
-      `adversarial`, plus `field-noise` / `field-stress`. *(`duplicates` / `temporal` / `messy`
-      land with the features they test — RM-02 / RM-04 / RM-01.)*
+      `adversarial`, plus `field-noise` / `field-stress`. *(`duplicates` landed with RM-02.a
+      as a measurement corpus — skipped by the golden runner. `temporal` / `messy` still
+      land with RM-04 / RM-01.)*
 - [ ] ≥50 contradiction/update cases — **the axis LOCOMO and LongMemEval both under-test.**
       *(4 today; expand as RM-03 detection matures.)*
-- [~] Metrics: `recall@k` shipped, plus the field-experiment **ROC / TBR** split.
-      *(`staleness_rate`, `false_supersession`, `duplicate_rate`, `extraction_precision/recall`
-      land with RM-01 / RM-02 / RM-03.)*
+- [~] Metrics: `recall@k` and `duplicate_rate` shipped as **reporting** metrics (registry in
+      `eval/metrics.js`; `node eval/measure.js`; not folded into `golden.json`), plus the
+      field-experiment **ROC / TBR** split. *(`staleness_rate`, `false_supersession`,
+      `extraction_precision/recall` still land with RM-01 / RM-03.)*
 - [x] Constraint cases run with the field **off and on**; report both and the gap.
 - [x] Repeated cases (`repeat` / `contains_by_turn`) keep one store across turns and report
       `first_hit_turn`, so a constraint that lands by turn 4 isn't scored as a miss.
@@ -97,6 +99,9 @@ Design: [`proposed/0001`](proposed/0001-write-pipeline.md).
 
 ### `RM-02` — Deduplication and merge · **M** · `todo`
 
+- [x] **02.a measurement seed** (this slice): metric registry (`recall_at_k`, `duplicate_rate`),
+      `eval/corpora/duplicates.jsonl`, pre-dedup baseline + pre-declared 50% bar in
+      [`eval/RESULTS.md`](../eval/RESULTS.md). Product behaviour unchanged.
 - [ ] Near-duplicate detection at save: cosine ≥ `DEDUP_HI` (~0.95) → treat as restatement.
 - [ ] Restatement → bump `last_confirmed` + `access_count`, do **not** append.
 - [ ] Band `DEDUP_LO..DEDUP_HI` (~0.88–0.95) → candidate merge; keep the longer/more specific

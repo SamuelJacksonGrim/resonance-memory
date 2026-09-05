@@ -167,7 +167,7 @@ same record the panel renders and the installer's target reads.
 | Path | Role |
 |---|---|
 | `test.js` | The dependency-free unit/regression suite (`npm test`). **57 tests, <1s.** |
-| `eval/` | **RM-00**, the evaluation harness (§8). `eval/pipeline.js` wires `memory-core.js` to a cached embedder; `eval/run.js` runs the corpora and gates against `golden.json`. |
+| `eval/` | **RM-00**, the evaluation harness (§8). `eval/pipeline.js` wires `memory-core.js` to a cached embedder; `eval/run.js` runs the corpora and gates against `golden.json`. Reporting metrics (`eval/measure.js`) are a separate A/B path. |
 | `docs/` | `ARCHITECTURE.md` (this file), `ROADMAP.md`, `phases/` (buildable phase specs), `BACKLOG.md`, `BUGS.md`, `COMPETITIVE-ANALYSIS.md`, `proposed/` RFCs. |
 
 ---
@@ -409,7 +409,10 @@ it reads `eval/embeddings.cache.json` and never touches the network or an API ke
   `adversarial`, `field-noise`, `field-stress`) with the field **off and on**, reports the
   **ROC** (did the apex constraint surface?) and **TBR** (did forbidden junk bleed in?) split,
   and gates against `golden.json`. `--filter <id>` runs a subset; `--accept` locks the current
-  scorecard as the new golden.
+  scorecard as the new golden. Measurement corpora (`duplicates`) are skipped here.
+- `eval/measure.js` runs reporting metrics from the registry in `eval/metrics.js`
+  (`recall_at_k`, `duplicate_rate`; add more with `register(...)`). A/B numbers, not the
+  golden gate. See `eval/RESULTS.md` (RM-02.a) for the pre-dedup baseline.
 - Current scorecard: **27/31 checks**, field lifts 3 cases fail→pass and the golden gate holds.
 
 `npm test` (57 tests) covers the substrate directly; `npm run eval` covers recall behavior.

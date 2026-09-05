@@ -16,7 +16,8 @@
     "panel": "node panel.js",
     "seed": "node build-demo-seed.js",
     "inspect": "node inspect_sidecar.js",
-    "eval": "node eval/run.js"
+    "eval": "node eval/run.js",
+    "measure": "node eval/measure.js"
   },
   "repository": {
     "type": "git",

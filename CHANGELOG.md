@@ -17,6 +17,15 @@ Beta-readiness pass:
   "revisit only if hosted resale looms" trigger the backlog pre-registered, now pulled.
 
 ### Added
+- **RM-02.a measurement seed (write-path gap).** A reporting-metric registry in
+  `eval/metrics.js` (`recall_at_k`, `duplicate_rate`) plus `eval/measure.js` and
+  `eval/corpora/duplicates.jsonl`. Distinct from the golden contains/excludes
+  gate — `node eval/run.js` is unchanged ("No regressions vs golden"); these
+  numbers are the A/B 02.b compares against. Pre-dedup baseline:
+  `duplicate_rate` 0.3182 (7/22 extras; the shipping exact-restatement path
+  catches 1 byte-identical pair and zero paraphrases), `recall@5` 1.0000
+  (17/17). Pre-declared RM-02 pass bar (before 02.b runs): dup-rate ≥50% down
+  (→ ≤ 0.1591) AND recall@5 not lower. Product behaviour untouched.
 - **Phase 0.6 threat-model sketch (design only).** On-paper analysis of the
   unified edge substrate: what can mint an edge, raise Hebbian weight, make a
   memory a constraint-rescue bridge, or survive indefinitely. The load-bearing

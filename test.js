@@ -1559,7 +1559,10 @@ test("transition: vacuum of nothing does not rewrite the sidecar", () => {
 // ------------------------------------------------- ROC/TBR field signals (RM-00)
 section("field signals: ROC / TBR (RM-00)");
 
-const { fieldSignals } = require("./eval/metrics.js");
+const {
+  fieldSignals,
+  register, listMetrics, computeMetric, explainMetric, makeRecallAtK, parsePrimaryHits,
+} = require("./eval/metrics.js");
 
 const relOut =
   "1. [id 1] I'm diabetic, so no sugary desserts for me\n" +
@@ -1581,6 +1584,96 @@ test("fieldSignals: appended counts the field's Related nodes (tangent surface)"
   assert.strictEqual(fieldSignals({ expect: {} }, relOut).appended, 2);
   const noRel = "1. [id 1] just a direct cosine hit, no field additions";
   assert.strictEqual(fieldSignals({ expect: {} }, noRel).appended, 0);
+});
+
+// --------------------------------------- reporting metric registry (RM-02.a)
+section("eval metric registry (RM-02.a)");
+
+const REGISTRY_QUERIES = {
+  queries: [
+    { id: "q1", ranked_ids: ["a", "b", "c"], relevant_ids: ["b"] },  // hit @2, miss @1
+    { id: "q2", ranked_ids: ["x", "y"], relevant_ids: ["z"] },        // miss
+    { id: "q3", ranked_ids: ["p"], relevant_ids: ["p"] },              // hit @1
+  ],
+};
+
+test("recall_at_k on a hand-built result set (success@k)", () => {
+  assert.strictEqual(computeMetric("recall_at_k", REGISTRY_QUERIES, null, { k: 5 }), 2 / 3);
+  assert.strictEqual(computeMetric("recall_at_k", REGISTRY_QUERIES, null, { k: 2 }), 2 / 3);
+  assert.strictEqual(computeMetric("recall_at_k", REGISTRY_QUERIES, null, { k: 1 }), 1 / 3);
+  const expl = explainMetric("recall_at_k", REGISTRY_QUERIES, null, { k: 1 });
+  assert.deepStrictEqual(expl.misses, ["q1", "q2"]);
+  assert.strictEqual(expl.hits, 1);
+});
+
+test("recall_at_k skips unlabeled queries and defaults k=5", () => {
+  const mixed = { queries: [
+    { ranked_ids: ["a"], relevant_ids: ["a"] },
+    { ranked_ids: ["b"], relevant_ids: [] },          // unlabeled
+    { ranked_ids: ["c"] },                            // unlabeled
+  ] };
+  assert.strictEqual(computeMetric("recall_at_k", mixed, null), 1);
+  assert.strictEqual(explainMetric("recall_at_k", mixed, null).n, 1);
+});
+
+test("duplicate_rate on a known-labeled set", () => {
+  const records = [{ text: "a1" }, { text: "a2" }, { text: "b1" }, { text: "c1" }];
+  const corpus = { groups: { A: ["a1", "a2"], B: ["b1"], C: ["c1"] } };
+  assert.strictEqual(computeMetric("duplicate_rate", { records }, corpus), 0.25);
+  const expl = explainMetric("duplicate_rate", { records }, corpus);
+  assert.strictEqual(expl.n, 4);
+  assert.strictEqual(expl.gStar, 3);
+  assert.strictEqual(expl.extras, 1);
+  assert.strictEqual(expl.byGroup.A.extras, 1);
+  assert.strictEqual(expl.byGroup.B.extras, 0);
+});
+
+test("duplicate_rate: collapsed exact pair is not redundant; unmatched is not either", () => {
+  const collapsed = { records: [{ text: "same" }] };
+  const coffee = { groups: { coffee: ["same", "same"] } };
+  assert.strictEqual(computeMetric("duplicate_rate", collapsed, coffee), 0);
+  const withMystery = { records: [{ text: "a1" }, { text: "mystery" }] };
+  const labeled = { groups: { A: ["a1"] } };
+  assert.strictEqual(computeMetric("duplicate_rate", withMystery, labeled), 0,
+    "unmatched records count as their own singleton, not as extras");
+  assert.strictEqual(computeMetric("duplicate_rate", { records: [] }, labeled), 0);
+});
+
+test("registering a new metric works; duplicate names throw", () => {
+  register({ name: "rm02a_always_half", compute() { return 0.5; } });
+  assert.strictEqual(computeMetric("rm02a_always_half", {}, {}), 0.5);
+  assert.ok(listMetrics().some((m) => m.name === "rm02a_always_half"));
+  assert.throws(() => register({ name: "rm02a_always_half", compute() { return 0; } }),
+    /duplicate name/);
+  assert.throws(() => register({ name: "nope" }), /compute/);
+  register(makeRecallAtK(1));
+  assert.strictEqual(computeMetric("recall@1", REGISTRY_QUERIES, null), 1 / 3);
+});
+
+test("parsePrimaryHits reads the cosine list and ignores Related:", () => {
+  const out = "1. [id 12] I'm allergic to penicillin\n2. [id 7] I live in Texas\n\nRelated:\n- [id 99] junk";
+  const hits = parsePrimaryHits(out);
+  assert.strictEqual(hits.length, 2);
+  assert.strictEqual(hits[0].id, "12");
+  assert.strictEqual(hits[1].id, "7");
+});
+
+test("duplicates corpus loads with all three RM-02 bands plus queries", () => {
+  const { loadScenarios } = require("./eval/measure.js");
+  const scenarios = loadScenarios(path.join(__dirname, "eval", "corpora", "duplicates.jsonl"));
+  assert.strictEqual(scenarios.length, 1);
+  const s = scenarios[0];
+  const bands = new Set(s.writes.map((w) => w.band));
+  assert.ok(bands.has("hi") && bands.has("mid") && bands.has("control") && bands.has("exact"),
+    "corpus covers hi / mid / control / exact");
+  assert.ok(s.queries.length >= 8, "enough queries for recall@k");
+  const gids = new Set(s.writes.map((w) => w.dup_group));
+  for (const q of s.queries) {
+    assert.ok(Array.isArray(q.relevant_groups) && q.relevant_groups.length, q.id + " needs relevant_groups");
+    for (const g of q.relevant_groups) assert.ok(gids.has(g), q.id + " group " + g + " missing from writes");
+  }
+  const multi = [...gids].filter((g) => s.writes.filter((w) => w.dup_group === g).length > 1);
+  assert.ok(multi.length >= 3, "several multi-member dup groups");
 });
 
 // ------------------------------------------------- warm field (Phase 1 / PR1)
@@ -1794,6 +1887,23 @@ test("emitWarmTrace is callable and does not throw (hot path is `if (warmTrace()
 // createCore already required above (warm-field section)
 
 async function asyncTests() {
+  section("eval measure runner (RM-02.a)");
+
+  await atest("duplicates corpus: both metrics compute via pipeline.js (cached embed)", async () => {
+    const { loadScenarios, runScenario } = require("./eval/measure.js");
+    const scenarios = loadScenarios(path.join(__dirname, "eval", "corpora", "duplicates.jsonl"));
+    const r = await runScenario(scenarios[0], { k: 5 });
+    assert.ok(r.metrics.duplicate_rate >= 0 && r.metrics.duplicate_rate <= 1);
+    assert.ok(r.metrics.recall_at_k >= 0 && r.metrics.recall_at_k <= 1);
+    assert.strictEqual(r.queries.length, scenarios[0].queries.length);
+    assert.ok(r.queries.every((q) => Array.isArray(q.ranked_ids)), "each query has ranked_ids from recall output");
+    assert.ok(r.exact_restatements_caught >= 1,
+      "byte-identical coffee-order pair is confirmed, not appended");
+    assert.ok(r.n_stored_current >= 1 && r.n_stored_current <= r.n_writes);
+    assert.ok(r.queries.every((q) => q.relevant_ids.length >= 1),
+      "every query resolved to a stored id via group text (merge must keep an original text)");
+  });
+
   section("edit() embedding safety");
 
   const makeCore = (file, liveRef) => {

@@ -413,6 +413,109 @@ Golden (`npm run eval`) after this slice: **No regressions vs golden.** Recall s
 
 ---
 
+# RM-02.a — measurement seed (pre-dedup baseline)
+
+**Date:** 2026-09-05 · **Product behaviour:** unchanged (`memory-core.js` / `record.js` /
+`save` / `recall` untouched). **Embedder:** `text-embedding-nomic-embed-text-v1.5`,
+cache-extended for the new corpus. **Reproduce:** `node eval/measure.js --bands`
+(offline after the cache commit). Golden: `node eval/run.js` → **No regressions vs golden.**
+
+This slice builds the three things RM-02's acceptance names and that did not exist:
+a `duplicate_rate` metric, a `recall@k` metric, and `eval/corpora/duplicates.jsonl`.
+Dedup itself is 02.b; these numbers are the "before."
+
+## Registry
+
+Reporting metrics live in `eval/metrics.js` as named entries
+`{ name, compute(results, corpus, opts) -> number }`, distinct from the golden
+contains/excludes scorer. Builtins: `recall_at_k` (success@k, default k=5) and
+`duplicate_rate`. Adding `mrr` / `staleness_rate` / `extraction_precision` is
+`register({ name, compute })`. Runner: `eval/measure.js` (reuses `pipeline.js`).
+Levers (field, k) are runner flags, not metric internals.
+
+`duplicate_rate` = `max(0, N − G*) / N` on `store.current()`: N = current stored
+records, G* = labeled groups represented among them (unmatched texts count as
+their own singleton). Membership is stored `text` ∈ the group's write texts.
+This is **not** "pairs with cosine > 0.95" — measuring cosine-dedup by cosine
+would be circular; the labels are the ground truth.
+
+`recall_at_k` = fraction of queries whose top-k **primary** cosine ids contain
+at least one relevant id (success@k, not set-recall). Relevant ids resolve
+through the same text→group mapping.
+
+## Corpus (`eval/corpora/duplicates.jsonl`)
+
+One store, four bands, 15 groups, 23 writes, 17 queries. Pairwise cosine is
+from the committed cache (overlapping strings with `basic.jsonl` keep their
+original vectors — that's the geometry the rest of the eval uses):
+
+| group | band | members | pairwise cos |
+|---|---|---|---|
+| coffee-order | exact | 2× byte-identical | 1.0 (collapsed by the shipping restatement path) |
+| penicillin | hi | 3 paraphrases | 0.9883 / 0.9651 / 0.9524 |
+| tea | hi | 2 | 0.9522 |
+| peanuts | hi | 2 | 0.9581 |
+| job | mid | 2 (longer = more specific) | 0.9261 |
+| cat | mid | 2 | 0.9435 |
+| diabetic | mid | 2 | 0.9433 |
+| dog, peanut-allergy, standup, mechanic, name, night-owl, sister-bday, garage | control | 1 each | — |
+
+Controls include two **precision traps**: `dog` vs `cat` (same-frame pets, live
+pair ~0.69) and `peanut-allergy` vs `peanuts` (same-topic, live pair ~0.67).
+Both sit well below DEDUP_LO ~0.88; a too-aggressive merge would tank
+`q-cat` / `q-dog` / `q-peanut-allergy`. No correction cues, so RM-03 does not fire.
+
+The brief's example pair *"I'm allergic to penicillin" / "penicillin gives me
+hives, I'm allergic"* measured **0.8941 (mid, not hi)** on this embedder. HI
+in the corpus is tighter paraphrases that actually clear 0.95; mid is the
+"same fact, one more specific" band.
+
+## Baseline (today, pre-dedup)
+
+```
+writes=23  stored_current=22  groups=15  exact_restatements_caught=1
+duplicate_rate  0.3182   (extras=7/22, G*=15)
+recall@5        1.0000   (17/17 queries hit)
+```
+
+**Existing restatement path:** the byte-identical `coffee-order` pair is
+confirmed, not appended (`Already remembered`). **No HI paraphrase is
+caught** — `r.text === content` is exact match only, so the four HI extras
+and three mid extras all store. That is the RM-02 gap, measured.
+
+Extras by band: HI 4 (penicillin 2 + tea 1 + peanuts 1) · MID 3 · exact 0 ·
+control 0.
+
+## Pre-declared RM-02 pass bar (written BEFORE 02.b runs)
+
+Same discipline as the Phase 0.1 250 ms budget. Changing these numbers after
+seeing 02.b's table is cheating.
+
+| metric | baseline | pass iff |
+|---|---|---|
+| `duplicate_rate` | **0.3182** | drops ≥ 50% relative → **≤ 0.1591** |
+| `recall@5` | **1.0000** | not lower → **= 1.0000** (17/17 holds) |
+
+Arithmetic that 02.b will hit whether or not it ships the mid band:
+
+| 02.b does | extras left | stored | rate | relative drop | vs 50% |
+|---|---|---|---|---|---|
+| nothing | 7 | 22 | 0.3182 | 0% | FAIL |
+| HI restatement only (4 extras gone) | 3 | 18 | 0.1667 | **47.6%** | **FAIL** (shy of 50%) |
+| mid merge only (3 extras gone) | 4 | 19 | 0.2105 | 33.8% | FAIL |
+| HI + mid (the spec) | 0 | 15 | 0.0000 | 100% | PASS, if recall@5 holds |
+| over-merge a control into a dup group | ≤3 | ≤18 | maybe ≤0.1591 | maybe | **FAIL on recall@5** (q-cat / q-dog / q-peanut-allergy) |
+
+So the 50% bar is not free on the easy ≥0.95 band: **DEDUP_HI restatement
+alone is expected to miss.** The mid-band merge is what the acceptance
+actually demands. Over-merge is caught by recall@5 sitting at 1.0 with
+no room to drop.
+
+Reproduce the before-column: `node eval/measure.js --corpus duplicates`.
+02.b compares the after-column to the table above.
+
+---
+
 ## Related
 
 [[eval/README]] · [[0007-eval-harness]] · [[phase-0-edge-substrate]] · [[phase-2-retrieval-dynamics]] · [[BACKLOG]] · [[ARCHITECTURE]]

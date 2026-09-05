@@ -14,6 +14,10 @@
  *   npm run eval -- --accept     write the current scorecard as golden.json (the gate)
  *   npm run eval -- --filter X   run only cases whose id starts with X
  *
+ * Reporting metrics (recall@k, duplicate_rate, …) are eval/measure.js, not
+ * this file. Measurement corpora (kind: "duplicates" / gate: false / no
+ * expect) are skipped here so they cannot flip golden.json.
+ *
  * Constraint cases run BOTH field:false and field:true; the gap between them is
  * the associative field's measured value - the number this project most needs and
  * has never had. Repeated cases keep ONE store across turns so the Hebbian loop
@@ -60,10 +64,21 @@ async function runCase(c, fieldOn) {
   };
 }
 
+// Golden cases are the RM-00 contains/excludes scorecard. Measurement
+// corpora (RM-02 duplicates, later messy/temporal) live in the same
+// directory but are scored by eval/measure.js — they have no `expect`,
+// and a write-object line would crash save(w) (objects have no .trim).
+function isGoldenCase(c) {
+  if (!c || c.gate === false) return false;
+  if (c.kind === "duplicates" || c.kind === "measure") return false;
+  return !!(c.expect && (c.query || c.repeat));
+}
+
 async function run({ filter = null } = {}) {
   const results = [];
   for (const fileName of fs.readdirSync(CORPORA).filter((f) => f.endsWith(".jsonl"))) {
     for (const c of readJsonl(path.join(CORPORA, fileName))) {
+      if (!isGoldenCase(c)) continue;
       if (filter && !c.id.startsWith(filter)) continue;
       const modes = c.kind === "constraint" ? [false, true] : [c.field ?? false];
       for (const fieldOn of modes) results.push(await runCase(c, fieldOn));

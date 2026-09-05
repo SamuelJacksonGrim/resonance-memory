@@ -67,7 +67,7 @@ roadmap, and per-repo backlog live in the companion repo
 | Path | Role |
 |---|---|
 | `test.js` | The dependency-free unit/regression suite (`npm test`). Runs in under a second. |
-| `eval/` | **RM-00**, the evaluation harness — the measurement system the roadmap depends on. `eval/pipeline.js` wires `memory-core.js` to a cached embedder; `eval/run.js` runs the corpora and gates against `golden.json`. See `eval/README.md`. |
+| `eval/` | **RM-00**, the evaluation harness — the measurement system the roadmap depends on. `eval/pipeline.js` wires `memory-core.js` to a cached embedder; `eval/run.js` runs the corpora and gates against `golden.json`. Reporting metrics (`recall_at_k`, `duplicate_rate`) live in a registry in `eval/metrics.js` and run via `eval/measure.js` — they are A/B numbers, not the golden gate. See `eval/README.md`. |
 | `docs/ROADMAP.md`, `docs/BACKLOG.md` | Phased plan and itemized work (`RM-00`…`RM-20`) with acceptance criteria. |
 | `docs/BUGS.md` | Known defects (fixed and open) with a watch list. `BUG-001`/`BUG-002`/`BUG-006` are referenced throughout the code. |
 | `docs/proposed/` | RFC-style designs (`0001`–`0007`) with code and pseudocode. |
@@ -86,12 +86,13 @@ npm run inspect   # Hebbian ledger telemetry
 npm run eval      # run the RM-00 eval harness (offline, deterministic)
 npm run eval -- --accept        # lock the current scorecard in as golden.json
 npm run eval -- --filter <id>   # run only cases whose id starts with <id>
+npm run measure   # reporting metrics (recall@k, duplicate_rate, …); not the golden gate
 ```
 
-`npm test` and `npm run eval` are **offline and deterministic** — the eval reads
-`eval/embeddings.cache.json` and never touches the network. Refreshing the cache for a new
-corpus case needs a live LM Studio embedder once (`EVAL_REFRESH=1 npm run eval`), then you
-commit the cache diff.
+`npm test`, `npm run eval`, and `npm run measure` are **offline and deterministic** — they
+read `eval/embeddings.cache.json` and never touch the network. Refreshing the cache for a
+new golden case: `EVAL_REFRESH=1 npm run eval`. For a measurement corpus (`duplicates`):
+`EVAL_REFRESH=1 npm run measure`. Then commit the cache diff.
 
 ## How it works (data flow)
 
