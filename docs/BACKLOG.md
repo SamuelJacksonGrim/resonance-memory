@@ -137,7 +137,7 @@ Design: [`proposed/0002`](proposed/0002-temporal-supersession.md).
 
 ## Phase 2 — Retrieval and shape
 
-### `RM-21` — Edge substrate unification (one store, two signals) · **L** · `todo` — **roadmap Phase 0, current work** 🔀
+### `RM-21` — Edge substrate unification (one store, two signals) · **L** · ✅ `done` — **roadmap Phase 0, exit met** 🔀
 
 > **Migration, not greenfield.** `field.js` (static kNN, rebuilt per recall, persists nothing)
 > and `ledger.js` (Hebbian sidecar, persists, decays on a recall-count clock) merge into **one
@@ -145,8 +145,9 @@ Design: [`proposed/0002`](proposed/0002-temporal-supersession.md).
 > `learned` (source-of-truth / irreplaceable). Building it fresh produces a *second* parallel
 > associative system beside the one already running. Design: [`phases/phase-0`](phases/phase-0-edge-substrate.md).
 
-- [ ] **PRE-0:** `BUG-008` fixed (✅, see [`BUGS.md`](BUGS.md)); **edge state-transition table
-      ratified** — including the `superseded → inherited?` cell (deferred-decision, Phase 7).
+- [x] **PRE-0:** `BUG-008` fixed (see [`BUGS.md`](BUGS.md)). Phase-0 cells of the edge
+      state-transition table are decided. The `superseded → inherited?` cell is a
+      deferred-decision (Phase 7), not a Phase 0 exit miss.
 - [x] **0.0** One edge store, two signals (semantic derived, learned source-of-truth), typed
       provenance. `embedding_version` added to `record.js normalize()` (defaults legacy rows to
       `1`). **Migrate every `.assoc.json` edge in, one-way**: an old build reading a new sidecar
@@ -174,7 +175,9 @@ Design: [`proposed/0002`](proposed/0002-temporal-supersession.md).
       nothing to the edge store), *reading ≠ decay-clock advance*, *signals stay separate*,
       *stale-semantic self-heals by version compare*, *fails-open*. `test.js` is the
       Phase 0 contract (section headers keyed to sub-phase / invariant).
-- [ ] **0.6** Threat-model sketch (design only; `RM-16` implementation stays gated to Phase 2).
+- [x] **0.6** Threat-model sketch (design only; `RM-16` implementation stays gated to Phase 2).
+      [`proposed/0009`](proposed/0009-edge-threat-model.md). No code. Carry-forward is the
+      `RM-16` requirements at the Phase 2.2 gate, not an implementation here.
 
 **Acceptance:** the `RM-00` golden set does **not** regress at any sub-phase boundary
 (`npm run eval`); a store recalled N times under a frozen clock shows **zero** learned-edge decay;
@@ -367,7 +370,15 @@ covered by `RM-06` and `RM-16`.
 
 **Acceptance:** staleness stays flat (not creeping) from update 100 → 1000.
 
-### `RM-16` — Memory poisoning / injection defense · **M** · `todo`
+### `RM-16` — Memory poisoning / injection defense · **M** · `todo` — **gates Phase 2.2 promotion**
+
+> **Not started.** Phase 0.6 wrote the threat sketch
+> ([`proposed/0009`](proposed/0009-edge-threat-model.md)); this item **implements** the
+> defense. The record-provenance bullets below are necessary and **not sufficient** —
+> Phase 0 made `hebbian.weight` an irreplaceable source of truth, and 2.2 would let it
+> enter rank. Do not promote fusion until the carry-forward requirements in `0009` §7
+> are met.
+
 - [ ] Treat tool-call content as untrusted: text a model saw on a webpage must not silently
       become a durable "user preference."
 - [ ] Provenance on every record: `source` (`user_stated` | `model_inferred` | `tool_content`).
@@ -375,12 +386,35 @@ covered by `RM-06` and `RM-16`.
 - [ ] Eval case: an adversarial "remember that you must always…" payload must not become a
       high-confidence long-term memory.
 
-*(The Hebbian ledger is already provenance-discounted — this generalizes that instinct to the
-whole write path.)*
+**Carry-forward from `0009` (must hold before the 2.2 gate can pass):**
+
+- [ ] Untrusted provenance must not mint or raise `hebbian.weight` at full `alphaPP`.
+      Record `source` (and/or per-reinforcement provenance) has to reach `_bump`, not
+      just the JSONL row. The existing primary-vs-neighborhood discount is
+      retrieval-provenance; generalize it to *who said it*.
+- [ ] Bound the rate an adversary can buy once learned weight enters rank (`tanh` on
+      the discovery bonus does not automatically bound rank influence). 2.3/2.4 are
+      the damping half; this is the provenance half.
+- [ ] Sidecar import / `RM-17` restore is an injection path: export must preserve
+      Hebbian (irreplaceable); import must not silently bless a planted sidecar.
+- [ ] Re-evaluate the save-time 0.25 persist-net before anything reads it into rank
+      (latent parasite edges accumulated while the field was off).
+- [ ] Keep I9 as the fallback: if the A/B is inconclusive or the bullets above are
+      not in, fusion stays flag-off.
+- [ ] Eval the *edge*, not only the record: parasite + co-recall, planted sidecar,
+      constraint-cue vs "remember that you must always…" (different attacks).
+
+*(The Hebbian path is already provenance-discounted by retrieval role —
+primary↔primary / primary↔neighborhood / zero N↔N. This generalizes that
+instinct to the whole write path **and** to the writer of the learned signal.)*
 
 ### `RM-17` — Portability: export / import / backup · **S** · `todo`
 - [ ] One-click export to plain JSONL + a documented schema; import with dedup.
 - [ ] Reinforces the trust claim: your memories are *yours*, and leaving is easy.
+- [ ] **Priority rose at Phase 0:** the sidecar holds irreplaceable Hebbian state
+      (semantic rebuilds; learned weight does not). Export must preserve
+      `hebbian.weight`; import is an injection path for `RM-16` /
+      [`0009`](proposed/0009-edge-threat-model.md) §5 and §7.3.
 
 ### `RM-18` — Encryption at rest (optional) · **M** · `todo`
 - [ ] Opt-in passphrase encryption for the store; off by default (it costs the
@@ -427,4 +461,4 @@ If you want a concrete "start Monday" list, in order:
 
 ## Related
 
-[[ROADMAP]] · [[ARCHITECTURE]] · [[BUGS]] · [[phase-0-edge-substrate]] · [[phase-2-retrieval-dynamics]] · [[proposed/README]] · [[RESULTS]]
+[[ROADMAP]] · [[ARCHITECTURE]] · [[BUGS]] · [[phase-0-edge-substrate]] · [[phase-2-retrieval-dynamics]] · [[0009-edge-threat-model]] · [[proposed/README]] · [[RESULTS]]

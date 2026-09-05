@@ -20,7 +20,7 @@ restates mechanism goes stale the moment the mechanism changes — and it did (`
 | What broke, how, whether it's fixed | [`BUGS.md`](BUGS.md) |
 | The measured state — is a claim actually true now | [`../eval/`](../eval/), `../eval/RESULTS.md`, `npm run eval` |
 | The buildable phase specs (scope · steps · metrics · tests) | [`phases/`](phases/) — `phase-0` … `phase-8` |
-| Deep designs that gate a phase | [`proposed/`](proposed/) — `0003` (Phase 2.2 gate), `0007` (the harness), `0002`/`0004`/`0006` (referenced by their phases) |
+| Deep designs that gate a phase | [`proposed/`](proposed/) — `0003` (Phase 2.2 gate), `0009` (edge threat model, feeds `RM-16`), `0007` (the harness), `0002`/`0004`/`0006` (referenced by their phases) |
 | What shipped when | [`../CHANGELOG.md`](../CHANGELOG.md) |
 | Pricing / positioning | [`COMPETITIVE-ANALYSIS.md`](COMPETITIVE-ANALYSIS.md) |
 | Working agreement; build/run/test | [`../CLAUDE.md`](../CLAUDE.md), [`../DEVELOPERS.md`](../DEVELOPERS.md) |
@@ -46,17 +46,17 @@ local-only, copyleft, architecturally better at association. Never enter the ben
 compete on **reproducibility**, which hosted vendors structurally cannot match. (Pricing:
 `COMPETITIVE-ANALYSIS.md`.)
 
-### Where we stand *(August 2026 — recheck before trusting)*
+### Where we stand *(September 2026 — recheck before trusting)*
 
 | Area | Position | Owned by |
 |---|---|---|
 | Evaluation | **No longer a gap.** `RM-00` shipped: offline, deterministic, golden-gated. IR metrics (recall@k, MRR, staleness, dup-rate) not built — Phase 2.5. | `RM-00`, `eval/` |
 | Write path | **The real gap.** `RM-04` + `RM-03` v1 landed; `RM-01`/`RM-02` have not. | `RM-01`–`RM-04` |
-| Substrate | **Differentiated, working, not yet unified.** Two mechanisms, one idea — cooperating; unification is an improvement, not a repair. | Phase 0, `ARCHITECTURE.md` |
+| Substrate | **Unified.** One edge table, two signals (semantic derived, Hebbian source-of-truth). Phase 0 exit met (0.6). | Phase 0 ✅, `ARCHITECTURE.md` |
 | Distribution | **Ahead.** Single file, zero terminal, no API key. | `DEVELOPERS.md` |
 
-Which fixes the order: **unify the substrate (Phase 0), then close the write-path gap, then tune
-what sits on top.** Tuning first tunes a substrate about to change.
+Which fixes the order: **the substrate is unified (Phase 0); close the write-path gap, then tune
+what sits on top.** Tuning against a substrate that was about to change is why Phase 0 went first.
 
 ---
 
@@ -127,7 +127,7 @@ Status only. Where each lives and how it works: `ARCHITECTURE.md`. What each sat
 ## PRE-0 — before any Phase 0 code
 
 - [x] **`BUG-008`** — `edit()` embedding-destruction fix + 4 regression tests (`test.js` 57 → 61). ✅ (`BUGS.md`)
-- [ ] **Edge state-transition table ratified** — every cell decided, incl. `superseded → inherited?` (deferred to Phase 7). Table: [`phase-0`](phases/phase-0-edge-substrate.md).
+- [x] **Edge state-transition table** — Phase 0 cells decided. `superseded → inherited?` remains deferred to Phase 7 (named, not forgotten). Table: [`phase-0`](phases/phase-0-edge-substrate.md).
 
 ---
 
@@ -143,8 +143,8 @@ without its own custom eval** — a blanket metric does not fit a phase scope.
 
 | Phase | Focus | Status | Doc |
 |---|---|---|---|
-| **0** | Unify time & persistence (edge substrate) 🔀 | **← current work** | [`phase-0`](phases/phase-0-edge-substrate.md) |
-| 1 | Transient activation | ⬜ | [`phase-1`](phases/phase-1-transient-activation.md) |
+| **0** | Unify time & persistence (edge substrate) 🔀 | ✅ **exit met** | [`phase-0`](phases/phase-0-edge-substrate.md) |
+| 1 | Transient activation | ⬜ **← next** | [`phase-1`](phases/phase-1-transient-activation.md) |
 | 2 | Retrieval & association dynamics | ⬜ ⛔ | [`phase-2`](phases/phase-2-retrieval-dynamics.md) |
 | 3 | Episodic working context *(overlaps `RM-06`)* | ⬜ | [`phase-3`](phases/phase-3-episodic-context.md) |
 | 4 | Consolidation *(weakest prior — cut if unproven)* | ⬜ | [`phase-4`](phases/phase-4-consolidation.md) |
@@ -153,11 +153,11 @@ without its own custom eval** — a blanket metric does not fit a phase scope.
 | 7 | Reconsolidation *(extends `RM-04`/`RM-03`)* | 🟡 | [`phase-7`](phases/phase-7-reconsolidation.md) |
 | 8 | Cognitive integration | ⬜ | [`phase-8`](phases/phase-8-cognitive-integration.md) |
 
-Phase 0 is in flight; everything after Phase 1 is **planned, not committed** — the code must earn it.
+Phase 0 exit is met; everything after Phase 1 is **planned, not committed** — the code must earn it.
 
 ### Phase 0 — live sub-phase tracker
 
-The one phase in flight. Full spec + metrics + tests: [`phase-0`](phases/phase-0-edge-substrate.md).
+Full spec + metrics + tests: [`phase-0`](phases/phase-0-edge-substrate.md). **Exit met** at 0.6.
 
 | Sub-phase | Purpose | Status |
 |---|---|---|
@@ -167,9 +167,12 @@ The one phase in flight. Full spec + metrics + tests: [`phase-0`](phases/phase-0
 | **0.3** | Materialize-on-mutation; MCP request-ID idempotency (atomic dedup) | ✅ |
 | **0.4** | Soft pruning (mirror `vacuum()`); server-side reactivation | ✅ |
 | **0.5** | Phase 0 tests — every transition row, *reading ≠ decay*, *fails-open* | ✅ |
-| **0.6** | Threat-model sketch (design only; `RM-16` stays gated to Phase 2) | ⬜ |
+| **0.6** | Threat-model sketch (design only; `RM-16` stays gated to Phase 2) | ✅ [`0009`](proposed/0009-edge-threat-model.md) |
 
-**Exit:** golden green and reliable. Do not proceed to Phase 1 until it is.
+**Exit met:** golden green and reliable; I6 held; I8 held for edges; migration lossless + one-way;
+signals stay separate. Next is Phase 1. `RM-16` implementation stays gated to Phase 2 — the
+sketch feeds it, it does not build it. Deferred out of this exit (named): `superseded → inherited?`
+is Phase 7; `RM-08` record importance decay is a different object.
 
 ### The promotion gate ⛔ (Phase 2)
 
@@ -195,7 +198,7 @@ Not substrate work; what makes it runnable by anyone. Scope + acceptance: `BACKL
 | `RM-12` | SDKs against a documented local HTTP API | ⬜ |
 | `RM-13` | Opt-in local-only telemetry + failure-report bundle | ⬜ |
 | `RM-15` | Longitudinal coherence soak test | ⬜ |
-| `RM-16` | Poisoning / injection defense | ⬜ **gates Phase 2.2 promotion** |
+| `RM-16` | Poisoning / injection defense | ⬜ **gates Phase 2.2 promotion** — threat sketch: [`0009`](proposed/0009-edge-threat-model.md) |
 | `RM-17` | Export / import / backup | ⬜ — priority rises once the sidecar holds irreplaceable state |
 | `RM-18` | Encryption at rest (optional) | ⬜ |
 | `RM-19` | Recall explainability | ⬜ — near-free once 2.2 tracing exists |
@@ -238,7 +241,7 @@ describe it change with it (`BUG-006`).
 ## Current build target
 
 ```
-PRE-0     ✅ BUG-008 fixed · ⬜ transition table ratified
+PRE-0     ✅ BUG-008 fixed · ✅ Phase-0 table cells decided (inheritance → Phase 7)
   ↓
 Phase 0.0   one substrate, two signals · embedding_version · migrate .assoc.json
   ↓
@@ -252,7 +255,9 @@ Phase 0.4   soft pruning · server-side reactivation   ✅
   ↓
 Phase 0.5   tests — reading ≠ reinforcement · fails-open   ✅
   ↓
-GREEN (npm test + npm run eval)
+Phase 0.6   threat-model sketch (design only; RM-16 stays gated)   ✅
+  ↓
+GREEN (npm test + npm run eval)  — Phase 0 EXIT MET
   ↓
 Phase 1
 ```
@@ -279,4 +284,4 @@ Route-level only. The mechanism behind each lives in its owning doc (Phase 0 ris
 
 ## Related
 
-[[ARCHITECTURE]] · [[BACKLOG]] · [[BUGS]] · [[COMPETITIVE-ANALYSIS]] · [[proposed/README]] · [[phase-0-edge-substrate]] · [[phase-1-transient-activation]] · [[phase-2-retrieval-dynamics]] · [[phase-3-episodic-context]] · [[phase-4-consolidation]] · [[phase-5-temporal-predictive]] · [[phase-6-rich-structure]] · [[phase-7-reconsolidation]] · [[phase-8-cognitive-integration]] · [[CLAUDE]] · [[DEVELOPERS]] · [[roadmap-dissemination-log]] · [[RESULTS]]
+[[ARCHITECTURE]] · [[BACKLOG]] · [[BUGS]] · [[COMPETITIVE-ANALYSIS]] · [[proposed/README]] · [[0009-edge-threat-model]] · [[phase-0-edge-substrate]] · [[phase-1-transient-activation]] · [[phase-2-retrieval-dynamics]] · [[phase-3-episodic-context]] · [[phase-4-consolidation]] · [[phase-5-temporal-predictive]] · [[phase-6-rich-structure]] · [[phase-7-reconsolidation]] · [[phase-8-cognitive-integration]] · [[CLAUDE]] · [[DEVELOPERS]] · [[roadmap-dissemination-log]] · [[RESULTS]]

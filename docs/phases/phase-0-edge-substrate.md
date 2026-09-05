@@ -1,4 +1,4 @@
-# Phase 0 — Unify time & persistence (edge substrate) 🔀 **← current work**
+# Phase 0 — Unify time & persistence (edge substrate) 🔀 ✅ **exit met**
 
 **Backlog:** `RM-21` · **Depends on:** `RM-00` (golden gate), `RM-04` (temporal schema),
 `BUG-008` (fixed in PRE-0) · **Scope owner:** this doc. Route + status: [[ROADMAP]].
@@ -259,11 +259,14 @@ Conjunction is the whole predicate. Reinforced+weak stays (Hebbian is enough). U
       (I5). Every pre-declared failure signature has a test that fails if
       that bug is reintroduced. Interrupted/failed persistence atomic
       recovery is covered. No behaviour change; golden unmoved.
-### 0.6 — Threat-model sketch *(design only; `RM-16` implementation stays gated to Phase 2)*
-- [ ] On paper: what can cause an edge to exist? raise Hebbian weight? make a memory a
+
+### 0.6 — Threat-model sketch ✅ *(design only; `RM-16` implementation stays gated to Phase 2)*
+- [x] On paper: what can cause an edge to exist? raise Hebbian weight? make a memory a
       constraint-rescue bridge? survive indefinitely? Record that **semantic is recomputable,
       Hebbian is not** — a poisoned reinforcement is a durable *false memory*. Carry the answers
       that change at the Phase 2.2 gate into `RM-16`.
+      Sketch: [`0009-edge-threat-model`](../proposed/0009-edge-threat-model.md). No code, no
+      behaviour change. `RM-16` is not built here.
 
 ---
 
@@ -386,6 +389,8 @@ retention, the hidden coupling that inverts behaviour under load.
 4. **Edge inheritance across supersession undecided** (Phase 7 — [[phase-7-reconsolidation]]) — the
    quietest data-loss path; deferred there on purpose.
 5. **Migration is one-way** — the learned signal is irreplaceable, so `RM-17` (backup) rises.
+   Threat-model sketch (0.6): [[0009-edge-threat-model]] — a poisoned reinforcement is the
+   same irreplaceable asset, read as a false memory.
 6. **Cached semantic scores are derived** — residual cost is recompute-on-read for stale edges + a
    periodic full-recompute escape hatch for bulk drift.
 
@@ -399,10 +404,26 @@ reinforce→ decayed weight materialized → α applied → last_updated stamped
 edit A   → version++ → incident edges structurally stale on next read → hebbian untouched
 ```
 
-Golden set green and reliable. Do not proceed to [[phase-1-transient-activation]] until it is.
+**Exit met (Phase 0.6).** The mechanism criteria hold:
+
+| Criterion | Held by |
+|---|---|
+| Golden green and reliable | `npm run eval` → "No regressions vs golden." (reconfirmed 0.6; no code change) |
+| I6 held | 0.2 — lazy wall-clock `effectiveHebbian`; `tick()` gone from recall |
+| I8 held for edges | 0.4 — `pruneSweep` marks `pruned_at`; `vacuum()` is the explicit hard drop |
+| Migration lossless + one-way | 0.0 — every `.assoc.json` edge survives; old reader refuses the new sidecar |
+| Signals stay separate | 0.5 contract — reinforce leaves `semantic` unmoved; decay-to-zero leaves the edge alive |
+
+Not in this exit (named, deferred, not forgotten): `superseded → inherited?` is Phase 7;
+`RM-08` *record* importance decay is a different law on a different object; recall still
+rebuilds semantic kNN in `field.js` and does not read the cached semantic signal (0.1
+explicitly persisted the table and did not switch the read path).
+
+Next: [[phase-1-transient-activation]]. Threat-model carry-forward for the Phase 2.2
+gate: [[0009-edge-threat-model]].
 
 ---
 
 ## Related
 
-[[ROADMAP]] · [[BACKLOG]] · [[ARCHITECTURE]] · [[BUGS]] · [[phase-1-transient-activation]] · [[0006-constraints-decay-pruning]] · [[0005-store-abstraction]] · [[RESULTS]] · [[eval/README]] · [[CLAUDE]] · [[roadmap-dissemination-log]]
+[[ROADMAP]] · [[BACKLOG]] · [[ARCHITECTURE]] · [[BUGS]] · [[phase-1-transient-activation]] · [[phase-2-retrieval-dynamics]] · [[0006-constraints-decay-pruning]] · [[0005-store-abstraction]] · [[0009-edge-threat-model]] · [[RESULTS]] · [[eval/README]] · [[CLAUDE]] · [[roadmap-dissemination-log]]

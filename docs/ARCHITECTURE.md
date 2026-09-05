@@ -331,7 +331,10 @@ properties, preserved byte-for-byte from the retired `Ledger`:
   gate but can never swamp the semantic floor.
 - **Provenance-discounted reinforcement** — primary↔primary at full `alpha`, primary↔neighborhood
   discounted, neighborhood↔neighborhood zero. The graph learns from the user's queries, not from
-  its own guesses. This provenance instinct is what `RM-16` generalizes to the whole write path.
+  its own guesses. This provenance instinct is what `RM-16` generalizes to the whole write path
+  **and** to the writer of the learned signal (Phase 0.6 sketch:
+  [`proposed/0009`](proposed/0009-edge-threat-model.md) — semantic recomputes, a poisoned
+  reinforcement is a durable false memory; `RM-16` stays gated to Phase 2 / the 2.2 gate).
 - **Decay** is lazy wall-clock via `effectiveHebbian` (`w · 2^(−Δt/H)` from
   `hebbian.last_updated`; H is a per-type half-life in seconds). Computed on read, not
   stored. Unused associations fade with elapsed time, not recall count (I6).
@@ -510,4 +513,4 @@ fixed, and no unmeasured signal touches ranking.
 
 ## Related
 
-[[ROADMAP]] · [[BACKLOG]] · [[BUGS]] · [[CLAUDE]] · [[DEVELOPERS]] · [[phase-0-edge-substrate]] · [[phase-2-retrieval-dynamics]] · [[phase-7-reconsolidation]] · [[RESULTS]] · [[proposed/README]] · [[COMPETITIVE-ANALYSIS]]
+[[ROADMAP]] · [[BACKLOG]] · [[BUGS]] · [[CLAUDE]] · [[DEVELOPERS]] · [[phase-0-edge-substrate]] · [[phase-2-retrieval-dynamics]] · [[phase-7-reconsolidation]] · [[0009-edge-threat-model]] · [[RESULTS]] · [[proposed/README]] · [[COMPETITIVE-ANALYSIS]]

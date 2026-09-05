@@ -17,6 +17,18 @@ Beta-readiness pass:
   "revisit only if hosted resale looms" trigger the backlog pre-registered, now pulled.
 
 ### Added
+- **Phase 0.6 threat-model sketch (design only).** On-paper analysis of the
+  unified edge substrate: what can mint an edge, raise Hebbian weight, make a
+  memory a constraint-rescue bridge, or survive indefinitely. The load-bearing
+  property: semantic is a recomputable cache (version comparison against
+  `embedding_version`); a poisoned reinforcement is a durable *false memory*
+  nothing else encodes. Answers that change when learned weight enters rank
+  are carried into `RM-16` as requirements of the Phase 2.2 promotion gate.
+  `RM-16` is not implemented here. No code, no behaviour change; both gates
+  reconfirmed green. See
+  [`docs/proposed/0009-edge-threat-model.md`](docs/proposed/0009-edge-threat-model.md).
+  **Phase 0 exit is met** (golden green + reliable; I6 held; I8 held for
+  edges; migration lossless + one-way; signals stay separate).
 - **Phase 0.5 test contract.** `test.js` is now the Phase 0 contract: every
   edge state-transition row (state change AND the `Writes?` column), every
   pre-declared failure signature, and interrupted/failed persistence atomic
