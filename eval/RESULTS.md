@@ -626,6 +626,118 @@ the same decision to stores that never went through that path.
 
 ---
 
+# RM-01.a — measurement seed (pre-extraction baseline)
+
+**Date:** 2026-09-05 · **Product behaviour:** unchanged (`memory-core.js` / `record.js` /
+`save` / `recall` untouched). **Embedder:** `text-embedding-nomic-embed-text-v1.5`,
+cache-extended for the new corpus. **Reproduce:** `node eval/measure.js --corpus messy`
+(offline after the cache commit). Golden: `node eval/run.js` → **No regressions vs golden.**
+
+This slice builds the three things RM-01's acceptance names and that did not exist:
+an `extraction_precision` metric, `eval/corpora/messy.jsonl`, and a recall@5 backstop
+on that corpus. Extraction itself is 01.b (Tier 0/1, Tier 2 off); these numbers are
+the "before."
+
+## Registry
+
+`extraction_precision` is a named entry in the same `eval/metrics.js` registry as
+`recall_at_k` / `duplicate_rate`. Adding it is `register({ name, compute })`; the
+runner (`eval/measure.js`) emits it when the scenario's writes carry `gold_facts`.
+
+Definition, computable from what `save()` actually persists:
+
+```
+precision = n_correct / n_stored
+```
+
+A stored record is **correct** iff its text equals one of the write's gold atomic
+facts (whitespace-collapsed, case-folded) **and** contains none of that write's
+noise spans. Exact equality, not containment: today's `save()` stores the raw
+blob, which *contains* the fact plus filler/imperative/sibling-fact — counting
+that as correct would make the pre-extraction baseline look healthy.
+
+- `n_stored` is the per-write delta of `store.current()` (a restatement confirm
+  that writes nothing contributes 0; a refusal that writes nothing contributes 0).
+- PII writes have `gold_facts: []` and `expect_refusal: true`. Storing the payload
+  is a false positive. Refusing (stored nothing, `refused=true`) does not dilute
+  precision; `pii_refusal_rate` in `explain` is the dedicated readout
+  (refused-and-wrote-nothing / PII cases).
+- Vacuous: labeled cases + zero stored → 1.0 (no false positives). That is the
+  all-refuse cheat — precision aces, recall@5 is the backstop. Unlabeled input
+  (no `gold_facts`) → 0, so `computeAll` on a duplicates result doesn't look like
+  a perfect extraction run.
+
+## Corpus (`eval/corpora/messy.jsonl`)
+
+One store, 23 writes, 19 queries. Gold facts are unique across writes so 01.b
+restatement will not collapse the A/B. No correction cues, so RM-03 does not fire.
+Bands:
+
+| band | n | what 01.b should do |
+|---|---|---|
+| filler | 6 | strip the opener ("I think you should know that…", "just so you're aware", "FYI", stacked), keep the fact |
+| imperative | 3 | drop assistant-aimed framing ("remember to remind me", "make sure you", "Please remember that"), keep the embedded fact |
+| multi | 2 | split on `; ` / ` and also ` — both halves stand alone (≥4 words + copula/verb, not a dependent clause) |
+| multi-nosplit | 1 | `and also` but the second half does **not** stand alone ("…and also with honey") — keep as one fact |
+| pii | 6 | refuse the whole write (API key / password / card / AWS / PEM / GitHub token). Fake payloads; they match the 0001 shapes |
+| control | 5 | clean single facts, including two digit traps (garage code `4821`, `1500mg` metformin) that must **not** trip the card-number guard |
+
+## Baseline (today, pre-extraction)
+
+```
+writes=23  stored_current=23  groups=23  exact_restatements_caught=0
+duplicate_rate         0.0000   (no dup labels; each write is its own text)
+recall@5               1.0000   (19/19 queries hit)
+extraction_precision   0.2609   (correct=6/23 stored, labeled=23)
+pii_refusal_rate       0.0000   (0/6 PII writes refused)
+```
+
+**What the 6/23 is.** `save()` stores the trimmed raw text as-is. The five
+controls and the should-not-split compound equal their gold facts, so they
+count as correct. Every filler/imperative/to-split-multi blob fails exact
+match (and the filler/imperative ones contain a noise span). Every PII
+payload is stored — there is no guard.
+
+That is the RM-01 gap, measured: filler, imperatives, and compound facts
+all land as one embedding; secrets land at all.
+
+## Pre-declared RM-01.b pass bar (written BEFORE 01.b runs)
+
+Same discipline as the RM-02.a 50% bar and the Phase 0.1 250 ms budget.
+Changing these numbers after seeing 01.b's table is cheating. **Tier 2 is
+off** — 01.b is deterministic Tier 0 + Tier 1 only. (Tier 2 is deferred
+pending a design decision with Samuel.)
+
+| metric | baseline | pass iff |
+|---|---|---|
+| `extraction_precision` | **0.2609** (6/23) | **≥ 0.9** (Tier 2 off) |
+| `recall@5` | **1.0000** (19/19) | not lower → **= 1.0000** |
+| `pii_refusal_rate` | **0.0000** (0/6) | **= 1.0000** (every PII write refused; implied by the spec's "every secret-shaped input is refused" and needed to clear 0.9 — leaving all 6 PII stored caps precision at 17/23 = 0.739 even with perfect Tier 0) |
+| write-latency p95 | (Tier 2 off) | **unchanged** — Tier 0/1 are string ops, no extra embed, no LLM/network call. Extra embeds from a *legitimate* split are in-scope (that's storing two memories, not extraction overhead). |
+
+Arithmetic that 01.b will hit:
+
+| 01.b does | correct/stored | precision | vs 0.9 | recall@5 |
+|---|---|---|---|---|
+| nothing | 6/23 | 0.2609 | FAIL | holds |
+| PII refuse only (6 gone) | 6/17 | 0.3529 | FAIL | holds (queries aren't the PII writes) |
+| filler+imperative strip, no split, no PII guard | 14/23 | 0.6087 | FAIL | holds if controls pass through |
+| Tier 0 perfect, PII still stored | 17/23 | 0.7391 | FAIL | holds |
+| Tier 0+1 perfect (the spec) | 19/19 | **1.0000** | PASS, if recall@5 holds and controls aren't rewritten |
+| over-split the nosplit trap | 18/20 or similar | maybe ≥0.9 | maybe | **FAIL on q-tea-honey** if the surviving half doesn't carry "honey" / the labeled text |
+| strip a control ("I think" false-positive on a non-opener) | <19/19 | maybe | maybe | **FAIL on recall@5** if the gold text is gone |
+| refuse everything | 0/0 → vacuous 1.0 | PASS on precision | **FAIL on recall@5** (19 misses) |
+
+So the 0.9 bar is not free on PII-refuse-alone or filler-strip-alone: **Tier 0
+and Tier 1 together are what the acceptance actually demands**, and recall@5
+sitting at 1.0 with no room to drop is the anti-cheat for "drop the messy
+writes, keep the controls."
+
+Reproduce the before-column: `node eval/measure.js --corpus messy`.
+01.b compares the after-column to the table above.
+
+---
+
 ## Related
 
 [[eval/README]] · [[0007-eval-harness]] · [[phase-0-edge-substrate]] · [[phase-2-retrieval-dynamics]] · [[BACKLOG]] · [[ARCHITECTURE]]

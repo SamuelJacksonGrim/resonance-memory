@@ -22,14 +22,15 @@ Build `eval/` with seeded, offline, reproducible scoring.
 
 - [x] Fixture corpora in `eval/corpora/*.jsonl`: `basic`, `contradictions`, `constraints`,
       `adversarial`, plus `field-noise` / `field-stress`. *(`duplicates` landed with RM-02.a
-      as a measurement corpus — skipped by the golden runner. `temporal` / `messy` still
-      land with RM-04 / RM-01.)*
+      as a measurement corpus — skipped by the golden runner. `messy` landed with RM-01.a.
+      `temporal` still lands with a later RM-04 expansion.)*
 - [ ] ≥50 contradiction/update cases — **the axis LOCOMO and LongMemEval both under-test.**
       *(4 today; expand as RM-03 detection matures.)*
-- [~] Metrics: `recall@k` and `duplicate_rate` shipped as **reporting** metrics (registry in
-      `eval/metrics.js`; `node eval/measure.js`; not folded into `golden.json`), plus the
-      field-experiment **ROC / TBR** split. *(`staleness_rate`, `false_supersession`,
-      `extraction_precision/recall` still land with RM-01 / RM-03.)*
+- [~] Metrics: `recall@k`, `duplicate_rate`, and `extraction_precision` shipped as
+      **reporting** metrics (registry in `eval/metrics.js`; `node eval/measure.js`; not
+      folded into `golden.json`), plus the field-experiment **ROC / TBR** split.
+      *(`staleness_rate`, `false_supersession`, `extraction_recall` still land with
+      RM-03 / RM-01.b+.)*
 - [x] Constraint cases run with the field **off and on**; report both and the gap.
 - [x] Repeated cases (`repeat` / `contains_by_turn`) keep one store across turns and report
       `first_hit_turn`, so a constraint that lands by turn 4 isn't scored as a miss.
@@ -73,11 +74,14 @@ Design: [`proposed/0002`](proposed/0002-temporal-supersession.md).
 
 ---
 
-### `RM-01` — Write-side extraction and summarization · **L** · `todo`
+### `RM-01` — Write-side extraction and summarization · **L** · `in progress` — 01.a measurement seed shipped
 
 A **tiered** pipeline. Cheap deterministic work first; the LLM pass is optional, local,
 off by default, and never blocks the save.
 
+- [x] **01.a measurement seed**: `extraction_precision` registry, `eval/corpora/messy.jsonl`,
+      pre-extraction baseline + pre-declared 0.9 bar in
+      [`eval/RESULTS.md`](../eval/RESULTS.md). Product behaviour unchanged.
 - [ ] **Tier 0 (always on, no LLM):** trim, normalize whitespace, strip filler openers
       ("I think you should know that…"), drop imperatives aimed at the assistant, split
       multi-fact runs on `; ` / ` and also ` when both halves stand alone.

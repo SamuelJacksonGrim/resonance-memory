@@ -1763,6 +1763,134 @@ test("duplicates corpus loads with all three RM-02 bands plus queries", () => {
   assert.ok(multi.length >= 3, "several multi-member dup groups");
 });
 
+test("extraction_precision on a tiny hand-labeled set with a known answer", () => {
+  const results = { cases: [
+    { stored: [{ text: "I have a dog named Rex" }], refused: false },
+    { stored: [{ text: "Samuel prefers concise answers" }], refused: false },
+    { stored: [{ text: "I think you should know that I live in Texas" }], refused: false },
+  ] };
+  const corpus = { cases: [
+    { gold_facts: ["I have a dog named Rex"], noise: [] },
+    { gold_facts: ["Samuel prefers concise answers"], noise: ["I think you should know that"] },
+    { gold_facts: ["I live in Texas"], noise: ["I think you should know that"] },
+  ] };
+  assert.strictEqual(computeMetric("extraction_precision", results, corpus), 2 / 3);
+  const expl = explainMetric("extraction_precision", results, corpus);
+  assert.strictEqual(expl.n_stored, 3);
+  assert.strictEqual(expl.n_correct, 2);
+  assert.strictEqual(expl.n_noise, 1);
+  assert.strictEqual(expl.n_labeled, 3);
+});
+
+test("extraction_precision: a stored-noise item lowers precision", () => {
+  const clean = { cases: [
+    { stored: [{ text: "I have a dog named Rex" }], refused: false },
+    { stored: [{ text: "My name is Samuel" }], refused: false },
+  ] };
+  const gold = { cases: [
+    { gold_facts: ["I have a dog named Rex"], noise: [] },
+    { gold_facts: ["My name is Samuel"], noise: [] },
+  ] };
+  assert.strictEqual(computeMetric("extraction_precision", clean, gold), 1);
+  const withNoise = { cases: clean.cases.concat([
+    { stored: [{ text: "make sure you remind me about the standup" }], refused: false },
+  ]) };
+  const goldNoise = { cases: gold.cases.concat([
+    { gold_facts: ["The Friday standup is at 10am"], noise: ["make sure you"] },
+  ]) };
+  const lowered = computeMetric("extraction_precision", withNoise, goldNoise);
+  assert.strictEqual(lowered, 2 / 3);
+  assert.ok(lowered < 1, "noise in the store must drop precision");
+});
+
+test("extraction_precision: a refused-PII item counts correctly", () => {
+  const refused = { cases: [
+    { stored: [{ text: "My name is Samuel" }], refused: false },
+    { stored: [], refused: true },
+  ] };
+  const corpus = { cases: [
+    { gold_facts: ["My name is Samuel"], noise: [] },
+    { gold_facts: [], noise: ["sk-abcdefghijklmnopqrstuvwxyz123456"], expect_refusal: true },
+  ] };
+  assert.strictEqual(computeMetric("extraction_precision", refused, corpus), 1,
+    "a correct refusal stores nothing, so it does not dilute precision");
+  const expl = explainMetric("extraction_precision", refused, corpus);
+  assert.strictEqual(expl.n_pii, 1);
+  assert.strictEqual(expl.n_pii_refused, 1);
+  assert.strictEqual(expl.pii_refusal_rate, 1);
+  assert.strictEqual(expl.n_stored, 1);
+
+  const leaked = { cases: [
+    { stored: [{ text: "My name is Samuel" }], refused: false },
+    { stored: [{ text: "my API key is sk-abcdefghijklmnopqrstuvwxyz123456" }], refused: false },
+  ] };
+  assert.strictEqual(computeMetric("extraction_precision", leaked, corpus), 0.5,
+    "storing PII is a false positive");
+  const leakedExpl = explainMetric("extraction_precision", leaked, corpus);
+  assert.strictEqual(leakedExpl.pii_refusal_rate, 0);
+  assert.strictEqual(leakedExpl.n_pii_refused, 0);
+});
+
+test("extraction_precision is registered; unlabeled input does not crash", () => {
+  assert.ok(listMetrics().some((m) => m.name === "extraction_precision"));
+  assert.strictEqual(computeMetric("extraction_precision", { records: [{ text: "x" }] }, { groups: {} }), 0,
+    "duplicates-shaped input has no gold_facts, so it is unlabeled");
+  assert.strictEqual(computeMetric("recall_at_k", REGISTRY_QUERIES, null, { k: 5 }), 2 / 3);
+  const records = [{ text: "a1" }, { text: "a2" }, { text: "b1" }, { text: "c1" }];
+  const dupCorpus = { groups: { A: ["a1", "a2"], B: ["b1"], C: ["c1"] } };
+  assert.strictEqual(computeMetric("duplicate_rate", { records }, dupCorpus), 0.25);
+});
+
+test("messy corpus loads; every write has gold_facts + noise labels", () => {
+  const { loadScenarios } = require("./eval/measure.js");
+  const scenarios = loadScenarios(path.join(__dirname, "eval", "corpora", "messy.jsonl"));
+  assert.strictEqual(scenarios.length, 1);
+  const s = scenarios[0];
+  assert.ok(s.writes.length >= 15, "enough writes to cover the Tier-0/1 shapes");
+  assert.ok(s.queries.length >= 8, "enough queries for a later recall@5 A/B");
+  const bands = new Set(s.writes.map((w) => w.band));
+  for (const need of ["filler", "imperative", "multi", "pii", "control"]) {
+    assert.ok(bands.has(need), "corpus missing band " + need);
+  }
+  assert.ok(bands.has("multi-nosplit"), "over-split trap (and also with a non-standalone half)");
+  const writeIds = new Set(s.writes.map((w) => w.id));
+  for (const w of s.writes) {
+    assert.ok(Array.isArray(w.gold_facts), w.id + " needs gold_facts (empty array = refuse)");
+    assert.ok(Array.isArray(w.noise), w.id + " needs noise (empty array = none)");
+    if (w.band === "pii") {
+      assert.ok(w.expect_refusal, w.id + " PII must expect_refusal");
+      assert.strictEqual(w.gold_facts.length, 0, w.id + " PII gold is store-nothing");
+    } else {
+      assert.ok(w.gold_facts.length >= 1, w.id + " non-PII needs at least one gold fact");
+    }
+  }
+  for (const q of s.queries) {
+    assert.ok(Array.isArray(q.relevant_writes) && q.relevant_writes.length, q.id + " needs relevant_writes");
+    for (const id of q.relevant_writes) {
+      assert.ok(writeIds.has(id), q.id + " write " + id + " missing from writes");
+    }
+  }
+  const pii = s.writes.filter((w) => w.expect_refusal);
+  assert.ok(pii.length >= 4, "a few secret/PII shapes");
+});
+
+test("messy corpus: current-save simulation is the pre-extraction baseline", () => {
+  const { loadScenarios } = require("./eval/measure.js");
+  const s = loadScenarios(path.join(__dirname, "eval", "corpora", "messy.jsonl"))[0];
+  const results = { cases: s.writes.map((w) => ({
+    id: w.id, stored: [{ text: w.text }], refused: false,
+  })) };
+  const expl = explainMetric("extraction_precision", results, { cases: s.writes });
+  assert.strictEqual(expl.n_labeled, s.writes.length);
+  assert.strictEqual(expl.n_stored, s.writes.length, "today save() stores one blob per write");
+  // 5 controls + 1 should-not-split compound pass through as-is; filler,
+  // imperative, to-split multi, and PII blobs are not gold.
+  assert.strictEqual(expl.n_correct, 6);
+  assert.strictEqual(expl.rate, 6 / 23);
+  assert.strictEqual(expl.n_pii, s.writes.filter((w) => w.expect_refusal).length);
+  assert.strictEqual(expl.pii_refusal_rate, 0);
+});
+
 // ------------------------------------------------- warm field (Phase 1 / PR1)
 // Tests construct WarmField DIRECTLY. Pre-declared Phase 1 metrics from the
 // warm-field design: A→B raises E, stronger sim → higher E, thisTurn-only
@@ -1991,6 +2119,29 @@ async function asyncTests() {
     assert.ok(r.n_stored_current >= 1 && r.n_stored_current <= r.n_writes);
     assert.ok(r.queries.every((q) => q.relevant_ids.length >= 1),
       "every query resolved to a stored id via group text (merge must keep an original text)");
+    assert.ok(r.extraction_precision == null,
+      "duplicates writes have no gold_facts; extraction_precision is not a duplicates number");
+  });
+
+  await atest("messy corpus: extraction_precision via pipeline.js (current save, cached embed)", async () => {
+    const { loadScenarios, runScenario } = require("./eval/measure.js");
+    const scenarios = loadScenarios(path.join(__dirname, "eval", "corpora", "messy.jsonl"));
+    const r = await runScenario(scenarios[0], { k: 5 });
+    assert.ok(r.extraction_precision, "messy writes are labeled");
+    assert.ok(r.metrics.extraction_precision >= 0 && r.metrics.extraction_precision <= 1);
+    assert.ok(r.metrics.duplicate_rate >= 0 && r.metrics.duplicate_rate <= 1);
+    assert.ok(r.metrics.recall_at_k >= 0 && r.metrics.recall_at_k <= 1);
+    assert.strictEqual(r.queries.length, scenarios[0].queries.length);
+    // Pre-extraction: save() stores the raw blob. Controls + the nosplit
+    // trap match gold as-is; filler/imperative/multi/PII do not.
+    const expl = r.extraction_precision;
+    assert.strictEqual(expl.n_labeled, scenarios[0].writes.length);
+    assert.ok(expl.n_correct >= 1, "clean controls must pass through");
+    assert.ok(expl.n_correct < expl.n_stored, "messy blobs must not count as gold");
+    assert.strictEqual(expl.n_pii_refused, 0, "today save() does not refuse PII");
+    assert.strictEqual(expl.pii_refusal_rate, 0);
+    assert.ok(r.queries.every((q) => Array.isArray(q.ranked_ids) && q.ranked_ids.length >= 1),
+      "each messy query resolved to a stored origin id (blob fallback)");
   });
 
   section("RM-02.b cosine-banded dedup at save");

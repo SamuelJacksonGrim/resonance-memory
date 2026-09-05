@@ -17,6 +17,15 @@ Beta-readiness pass:
   "revisit only if hosted resale looms" trigger the backlog pre-registered, now pulled.
 
 ### Added
+- **RM-01.a measurement seed (write-side extraction).** `extraction_precision`
+  in the reporting-metric registry plus `eval/corpora/messy.jsonl` (filler
+  openers, assistant-aimed imperatives, multi-fact splits, PII/secret
+  refusals, clean controls). Distinct from the golden gate —
+  `node eval/run.js` is unchanged ("No regressions vs golden"); `save()` /
+  `memory-core.js` untouched. Pre-extraction baseline and the pre-declared
+  RM-01.b bar (`extraction_precision ≥ 0.9` with Tier 2 off, recall@5 not
+  lowered, write-latency p95 unchanged when Tier 2 off) live in
+  [`eval/RESULTS.md`](eval/RESULTS.md).
 - **RM-02.c `--dedup-existing` backfill.** Offline pass for stores written
   before 02.b. Dry-run is the default (`node entry.js --dedup-existing` /
   `npm run dedup-existing`); `--apply` performs it as one durable rewrite.

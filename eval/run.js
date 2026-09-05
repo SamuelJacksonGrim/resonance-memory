@@ -15,7 +15,7 @@
  *   npm run eval -- --filter X   run only cases whose id starts with X
  *
  * Reporting metrics (recall@k, duplicate_rate, …) are eval/measure.js, not
- * this file. Measurement corpora (kind: "duplicates" / gate: false / no
+ * this file. Measurement corpora (kind: "duplicates" / "messy" / gate: false / no
  * expect) are skipped here so they cannot flip golden.json.
  *
  * Constraint cases run BOTH field:false and field:true; the gap between them is
@@ -65,12 +65,12 @@ async function runCase(c, fieldOn) {
 }
 
 // Golden cases are the RM-00 contains/excludes scorecard. Measurement
-// corpora (RM-02 duplicates, later messy/temporal) live in the same
+// corpora (RM-02 duplicates, RM-01 messy, later temporal) live in the same
 // directory but are scored by eval/measure.js — they have no `expect`,
 // and a write-object line would crash save(w) (objects have no .trim).
 function isGoldenCase(c) {
   if (!c || c.gate === false) return false;
-  if (c.kind === "duplicates" || c.kind === "measure") return false;
+  if (c.kind === "duplicates" || c.kind === "messy" || c.kind === "measure") return false;
   return !!(c.expect && (c.query || c.repeat));
 }
 

@@ -318,6 +318,184 @@ register({
   explain: duplicateRateStats,
 });
 
+function normFact(s) {
+  return String(s || "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function asText(item) {
+  if (item == null) return "";
+  if (typeof item === "string") return item;
+  return item.text != null ? String(item.text) : "";
+}
+
+function asCaseList(x) {
+  if (!x) return [];
+  if (Array.isArray(x)) return x;
+  if (Array.isArray(x.cases)) return x.cases;
+  if (Array.isArray(x.writes)) return x.writes;
+  return [];
+}
+
+function isLabeledExtract(c) {
+  return c && Array.isArray(c.gold_facts);
+}
+
+function storedList(c) {
+  if (!c) return [];
+  if (Array.isArray(c.stored)) return c.stored.map(asText);
+  if (typeof c.text === "string" && c.gold_facts && !c.stored) return [];
+  return [];
+}
+
+function joinExtractCases(results, corpus) {
+  const resultCases = asCaseList(results);
+  const corpusCases = asCaseList(corpus);
+  const byId = new Map();
+  for (const c of corpusCases) {
+    if (c && c.id != null) byId.set(String(c.id), c);
+  }
+  const out = [];
+  const n = Math.max(resultCases.length, corpusCases.length);
+  for (let i = 0; i < n; i++) {
+    const r = resultCases[i] || {};
+    const c = (r.id != null && byId.has(String(r.id)))
+      ? byId.get(String(r.id))
+      : (corpusCases[i] || {});
+    const merged = Object.assign({}, c, r);
+    if (!isLabeledExtract(merged) && !isLabeledExtract(c) && !isLabeledExtract(r)) continue;
+    const gold = Array.isArray(merged.gold_facts) ? merged.gold_facts
+      : Array.isArray(c.gold_facts) ? c.gold_facts
+      : Array.isArray(r.gold_facts) ? r.gold_facts
+      : null;
+    if (!Array.isArray(gold)) continue;          // unlabeled: not part of the metric
+    out.push({
+      id: merged.id || r.id || c.id || ("case-" + i),
+      gold_facts: gold,
+      noise: Array.isArray(merged.noise) ? merged.noise
+        : Array.isArray(c.noise) ? c.noise
+        : Array.isArray(r.noise) ? r.noise
+        : [],
+      expect_refusal: !!(merged.expect_refusal || c.expect_refusal || r.expect_refusal),
+      refused: !!(r.refused || merged.refused),
+      stored: storedList(r).length ? storedList(r) : storedList(merged),
+    });
+  }
+  return out;
+}
+
+function isCorrectStored(text, goldFacts, noiseSpans) {
+  const n = normFact(text);
+  if (!n) return false;
+  for (const span of noiseSpans || []) {
+    const ns = normFact(span);
+    if (ns && n.includes(ns)) return false;
+  }
+  return (goldFacts || []).some((g) => n === normFact(g));
+}
+
+function extractionPrecisionStats(results, corpus) {
+  const cases = joinExtractCases(results, corpus);
+  let nStored = 0;
+  let nCorrect = 0;
+  let nNoise = 0;
+  const byCase = [];
+  let nPii = 0;
+  let nPiiRefused = 0;
+  for (const c of cases) {
+    const stored = c.stored || [];
+    let correct = 0;
+    let noisy = 0;
+    for (const text of stored) {
+      nStored++;
+      if (isCorrectStored(text, c.gold_facts, c.noise)) {
+        nCorrect++;
+        correct++;
+      } else {
+        nNoise++;
+        noisy++;
+      }
+    }
+    const pii = !!c.expect_refusal;
+    const refusedOk = pii && c.refused && stored.length === 0;
+    if (pii) {
+      nPii++;
+      if (refusedOk) nPiiRefused++;
+    }
+    byCase.push({
+      id: c.id,
+      n_stored: stored.length,
+      n_correct: correct,
+      n_noise: noisy,
+      expect_refusal: pii,
+      refused: !!c.refused,
+      refused_ok: refusedOk,
+    });
+  }
+  // Vacuous precision: labeled cases that stored nothing (all correctly
+  // refused PII, or a runner that produced no records) have no false
+  // positives. Unlabeled input (no gold_facts anywhere) is not a scored
+  // extraction corpus — rate 0 so computeAll on a duplicates result
+  // doesn't look like a perfect extraction run.
+  let rate;
+  if (!cases.length) rate = 0;
+  else if (!nStored) rate = 1;
+  else rate = nCorrect / nStored;
+  return {
+    n_labeled: cases.length,
+    n_stored: nStored,
+    n_correct: nCorrect,
+    n_noise: nNoise,
+    n_pii: nPii,
+    n_pii_refused: nPiiRefused,
+    pii_refusal_rate: nPii ? nPiiRefused / nPii : 1,
+    rate,
+    byCase,
+  };
+}
+
+/*
+ * extraction_precision — of the things save() actually persisted from a
+ * messy input, the fraction that are legitimate atomic facts.
+ *
+ *     precision = n_correct / n_stored
+ *
+ *   n_stored   = records the system wrote (the caller hands the per-write
+ *                delta of `store.current()`, not a wish). A restatement
+ *                confirm that writes nothing contributes 0. A refusal
+ *                that writes nothing contributes 0.
+ *   n_correct  = those stored texts that (a) equal one of the case's
+ *                gold atomic facts after whitespace-collapse + case-fold
+ *                and (b) contain none of the case's noise spans.
+ *
+ * Exact equality, not containment: today's save() stores the raw blob,
+ * which *contains* the gold fact plus filler/imperative/sibling-fact.
+ * Counting that as correct would make the pre-extraction baseline look
+ * healthy — the opposite of what RM-01 is for. A blob is noise.
+ *
+ * PII / secrets: gold_facts is [] and expect_refusal is true. Storing
+ * the payload is a false positive (n_stored += 1, n_correct += 0).
+ * Refusing (stored=[], refused=true) adds nothing to either count, so
+ * it does not dilute precision; pii_refusal_rate in `explain` is the
+ * dedicated readout (refused-and-wrote-nothing / PII cases).
+ *
+ * Vacuous: labeled cases + zero stored → 1.0 (no false positives).
+ * That is the all-refuse cheat: precision aces, recall@5 (and a later
+ * extraction_recall) is the backstop. Unlabeled input → 0.
+ *
+ * results shape: { cases: [{ id?, stored: [{text}|string], refused? }] }
+ * corpus shape:  { cases: [{ id?, gold_facts: [string], noise: [string],
+ *                            expect_refusal? }] }
+ *            or  { writes: same } (assembled from the JSONL).
+ * Zip by id when both sides have one, else by index. A case is labeled
+ * iff `gold_facts` is an array (empty = "store nothing").
+ */
+register({
+  name: "extraction_precision",
+  description: "Fraction of stored records that match a gold atomic fact and contain no labeled noise.",
+  compute(results, corpus) { return extractionPrecisionStats(results, corpus).rate; },
+  explain: extractionPrecisionStats,
+});
+
 /*
  * Factory for a frozen-k alias (`recall@5`, `recall@10`, …). Registering
  * `makeRecallAtK(10)` is how a later slice adds recall@10 without
@@ -353,8 +531,19 @@ function parsePrimaryHits(output) {
   return hits;
 }
 
+function isSaveRefusal(msg) {
+  const s = String(msg || "");
+  // "Nothing to save" is empty input, not a secret guard. The 0001
+  // refusal is "Not saved — that looks like … Secrets don't belong in memory."
+  if (/nothing to save/i.test(s)) return false;
+  if (/not saved/i.test(s)) return true;
+  if (/secrets don't belong/i.test(s)) return true;
+  return false;
+}
+
 module.exports = {
   scoreSingle, scoreRepeat, containsAll, fieldSignals,
   register, getMetric, listMetrics, computeMetric, explainMetric, computeAll,
   makeRecallAtK, groupsFromWrites, parsePrimaryHits,
+  normFact, isCorrectStored, isSaveRefusal,
 };

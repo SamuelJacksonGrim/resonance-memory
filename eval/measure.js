@@ -19,7 +19,8 @@
  *
  * Reuses `pipeline.js` → `memory-core.js`. Does not write golden.json, does
  * not change product behaviour. Measurement corpora (`kind: "duplicates"` /
- * `gate: false`) are skipped by `eval/run.js` so this cannot flip the gate.
+ * `kind: "messy"` / `gate: false`) are skipped by `eval/run.js` so this
+ * cannot flip the gate.
  *
  * Levers that will shift (write-path, warm-field, fusion) belong HERE as
  * runner flags, not inside a metric: a metric is a number over a result
@@ -36,6 +37,7 @@ const { createMemory, cosine } = require("./pipeline.js");
 const { embed } = require("./embed-cache.js");
 const {
   computeMetric, explainMetric, listMetrics, groupsFromWrites, parsePrimaryHits,
+  isSaveRefusal, normFact,
 } = require("./metrics.js");
 
 const CORPORA = path.join(__dirname, "corpora");
@@ -50,7 +52,7 @@ function isSelfContainedScenario(c) {
 
 function isMeasurementLine(c) {
   if (!c) return false;
-  if (c.kind === "duplicates" || c.kind === "measure" || c.gate === false) return true;
+  if (c.kind === "duplicates" || c.kind === "messy" || c.kind === "measure" || c.gate === false) return true;
   if (c.role === "write" || c.role === "query" || c.role === "meta") return true;
   return isSelfContainedScenario(c) && !c.expect;
 }
@@ -77,12 +79,12 @@ function loadScenarios(file) {
       current = { id: c.id, kind: c.kind || "measure", writes: [], queries: [], note: c.note || "" };
       continue;
     }
-    if (c.role === "write" || (c.text && c.dup_group && !c.query)) {
+    if (c.role === "write" || (c.text && (c.dup_group || Array.isArray(c.gold_facts)) && !c.query)) {
       if (!current) throw new Error(file + ": write line before a meta/id line");
       current.writes.push(c);
       continue;
     }
-    if (c.role === "query" || (c.query && (c.relevant_groups || c.relevant_ids || c.relevant_texts))) {
+    if (c.role === "query" || (c.query && (c.relevant_groups || c.relevant_ids || c.relevant_texts || c.relevant_writes || c.relevant_facts))) {
       if (!current) throw new Error(file + ": query line before a meta/id line");
       current.queries.push(c);
       continue;
@@ -113,9 +115,40 @@ function freshStore() {
   return { store: new JsonlStore(file), file, dir };
 }
 
-function resolveRelevant(q, records, groups) {
+const MISSING_RELEVANT = "__none__";
+
+function resolveRelevant(q, records, groups, saveLog) {
   if (Array.isArray(q.relevant_ids) && q.relevant_ids.length) {
     return q.relevant_ids.map(String);
+  }
+  const labeledWrite = Array.isArray(q.relevant_writes) && q.relevant_writes.length;
+  const labeledFact = Array.isArray(q.relevant_facts) && q.relevant_facts.length;
+  if (labeledWrite || labeledFact) {
+    const origin = [];
+    if (labeledWrite) {
+      const wanted = new Set(q.relevant_writes.map(String));
+      for (const entry of saveLog || []) {
+        if (!wanted.has(String(entry.id))) continue;
+        for (const r of entry.stored || []) origin.push(r);
+      }
+    }
+    if (labeledFact) {
+      const facts = new Set(q.relevant_facts.map(normFact));
+      const matched = [];
+      for (const rec of records || []) {
+        if (facts.has(normFact(rec.text))) matched.push(String(rec.id));
+      }
+      for (const r of origin) {
+        if (facts.has(normFact(asStoredText(r)))) matched.push(String(r.id));
+      }
+      const uniq = [...new Set(matched)];
+      if (uniq.length) return uniq;
+    }
+    // Baseline fallback: the raw blob does not equal the gold fact, so
+    // fact-match is empty. Attribute the origin write's stored records
+    // so the query stays labeled (a dropped fact must miss, not skip).
+    if (origin.length) return origin.map((r) => String(r.id));
+    return [MISSING_RELEVANT];
   }
   const wanted = new Set();
   if (Array.isArray(q.relevant_groups)) {
@@ -127,6 +160,10 @@ function resolveRelevant(q, records, groups) {
     for (const t of q.relevant_texts) wanted.add(t);
   }
   return records.filter((r) => wanted.has(r.text)).map((r) => String(r.id));
+}
+
+function asStoredText(r) {
+  return typeof r === "string" ? r : (r && r.text != null ? String(r.text) : "");
 }
 
 async function pairwiseCosines(groups) {
@@ -156,14 +193,31 @@ async function runScenario(scenario, opts) {
 
   const writes = (scenario.writes || []).map((w) => (typeof w === "string" ? { text: w } : w));
   const saveLog = [];
+  const seenIds = new Set();
   for (const w of writes) {
     const msg = await mem.save(w.text);
-    saveLog.push({ text: w.text, dup_group: w.dup_group || null, band: w.band || null, msg });
+    const after = store.current();
+    const stored = after.filter((r) => !seenIds.has(String(r.id)))
+      .map((r) => ({ id: r.id, text: r.text }));
+    stored.forEach((r) => seenIds.add(String(r.id)));
+    saveLog.push({
+      id: w.id || null,
+      text: w.text,
+      gold_facts: Array.isArray(w.gold_facts) ? w.gold_facts : null,
+      noise: Array.isArray(w.noise) ? w.noise : null,
+      expect_refusal: !!w.expect_refusal,
+      dup_group: w.dup_group || null,
+      band: w.band || null,
+      msg,
+      refused: isSaveRefusal(msg),
+      stored,
+    });
   }
 
   const records = store.current();
   const groups = groupsFromWrites(writes);
   const dupExplain = explainMetric("duplicate_rate", { records }, { groups });
+  const extractExplain = explainMetric("extraction_precision", { cases: saveLog }, { cases: writes });
 
   const queries = [];
   for (const q of scenario.queries || []) {
@@ -174,8 +228,10 @@ async function runScenario(scenario, opts) {
       query: q.query,
       ranked_ids: ranked.map((h) => String(h.id)),
       ranked_texts: ranked.map((h) => h.text),
-      relevant_ids: resolveRelevant(q, records, groups),
+      relevant_ids: resolveRelevant(q, records, groups, saveLog),
       relevant_groups: q.relevant_groups || null,
+      relevant_writes: q.relevant_writes || null,
+      relevant_facts: q.relevant_facts || null,
       output,
     });
   }
@@ -188,6 +244,12 @@ async function runScenario(scenario, opts) {
 
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* temp */ }
 
+  const metrics = {
+    duplicate_rate: dupExplain.rate,
+    recall_at_k: recallExplain.rate,
+  };
+  if (extractExplain.n_labeled) metrics.extraction_precision = extractExplain.rate;
+
   return {
     id: scenario.id,
     file: scenario.file || null,
@@ -196,12 +258,10 @@ async function runScenario(scenario, opts) {
     n_stored_current: records.length,
     n_groups: Object.keys(groups).length,
     exact_restatements_caught: exactCaught,
-    metrics: {
-      duplicate_rate: dupExplain.rate,
-      recall_at_k: recallExplain.rate,
-    },
+    metrics,
     duplicate_rate: dupExplain,
     recall_at_k: recallExplain,
+    extraction_precision: extractExplain.n_labeled ? extractExplain : null,
     queries,
     saveLog,
     groups,
@@ -227,6 +287,13 @@ function printHuman(reports, { k }) {
       "   (" + r.recall_at_k.hits + "/" + r.recall_at_k.n + " queries hit)");
     if (r.recall_at_k.misses && r.recall_at_k.misses.length) {
       console.log("    misses: " + r.recall_at_k.misses.join(", "));
+    }
+    if (r.extraction_precision) {
+      const e = r.extraction_precision;
+      console.log("  extraction_precision " + e.rate.toFixed(4) +
+        "   (correct=" + e.n_correct + "/" + e.n_stored + " stored, labeled=" + e.n_labeled + ")");
+      console.log("  pii_refusal_rate     " + e.pii_refusal_rate.toFixed(4) +
+        "   (" + e.n_pii_refused + "/" + e.n_pii + " PII writes refused)");
     }
     if (r.bands) {
       console.log("  pairwise cosine (multi-member groups):");
@@ -273,6 +340,7 @@ async function main(argv) {
         metrics: r.metrics,
         duplicate_rate: r.duplicate_rate,
         recall_at_k: r.recall_at_k,
+        extraction_precision: r.extraction_precision,
         bands: r.bands,
         misses: r.recall_at_k.misses,
       })),
