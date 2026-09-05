@@ -351,14 +351,16 @@ deletions, ever.
       `edges.json` (Hebbian; `processed_ids` out), `manifest.json`, `README.txt`.
       `--export-jsonl` stays as the raw primitive. Read-only. 50k proof: 34.3 s,
       387 MB zip, 50k/50k lossless, Windows opens, ZIP64 at 70k entries.
-      Panel button is slice 2c.
-- [ ] Panel export button (slice 2c) — confirm modal, heartbeat pause, shells 2b.
+      Panel button is slice 2c (shipped).
+- [x] Panel export button (slice 2c) — confirm modal, heartbeat pause + yield,
+      POST `/api/export` shells 2b, toast + copy-path + Windows reveal.
+      Not an MCP tool. Empty store still exports. User store, never demo-seed.
 - [ ] Transparent one-way migration on first open (slice 4 default switch).
 - [x] JSONL stays the default until SQLite passes conformance + eval parity.
       Conformance green. Golden parity (slice 3): `node eval/run.js --store sqlite`
       matches JSONL **27/31 case-for-case** (no flips; cache vectors already
       exact f32 so packing is lossless on this embedder). Default switch is
-      slice 4, after the 2c panel button so migration does not open a lock-in
+      slice 4, after the 2c panel button (shipped) so migration does not open a lock-in
       window from the UI either.
 
 **Acceptance:** 100k memories, recall p95 <100ms, no full-file rewrite; both backends

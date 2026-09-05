@@ -23,8 +23,13 @@
  *   - toggles the associative field and (when a capable model is detected) LLM extraction
  *     (writes the shared config.json the MCP server reads live),
  *   - connects/disconnects the server from LM Studio / Claude Desktop,
- *   - draws the association graph (your memories, or a synthetic demo), and
+ *   - draws the association graph (your memories, or a synthetic demo),
+ *   - exports YOUR store as a zip (RM-07 slice 2c; shells export-memory.js, never
+ *     demo-seed.jsonl; not an MCP tool — a model that can dump the store is an
+ *     exfil path), and
  *   - shuts itself down shortly after you close the page (heartbeat), so nothing lingers.
+ *     Export pauses that watchdog and yields the event loop so a 30–60s zip of
+ *     50k members cannot starve /api/ping and process.exit(0) a truncated tmp.
  *
  * Launch it hidden with start-panel.vbs (no console window). No CLI knowledge required.
  */
@@ -32,7 +37,7 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
-const { exec } = require("child_process");
+const { exec, execFile } = require("child_process");
 const install = require("./install.js");
 const field = require("./field.js");
 const engine = require("./engine.js");
@@ -40,6 +45,7 @@ const { EdgeStore } = require("./edges.js");
 const { normalize, isCurrent, isVector } = require("./record.js");
 const { resolveStoreBackend, sqlitePathFor } = require("./store.js");
 const extract = require("./extract.js");
+const exp = require("./export-memory.js");
 
 function baseDir() {
   // In a bundled single-executable, __dirname is virtual; resolve next to the exe.
@@ -192,6 +198,22 @@ const PAGE = `<!doctype html>
     text-decoration: none; font-weight: 600; border: 1px solid rgba(0,0,0,.12); color: #1c1e21; }
   .support a.kofi { background: #ffdd66; border-color: #ffcf33; color: #4a3a00; }
   .support .why { color: #6b7280; font-size: 12px; margin-top: 2px; }
+  .modal { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: grid;
+    place-items: center; z-index: 40; padding: 16px; }
+  .modal[hidden] { display: none; }
+  .modal-card { width: min(92vw, 460px); background: #fff; border-radius: 16px;
+    padding: 22px 22px 18px; box-shadow: 0 16px 50px rgba(0,0,0,.25);
+    border: 1px solid rgba(0,0,0,.08); }
+  .modal-card h2 { font-size: 17px; margin: 0 0 10px; }
+  .modal-card p { margin: 0 0 10px; font-size: 13.5px; color: #374151; }
+  .modal-card .dest { font-family: ui-monospace, Consolas, monospace; font-size: 12px;
+    background: #f7f8fa; padding: 8px 10px; border-radius: 8px; word-break: break-all;
+    margin: 0 0 12px; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+  .toast { margin-top: 10px; font-size: 13px; color: #1c7a4f; }
+  .toast code { font-family: ui-monospace, Consolas, monospace; font-size: 12px;
+    background: rgba(0,0,0,.06); padding: 1px 5px; border-radius: 5px; word-break: break-all; }
+  .busy-note { color: #8a5a00; font-size: 12.5px; margin-top: 6px; }
   @media (prefers-color-scheme: dark) {
     body { background: #16181c; color: #e6e8eb; }
     .card { background: #1f2227; border-color: rgba(255,255,255,.07); box-shadow: 0 12px 40px rgba(0,0,0,.4); }
@@ -204,6 +226,11 @@ const PAGE = `<!doctype html>
     button.primary { background: var(--acc); border-color: var(--acc); color: #fff; }
     .support a { background: #2a2e35; color: #e6e8eb; border-color: rgba(255,255,255,.12); }
     .support a.kofi { background: #ffdd66; color: #4a3a00; border-color: #ffcf33; }
+    .modal-card { background: #1f2227; border-color: rgba(255,255,255,.08); }
+    .modal-card p { color: #c5cad3; }
+    .modal-card .dest { background: #171a1e; }
+    .toast { color: #6ee7b7; }
+    .toast code { background: rgba(255,255,255,.08); }
   }
 </style></head>
 <body>
@@ -237,6 +264,16 @@ const PAGE = `<!doctype html>
       <label class="switch"><input type="checkbox" id="extractTog"><span class="slider"></span></label>
     </div>
 
+    <div class="row" id="exportRow" style="margin-top:10px">
+      <div>
+        <div class="label">Your memories</div>
+        <div class="hint">Download a zip of everything stored on this machine. Nothing is deleted or sent anywhere.</div>
+        <div id="exportToast" class="toast" hidden></div>
+        <div id="exportBusy" class="busy-note" hidden>Exporting&hellip; (this can take a minute at large N)</div>
+      </div>
+      <button id="exportBtn">Export my memories</button>
+    </div>
+
     <div class="sec">
       <div class="sechead">
         <button id="graphToggle" class="linkish" aria-expanded="true">Association graph <span id="caret">&#9662;</span></button>
@@ -267,6 +304,22 @@ const PAGE = `<!doctype html>
       <div><b>For weaker models</b> that forget to save or recall: <a href="#" id="spBtn">copy a ready-made system prompt</a> and paste it into your app's system-prompt box. <span id="spMsg"></span></div>
       <div style="margin-top:11px"><b>Removing it?</b> Click <b>Disconnect</b> next to each app above, then delete <code>resonance-memory.exe</code> &mdash; that's the whole app. Your memories live at <code id="storePath">&hellip;</code> and stay put unless you delete that file too &mdash; along with the small <code>.edges.json</code> / <code>.access.json</code> companions beside it (and a leftover <code>.assoc.json</code> if an older build wrote one).</div>
       <div style="margin-top:11px">The field and extraction switches apply instantly &mdash; no restart. This panel closes itself a few seconds after you close the tab.</div>
+    </div>
+  </div>
+
+  <div id="exportModal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="exportModalTitle">
+    <div class="modal-card">
+      <h2 id="exportModalTitle">Export my memories</h2>
+      <p>This writes a <b>.zip</b> of <b>YOUR</b> memories &mdash; a machine-readable <code>memories.jsonl</code> plus one file per memory &mdash; to the path below.</p>
+      <p>This is <b>read-only</b>: nothing is deleted, nothing is sent anywhere, the live store stays put.</p>
+      <p id="exportCount">Counting&hellip;</p>
+      <div class="dest" id="exportDest">&hellip;</div>
+      <p>Filenames may contain a preview of the memory text.</p>
+      <p id="exportModalBusy" class="busy-note" hidden>Exporting&hellip; (this can take a minute at large N)</p>
+      <div class="modal-actions">
+        <button type="button" id="exportCancel">Cancel</button>
+        <button type="button" id="exportConfirm" class="primary">Export</button>
+      </div>
     </div>
   </div>
 <script>
@@ -324,6 +377,112 @@ const PAGE = `<!doctype html>
     if(!extractCapable){ extractTog.checked = false; return; }
     var r = await (await fetch('/api/toggle', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ extract_llm: extractTog.checked }) })).json();
     renderExtract(r);
+  });
+
+  // --- sovereignty export (RM-07 slice 2c). Confirm first; nothing is
+  // written until Export. Server writes the zip (a browser cannot pick an
+  // arbitrary FS path, and streaming a GB-class zip through the download
+  // manager is a footgun at 100k). Not an MCP tool.
+  var exportBtn = document.getElementById('exportBtn');
+  var exportModal = document.getElementById('exportModal');
+  var exportCancel = document.getElementById('exportCancel');
+  var exportConfirm = document.getElementById('exportConfirm');
+  var exportCount = document.getElementById('exportCount');
+  var exportDest = document.getElementById('exportDest');
+  var exportToast = document.getElementById('exportToast');
+  var exportBusy = document.getElementById('exportBusy');
+  var exportModalBusy = document.getElementById('exportModalBusy');
+  var exportInFlight = false;
+  var exportPreview = null;
+
+  function esc(s){
+    return String(s == null ? '' : s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+  function formatCount(c){
+    c = c || {};
+    var total = c.total || 0;
+    var cur = c.current || 0;
+    var hist = total - cur;
+    if(total === 0) return '0 memories';
+    if(hist > 0) return total + ' memories (' + cur + ' current, ' + hist + ' history)';
+    return total + ' memories';
+  }
+  function setExportBusy(on){
+    exportInFlight = !!on;
+    exportBtn.disabled = !!on;
+    exportConfirm.disabled = !!on;
+    exportCancel.disabled = !!on;
+    exportBusy.hidden = !on;
+    exportModalBusy.hidden = !on;
+    exportBtn.textContent = on ? 'Exporting\\u2026' : 'Export my memories';
+  }
+  function showToast(filePath){
+    exportToast.hidden = false;
+    exportToast.innerHTML = 'Saved to <code id="exportSavedPath">' + esc(filePath) +
+      '</code> \\u2014 <a href="#" id="exportCopyPath">copy path</a> <span id="exportCopyMsg"></span>';
+    var copyBtn = document.getElementById('exportCopyPath');
+    var copyMsg = document.getElementById('exportCopyMsg');
+    copyBtn.addEventListener('click', async function(ev){
+      ev.preventDefault();
+      try {
+        await navigator.clipboard.writeText(filePath);
+        copyMsg.textContent = 'copied to clipboard \\u2713';
+      } catch(e){
+        copyMsg.textContent = 'copy failed \\u2014 select the path instead';
+      }
+      setTimeout(function(){ copyMsg.textContent=''; }, 4000);
+    });
+  }
+  function closeExportModal(){
+    exportModal.hidden = true;
+  }
+  exportBtn.addEventListener('click', async function(){
+    if(exportInFlight) return;
+    exportToast.hidden = true;
+    exportCount.textContent = 'Counting\\u2026';
+    exportDest.textContent = '\\u2026';
+    exportConfirm.disabled = false;
+    exportCancel.disabled = false;
+    exportModalBusy.hidden = true;
+    exportModal.hidden = false;
+    try {
+      var p = await (await fetch('/api/export')).json();
+      exportPreview = p;
+      var size = p.estimateLabel && p.estimateLabel !== 'empty' ? ', about ' + p.estimateLabel : '';
+      exportCount.textContent = formatCount(p.count) + size + '.';
+      exportDest.textContent = p.destPath || '';
+    } catch(e){
+      exportPreview = null;
+      exportCount.textContent = 'Could not read the store. Export will still write an empty bundle.';
+      exportDest.textContent = '';
+    }
+  });
+  exportCancel.addEventListener('click', function(){
+    if(exportInFlight) return;
+    closeExportModal();
+  });
+  exportModal.addEventListener('click', function(ev){
+    if(exportInFlight) return;
+    if(ev.target === exportModal) closeExportModal();
+  });
+  exportConfirm.addEventListener('click', async function(){
+    if(exportInFlight) return;
+    setExportBusy(true);
+    try {
+      var r = await (await fetch('/api/export', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' })).json();
+      if(r && r.ok && r.path){
+        closeExportModal();
+        showToast(r.path);
+      } else if(r && r.code === 'busy'){
+        exportCount.textContent = 'An export is already running.';
+      } else {
+        exportCount.textContent = (r && r.error) ? r.error : 'Export failed.';
+      }
+    } catch(e){
+      exportCount.textContent = 'Export failed. The live store was not changed.';
+    }
+    setExportBusy(false);
   });
 
   async function loadClients(){
@@ -611,11 +770,73 @@ const PAGE = `<!doctype html>
 </body></html>`;
 
 // --- heartbeat shutdown: exit ~12s after the last tab stops pinging ---
+// Export of a 50k store is a 30–60s zip on one thread. If we keep the
+// 12s idle timer armed, unanswered /api/ping → process.exit(0) → truncated
+// .zip.tmp on the Desktop. Pause for the duration; re-arm when done/failed.
+// Tests may shorten RESONANCE_MEMORY_WATCHDOG_MS so the pause is provable
+// without a 15s sleep.
+const WATCHDOG_MS = Math.max(200, Number(process.env.RESONANCE_MEMORY_WATCHDOG_MS || 12000) || 12000);
+const WATCHDOG_CHECK_MS = Math.min(3000, Math.max(50, Math.floor(WATCHDOG_MS / 4)));
 let lastPing = Date.now();
 let connectedOnce = false;
+let watchdogPaused = false;
+let exportInFlight = false;
+
+function pauseWatchdog() { watchdogPaused = true; }
+function resumeWatchdog() {
+  watchdogPaused = false;
+  lastPing = Date.now();
+}
+function watchdogShouldExit(now) {
+  if (watchdogPaused) return false;
+  return connectedOnce && ((now || Date.now()) - lastPing > WATCHDOG_MS);
+}
 setInterval(() => {
-  if (connectedOnce && Date.now() - lastPing > 12000) process.exit(0);
-}, 3000);
+  if (watchdogShouldExit()) process.exit(0);
+}, WATCHDOG_CHECK_MS);
+
+const YIELD_EVERY = Math.max(1, Number(process.env.RM_PANEL_YIELD_EVERY || 32) || 32);
+
+function yieldToEventLoop() {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+async function waitForTestHold() {
+  // Test hook (same family as RM_EXPORT_CRASH_AFTER): if set to a path,
+  // sit here — in-flight + watchdog already paused — until that file
+  // exists. Lets tests prove 409-on-double-POST and "no pings for >12s
+  // does not kill the process" without a 50k zip.
+  const p = process.env.RM_PANEL_EXPORT_HOLD;
+  if (!p) return;
+  await new Promise((resolve) => {
+    const t = setInterval(() => {
+      try {
+        if (fs.existsSync(p)) { clearInterval(t); resolve(); }
+      } catch { /* */ }
+    }, 25);
+  });
+}
+
+function revealExportedFile(filePath) {
+  // Courtesy only. RESONANCE_MEMORY_NO_OPEN already means "don't pop OS
+  // windows" (panel listen); tests set it so explorer does not steal focus.
+  if (process.env.RESONANCE_MEMORY_NO_OPEN === "1") return;
+  if (!filePath) return;
+  try {
+    if (process.platform === "win32") {
+      execFile("explorer", ["/select," + filePath], () => { });
+    } else if (process.platform === "darwin") {
+      execFile("open", ["-R", filePath], () => { });
+    } else {
+      execFile("xdg-open", [path.dirname(filePath)], () => { });
+    }
+  } catch { /* reveal is a courtesy; the zip is already on disk */ }
+}
+
+function json(res, code, obj) {
+  res.writeHead(code, { "Content-Type": "application/json" });
+  res.end(JSON.stringify(obj));
+}
 
 function body(req, cb) { let b = ""; req.on("data", (d) => (b += d)); req.on("end", () => cb(b)); }
 
@@ -712,11 +933,81 @@ const server = http.createServer((req, res) => {
       res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(r));
     }); return;
   }
+  // RM-07 slice 2c: panel export. GET = confirm-modal preview (read-only).
+  // POST = write the zip via the 2b engine. Never demo-seed.jsonl. Not an
+  // MCP tool — a model that can dump the store is an exfil path.
+  if (req.method === "GET" && url === "/api/export") {
+    exp.previewExport(STORE_PATH).then((p) => {
+      json(res, 200, Object.assign({
+        busy: exportInFlight,
+        watchdog_paused: watchdogPaused,
+        demo: false,
+      }, p));
+    }).catch((e) => {
+      json(res, 200, {
+        busy: exportInFlight, watchdog_paused: watchdogPaused, demo: false,
+        destPath: "", destDir: "", destName: "",
+        storePath: STORE_PATH, backend: "jsonl",
+        count: { total: 0, current: 0, superseded: 0, deleted: 0 },
+        estimateBytes: 0, estimateLabel: "empty",
+        error: String(e && e.message || e),
+      });
+    });
+    return;
+  }
+  if (req.method === "POST" && url === "/api/export") {
+    body(req, () => {
+      if (exportInFlight) {
+        json(res, 409, { ok: false, code: "busy", error: "export already in progress" });
+        return;
+      }
+      exportInFlight = true;
+      pauseWatchdog();
+      const run = async () => {
+        await waitForTestHold();
+        await yieldToEventLoop();
+        const result = await exp.runExport({
+          mode: "zip",
+          storePath: STORE_PATH,
+          name: exp.defaultExportName(),
+          outDir: exp.defaultOutDir(STORE_PATH),
+        }, {
+          onAfterEntry: async (ctx) => {
+            if (ctx && ctx.n % YIELD_EVERY === 0) await yieldToEventLoop();
+          },
+        });
+        return result;
+      };
+      run().then((result) => {
+        try { revealExportedFile(result.path); } catch { /* */ }
+        json(res, 200, {
+          ok: true,
+          path: result.path,
+          count: result.count,
+          zipBytes: result.zipBytes,
+          entries: result.entries,
+          storePath: STORE_PATH,
+          demo: false,
+        });
+      }).catch((e) => {
+        json(res, 500, {
+          ok: false,
+          code: "failed",
+          error: String(e && e.message || e),
+        });
+      }).finally(() => {
+        exportInFlight = false;
+        resumeWatchdog();
+      });
+    });
+    return;
+  }
   res.writeHead(404); res.end("not found");
 });
 
 server.listen(PORT, "127.0.0.1", () => {
-  const url = "http://127.0.0.1:" + PORT + "/";
+  const addr = server.address();
+  const url = "http://127.0.0.1:" + (addr && addr.port ? addr.port : PORT) + "/";
   // Guarded: as a windowless (GUI-subsystem) exe there's no console to write to.
   try { process.stdout.write("Resonance Memory control panel running at " + url + "\n"); } catch { }
   if (process.env.RESONANCE_MEMORY_NO_OPEN !== "1") {

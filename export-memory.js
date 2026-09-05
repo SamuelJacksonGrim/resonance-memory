@@ -29,7 +29,8 @@
  *                       zip wraps this, it is not replaced)
  *
  * READ-ONLY. Never mutates the store, never WAL-checkpoints, never
- * rewrites sidecars. Not a fifth MCP verb. Panel button is slice 2c.
+ * rewrites sidecars. Not a fifth MCP verb. The panel button (slice 2c)
+ * shells runExport() / previewExport() — same engine, not a second writer.
  *
  * Bundle (one .zip, top-level folder = archive name, anti-tarbomb):
  *   memories.jsonl          normalize()-shape, embeddings as JSON arrays
@@ -139,8 +140,10 @@ function sanitizeExportName(raw, fallback) {
   return s;
 }
 
-function uniqueZipPath(dir, name) {
-  fs.mkdirSync(dir, { recursive: true });
+function uniqueZipPath(dir, name, opts) {
+  // Preview (panel confirm modal) must not mkdir — that's a write.
+  // The real export still creates the dest dir so Desktop-missing is fine.
+  if (!opts || opts.create !== false) fs.mkdirSync(dir, { recursive: true });
   const first = path.join(dir, name + ".zip");
   if (!fs.existsSync(first)) return first;
   for (let i = 2; i < 10000; i++) {
@@ -412,6 +415,101 @@ function iterateRecords(store) {
   return store.all();
 }
 
+function formatBytes(n) {
+  const x = Number(n) || 0;
+  if (x <= 0) return "empty";
+  if (x < 1024) return x + " B";
+  if (x < 1024 * 1024) return Math.round(x / 1024) + " KB";
+  const mb = x / (1024 * 1024);
+  if (x < 1024 * 1024 * 1024) return (mb >= 10 ? mb.toFixed(0) : mb.toFixed(1)) + " MB";
+  return (x / (1024 * 1024 * 1024)).toFixed(1) + " GB";
+}
+
+/*
+ * Stream-count a JSONL store for the panel confirm modal. Must NOT
+ * readFileSync the file — that is the S1 834 MB wall. Line-at-a-time
+ * parse; drop the object immediately. File size is the uncompressed
+ * jsonl estimate (USB/disk-full is the question the modal answers).
+ */
+async function summarizeJsonlFile(file) {
+  const counts = { total: 0, current: 0, superseded: 0, deleted: 0 };
+  let estimateBytes = 0;
+  if (!file || !fs.existsSync(file)) return { count: counts, estimateBytes: 0 };
+  try { estimateBytes = fs.statSync(file).size; } catch { estimateBytes = 0; }
+  const readline = require("readline");
+  const rl = readline.createInterface({
+    input: fs.createReadStream(file, { encoding: "utf8" }),
+    crlfDelay: Infinity,
+  });
+  for await (const line of rl) {
+    if (!line) continue;
+    let o;
+    try { o = JSON.parse(line); } catch { continue; }
+    counts.total++;
+    const st = recordStatus(o);
+    counts[st] = (counts[st] || 0) + 1;
+  }
+  return { count: counts, estimateBytes };
+}
+
+async function summarizeStore(storePath, opts) {
+  const opened = openExportStore(storePath, opts);
+  try {
+    if (opened.backend === "sqlite" && opened.store && typeof opened.store.stats === "function") {
+      const s = opened.store.stats();
+      return {
+        backend: "sqlite",
+        count: {
+          total: Number(s.count) || 0,
+          current: Number(s.current) || 0,
+          superseded: Number(s.superseded) || 0,
+          deleted: Number(s.deleted) || 0,
+        },
+        estimateBytes: Number(s.bytes) || 0,
+      };
+    }
+    const file = opened.store && opened.store.file;
+    const jsonl = await summarizeJsonlFile(file);
+    return { backend: "jsonl", count: jsonl.count, estimateBytes: jsonl.estimateBytes };
+  } finally {
+    if (opened.store && typeof opened.store.close === "function") {
+      try { opened.store.close(); } catch { /* */ }
+    }
+  }
+}
+
+/*
+ * Confirm-modal payload. Read-only. Does not mkdir, does not write a zip.
+ * destPath is the would-be unique name (Name (2).zip if Name.zip exists).
+ */
+async function previewExport(storePath, opts) {
+  opts = opts || {};
+  const resolved = path.resolve(storePath || defaultStorePath());
+  const destDir = opts.outDir || defaultOutDir(resolved);
+  const name = sanitizeExportName(opts.name, defaultExportName());
+  const destPath = uniqueZipPath(destDir, name, { create: false });
+  let summary;
+  try {
+    summary = await summarizeStore(resolved, opts);
+  } catch {
+    summary = {
+      backend: "jsonl",
+      count: { total: 0, current: 0, superseded: 0, deleted: 0 },
+      estimateBytes: 0,
+    };
+  }
+  return {
+    destDir,
+    destName: name,
+    destPath,
+    storePath: resolved,
+    backend: summary.backend,
+    count: summary.count,
+    estimateBytes: summary.estimateBytes,
+    estimateLabel: formatBytes(summary.estimateBytes),
+  };
+}
+
 async function maybeCrashAfterEntry(opts, ctx) {
   if (opts && typeof opts.onAfterEntry === "function") {
     await opts.onAfterEntry(ctx);
@@ -480,7 +578,7 @@ const USAGE = [
   "",
   "Never overwrites: if Name.zip exists, writes Name (2).zip.",
   "Read-only: the store is not mutated. Extract to a short path (Windows MAX_PATH).",
-  "Not a fifth MCP verb. The panel button is a later slice.",
+  "Not a fifth MCP verb. The panel 'Export my memories' button shells this same function.",
 ].join("\n");
 
 async function exportJsonlToFile(store, destFile, opts) {
@@ -663,6 +761,10 @@ module.exports = {
   exportZipBundle,
   exportJsonlToFile,
   openExportStore,
+  previewExport,
+  summarizeStore,
+  summarizeJsonlFile,
+  formatBytes,
   memorySlug,
   safetySlug,
   memoryDayPath,

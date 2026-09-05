@@ -61,6 +61,10 @@ Want to see what it does *before* connecting anything? Click **Show demo graph**
 it draws a little constellation of example memories so you can watch how related ideas cluster
 together and link up. Drag it to turn it around.
 
+Want a copy of your memories as a file you own? Click **Export my memories** on that same
+page. It asks first (so a curious click writes nothing), then saves a zip to your Desktop —
+nothing is deleted, nothing is sent anywhere. This is not something your AI can do; only you.
+
 ## How it works (the plain version)
 
 Under the hood it's refreshingly simple:

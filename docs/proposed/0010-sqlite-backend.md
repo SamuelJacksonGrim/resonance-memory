@@ -1,6 +1,6 @@
 # 0010 — SQLite backend behind the Store seam (RM-07)
 
-**Status:** slice 1 shipped (drop-in `SqliteStore`) · slice 2a shipped (streaming JSONL→SQLite migrator, opt-in CLI) · **slice 2b shipped** (sovereignty zip export, `--export` / `--export-jsonl`) · **slice 3 shipped** (RM-00 golden on SqliteStore = JSONL 27/31 case-for-case) · JSONL still default · panel button is slice 2c · **Backlog:** `RM-07` · **Depends on:** `RM-00`, [`0005`](0005-store-abstraction.md)
+**Status:** slice 1 shipped (drop-in `SqliteStore`) · slice 2a shipped (streaming JSONL→SQLite migrator, opt-in CLI) · **slice 2b shipped** (sovereignty zip export, `--export` / `--export-jsonl`) · **slice 2c shipped** (panel "Export my memories" button + confirm modal + heartbeat pause) · **slice 3 shipped** (RM-00 golden on SqliteStore = JSONL 27/31 case-for-case) · JSONL still default · default switch is slice 4 · **Backlog:** `RM-07` · **Depends on:** `RM-00`, [`0005`](0005-store-abstraction.md)
 **Spike:** [`spike/rm-07-sqlite/`](../../spike/rm-07-sqlite/) — de-risked the driver and the vector path.
 **Product:** `store-sqlite.js` `SqliteStore`, same JsonlStore method surface, `memory-core.js` verbs unchanged.
 
@@ -205,9 +205,10 @@ Two artifacts, two jobs. Do not `copyFile` to `.bak` *and* keep the
 original — that is two full copies of an 834 MB file; one retained original (the
 rename) is enough.
 
-Export is a **maintenance CLI** (like `--dedup-existing`), not a fifth MCP verb.
-The four-verb surface does not grow. The panel button is slice 2c (next) and
-shells the same function.
+Export is a **maintenance CLI + panel button**, not a fifth MCP verb.
+The four-verb surface does not grow. A model that can dump the store to a
+file is an exfil path. The panel button (slice 2c, shipped) shells the
+same `runExport()` as `--export`.
 
 A user leaving RM hands `memories.jsonl` (inside the zip, or via `--export-jsonl`)
 to Mem0/Zep/a script. That is the anti-hoarding claim; see
@@ -293,8 +294,10 @@ Landed. Selectable, not the default.
 - Auto-migrating user stores on upgrade / first open. Slice 2a is the
   **opt-in CLI** (`--migrate`). The first-open hook is the default-switch
   slice 4 — do not wire it yet (keeps the RM-00 golden on JSONL).
-- Panel export button (slice 2c). `--export` / `--export-jsonl` are the CLI;
-  the button shells the same function. Heartbeat pause lives with the panel.
+- Panel export button (**slice 2c, shipped**). `--export` / `--export-jsonl`
+  are the CLI; the button shells the same function. Heartbeat pause lives
+  with the panel (a sync 30–60s zip would otherwise starve `/api/ping` and
+  `process.exit(0)` a truncated tmp).
 - Edges-in-db. Named fast-follow; EdgeStore API stays, persistence adapter
   later. The zip already carries `edges.json` so the sovereignty artifact is
   complete regardless.
@@ -372,7 +375,7 @@ fine on this box; materializing the JSONL as one UTF-8 string is not.
 ## Slice 2b (shipped) — sovereignty export (zip + `--export-jsonl`)
 
 Landed. READ-ONLY CLI, not a fifth MCP verb, not a golden-path change.
-`memory-core.js` is untouched. The panel button is **slice 2c**.
+`memory-core.js` is untouched. The panel button is **slice 2c (shipped)**.
 
 This is the anti-lock-in artifact: the user's memory as a file they own and
 can carry to another device or hand to a competing provider. It lands
@@ -446,7 +449,54 @@ not travel. `node eval/substrate/export-proof.js`.
 | store mutated | **no** |
 | synthetic ZIP64 | **70,000** entries, Windows opens 70,000, 0.9 s |
 
-The panel button (2c) is all that's left before the default-switch (slice 4).
+The panel button (**slice 2c, shipped**) was the last UX gate before the
+default-switch (slice 4).
+
+---
+
+## Slice 2c (shipped) — panel "Export my memories" button
+
+Landed. Discoverable sovereignty: export is a visible button on the local
+`127.0.0.1` control panel, not a CLI flag someone has to know exists.
+**Not an MCP tool.** A model that can dump the store to a file is an
+exfil path; the four verbs stay four. Panel + CLI only.
+
+Product: `panel.js` GET/POST `/api/export` shells `export-memory.js`
+`previewExport()` / `runExport()` (the 2b engine — no second writer).
+The server writes the zip to Desktop (fallback home) and returns the
+path. A browser cannot pick an arbitrary FS path, and streaming a
+GB-class zip through the download manager is a footgun at 100k.
+
+Confirm modal (nothing is written until Export):
+
+- what it does: writes a `.zip` of YOUR memories (`memories.jsonl` + one
+  file per memory) to the path shown
+- what it does **not**: nothing deleted, nothing sent, live store stays
+  put — it says "read-only" because it is
+- count (N memories, current vs history) + uncompressed-size estimate
+- destination path (Desktop default)
+- one-line note that filenames may contain a preview of the memory
+- `[Export]` / `[Cancel]`
+
+On Export: POST → zip on disk → `"saved to <path>"` toast + copy-path
+(same clipboard pattern as the system prompt) + on Windows
+`explorer /select,<path>`. Button disabled in-flight (a double-click is
+two concurrent writers; server 409). Honest "Exporting… (this can take a
+minute at large N)" — not a fake percentage that stalls on the jsonl
+deflate. Empty store: modal still opens (count 0); Export writes a
+README + empty jsonl bundle. User store only — never `demo-seed.jsonl`.
+JSONL and SQLite both work (the engine handles both).
+
+**Heartbeat pause + yield (load-bearing).** `panel.js` exits if
+`/api/ping` is idle >12s. Node is single-threaded; a synchronous 30–60s
+zip of 50k members means pings don't get answered → `process.exit(0)` →
+truncated tmp on the Desktop. Export (a) pauses the watchdog for the
+duration and (b) `setImmediate`s every N records so the spinner stays
+alive. Re-arms when done/failed.
+
+This clears the last UX gate before slice 4 (default switch: new stores
+→ sqlite; existing JSONL auto-migrate first-open with the 10-step
+protocol). Then 5 edges-in-db, 6 `searchDense`, 7 smart-recall.
 
 ---
 
@@ -454,7 +504,7 @@ The panel button (2c) is all that's left before the default-switch (slice 4).
 
 Landed. The drop-in contract: same `memory-core.js`, different Store, **identical
 scorecard**. This is the bar that unblocks the default switch (slice 4) — 2b
-export/zip has shipped; 2c is the panel button.
+export/zip and 2c panel button have shipped.
 
 Product: `eval/run.js --store sqlite` (also `RESONANCE_STORE=sqlite`; `--store`
 wins). `eval/pipeline.js` is unchanged — the Store is injected; sqlite vs jsonl
@@ -503,9 +553,9 @@ genuine inequivalence; this run did not need one. If a future embedder
 emits values that are not f32-exact and a case actually flips, the honest
 move is to name the case and decide then — not to pre-paper the gate.
 
-This clears the default-switch *eval* gate. Slice 2b (export/zip) has
-landed; the panel button (2c) is all that remains before slice 4 so a
-migrated user can leave from the UI as well as the CLI.
+This clears the default-switch *eval* gate. Slice 2b (export/zip) and
+slice 2c (panel button) have landed, so a migrated user can leave from
+the UI as well as the CLI. Slice 4 is the default switch.
 
 ---
 
@@ -532,9 +582,9 @@ These are product calls. The spike is evidence, not a substitute.
    green, because JSONL cannot load 50k? Recommend **SQLite default for new
    stores; existing JSONL migrates on first open with `.bak`**, once parity
    is proven. A 50k JSONL user is already stuck. **Parity is now proven
-   (slice 3, 27/31 case-for-case).** Slice 2b export has shipped; the 2c
-   panel button is the remaining UX gate before the switch so migration
-   is not a lock-in.
+   (slice 3, 27/31 case-for-case).** Slice 2b export and 2c panel button
+   have shipped. Slice 4 is the default switch so migration is not a
+   lock-in.
 5. **Move-between-devices story.** `.db` copy (after checkpoint) for RM↔RM;
    JSONL export for leaving RM / handing to a competitor. Recommend **both**,
    with JSONL as the documented sovereignty path (embeddings as JSON, no RM
@@ -557,8 +607,8 @@ These are product calls. The spike is evidence, not a substitute.
    backend. `memory-core.js` unchanged.
 2. Streaming migrator JSONL→SQLite (**slice 2a, shipped** — `--migrate`) +
    export SQLite→JSONL (**slice 2b, shipped** — `--export` zip /
-   `--export-jsonl`). `.bak` is the recovery snapshot from 2a, not the
-   export. Panel button is 2c.
+   `--export-jsonl`) + panel button (**slice 2c, shipped**). `.bak` is
+   the recovery snapshot from 2a, not the export. Not an MCP tool.
 3. Conformance suite both backends (0005 step 4). Encode BUG-001/002.
 4. `normalize()` typed-array trap test.
 5. RM-00 golden on SqliteStore — must match JSONL scorecard. **Shipped (slice 3).**

@@ -9,6 +9,18 @@ stable; sophistication grows in the substrate, not in the API.
 ## [Unreleased]
 
 ### Added
+- **RM-07 slice 2c — panel export button.** "Export my memories" on the
+  local control panel (same surface as the field toggle). Click opens a
+  confirm modal (what it writes, that it is read-only, count + size
+  estimate, dest path, filename-preview note) so a curious/accidental
+  click writes nothing. Export POSTs to the panel server, which shells
+  the 2b engine and writes the zip to Desktop, then a "saved to \<path\>"
+  toast + copy-path + Windows `explorer /select`. Pauses the heartbeat
+  watchdog and yields the event loop so a long zip cannot starve
+  `/api/ping` and `process.exit(0)` a truncated tmp. Button disabled
+  in-flight (409 on a concurrent POST). Empty store still exports.
+  User store only — never `demo-seed.jsonl`. **Not an MCP tool.** Last
+  UX gate before the slice-4 default switch.
 - **RM-07 slice 2b — sovereignty export.** `--export` writes a ZIP64 zip
   (default dest Desktop, `--name` / `--out`, never-overwrite `Name (2).zip`)
   containing `memories.jsonl` (machine interchange, embeddings as JSON arrays —
@@ -20,7 +32,7 @@ stable; sophistication grows in the substrate, not in the API.
   ZIP64 extra + EOCD + locator on every archive). READ-ONLY; not a fifth MCP
   verb. We do not sanitize the export. 50k/768-d proof: **34.3 s**, 387 MB zip,
   50k/50k lossless, Windows `ZipFile.OpenRead` 50,005 entries; synthetic ZIP64
-  **70,000** entries. Panel button is slice 2c.
+  **70,000** entries. Panel button shipped as slice 2c.
 - **RM-07 slice 3 — RM-00 golden on SqliteStore.** `eval/run.js --store sqlite`
   (also `RESONANCE_STORE=sqlite`; `--store` wins) runs the same corpora through
   `SqliteStore` behind the Store seam — same `memory-core.js`, no forked recall
@@ -29,7 +41,7 @@ stable; sophistication grows in the substrate, not in the API.
   jsonl-only. **27/31 identical case-for-case, no flips.** Cache embeddings
   are already exact f32, so Float32 BLOB packing is lossless on this embedder;
   no cosine-tolerance was added. JSONL stays default (switch is slice 4, after
-  2b export).
+  the 2c panel button).
 - **RM-07 slice 2a — streaming JSONL→SQLite migrator.** Opt-in CLI
   (`node entry.js --migrate` / `npm run migrate`). 10-step protocol: stream
   line-at-a-time into `.db.migrating` (never `readFileSync` — that is the S1

@@ -2972,6 +2972,43 @@ test("README + manifest layout field", () => {
   assert.strictEqual(man.schema_version, 1);
 });
 
+test("uniqueZipPath({ create:false }) does not mkdir (panel preview must not write)", () => {
+  const dir = tmp("preview-no-mkdir");
+  assert.ok(!fs.existsSync(dir));
+  const p = exp.uniqueZipPath(dir, "resonance-memories-preview", { create: false });
+  assert.ok(!fs.existsSync(dir), "preview must not create the dest dir");
+  assert.ok(p.endsWith(".zip"));
+});
+
+test("panel page source ships the export button + confirm modal (not a browser test)", () => {
+  // The actual click/modal is a browser UI — no browser tooling here.
+  // This only asserts the page we serve contains the settled 2c copy.
+  const src = fs.readFileSync(path.join(__dirname, "panel.js"), "utf8");
+  assert.ok(src.includes("Export my memories"), "visible button");
+  assert.ok(/read-only/i.test(src), "confirm modal says read-only");
+  assert.ok(/Filenames may contain a preview/.test(src), "filename-preview note");
+  assert.ok(/this can take a minute at large N/.test(src), "honest in-flight copy, not a fake %");
+  assert.ok(src.includes("pauseWatchdog"), "watchdog pause is in the panel server");
+  assert.ok(src.includes("copy path") || src.includes("exportCopyPath"), "copy-path control");
+  assert.ok(/not an MCP tool/i.test(src), "exfil path stays off the four verbs");
+});
+
+test("export is not an MCP tool (four verbs stay four)", () => {
+  const src = fs.readFileSync(path.join(__dirname, "server.js"), "utf8");
+  assert.ok(/name: "save_memory"/.test(src));
+  assert.ok(/name: "recall_memory"/.test(src));
+  assert.ok(/name: "edit_memory"/.test(src));
+  assert.ok(/name: "delete_memory"/.test(src));
+  assert.ok(!/name: "export_memory"/.test(src));
+  assert.ok(!/name: "export"/.test(src));
+  const toolNames = [...src.matchAll(/name:\s*"(save_memory|recall_memory|edit_memory|delete_memory|export\w*)"/g)]
+    .map((m) => m[1]);
+  assert.deepStrictEqual(
+    toolNames.filter((n, i) => toolNames.indexOf(n) === i),
+    ["save_memory", "recall_memory", "edit_memory", "delete_memory"]
+  );
+});
+
 // ------------------------------------------------ edit() embedding safety
 // An embedder outage is transient; losing an embedding is not.
 // createCore already required above (warm-field section)
@@ -3516,6 +3553,266 @@ async function asyncTests() {
         assert.strictEqual(rec.text, "sqlite tea");
         assert.ok(Array.isArray(rec.embedding));
         void walBefore;
+      });
+    }
+  }
+
+  section("RM-07 slice 2c — panel export button (route-level, golden-safe)");
+
+  {
+    const { spawn } = require("child_process");
+    const net = require("net");
+    const { ZipReader } = require("./zip.js");
+    const { JsonlStore } = require("./store.js");
+
+    function freePort() {
+      return new Promise((resolve, reject) => {
+        const s = net.createServer();
+        s.once("error", reject);
+        s.listen(0, "127.0.0.1", () => {
+          const p = s.address().port;
+          s.close((err) => err ? reject(err) : resolve(p));
+        });
+      });
+    }
+
+    async function startPanelChild(opts) {
+      opts = opts || {};
+      const home = opts.home || tmp("panel-home-" + Math.random().toString(36).slice(2));
+      const desktop = path.join(home, "Desktop");
+      fs.mkdirSync(desktop, { recursive: true });
+      const store = opts.store || path.join(home, "resonance-memory.jsonl");
+      const port = opts.port || await freePort();
+      const hold = opts.hold || null;
+      const env = Object.assign({}, process.env, {
+        MEMORY_FILE_PATH: store,
+        USERPROFILE: home,
+        HOME: home,
+        RESONANCE_MEMORY_PANEL_PORT: String(port),
+        RESONANCE_MEMORY_NO_OPEN: "1",
+        RESONANCE_STORE: opts.storeBackend || "jsonl",
+      });
+      delete env.RESONANCE_MEMORY_CONFIG;
+      if (opts.watchdogMs) env.RESONANCE_MEMORY_WATCHDOG_MS = String(opts.watchdogMs);
+      if (hold) env.RM_PANEL_EXPORT_HOLD = hold;
+      const child = spawn(process.execPath, [path.join(__dirname, "panel.js")], {
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const url = "http://127.0.0.1:" + port;
+      const t0 = Date.now();
+      let lastErr = null;
+      while (Date.now() - t0 < 12000) {
+        if (child.exitCode != null) {
+          const err = String(child.stderr && child.stderr.read() || "");
+          throw new Error("panel exited early (" + child.exitCode + "): " + err);
+        }
+        try {
+          const r = await fetch(url + "/");
+          if (r.ok) {
+            return { child, port, url, home, desktop, store };
+          }
+        } catch (e) { lastErr = e; }
+        await new Promise((r) => setTimeout(r, 40));
+      }
+      try { child.kill("SIGKILL"); } catch { /* */ }
+      throw new Error("panel did not start: " + String(lastErr && lastErr.message || lastErr));
+    }
+
+    async function stopPanelChild(child) {
+      if (!child) return;
+      try { child.kill("SIGKILL"); } catch { /* */ }
+      await new Promise((resolve) => {
+        if (child.exitCode != null || child.signalCode) return resolve();
+        child.on("exit", resolve);
+        setTimeout(resolve, 3000);
+      });
+    }
+
+    await atest("previewExport: empty store, count 0, dest on Desktop, no write", async () => {
+      const home = tmp("preview-home");
+      fs.mkdirSync(path.join(home, "Desktop"), { recursive: true });
+      const store = path.join(home, "resonance-memory.jsonl");
+      const origHome = process.env.USERPROFILE;
+      const origHome2 = process.env.HOME;
+      process.env.USERPROFILE = home;
+      process.env.HOME = home;
+      try {
+        const p = await exp.previewExport(store);
+        assert.strictEqual(p.count.total, 0);
+        assert.strictEqual(p.count.current, 0);
+        assert.ok(p.destPath.indexOf(path.join(home, "Desktop")) === 0, "Desktop default: " + p.destPath);
+        assert.ok(!fs.existsSync(p.destPath), "preview writes no zip");
+        assert.ok(!fs.existsSync(store), "preview does not create the store");
+      } finally {
+        if (origHome == null) delete process.env.USERPROFILE; else process.env.USERPROFILE = origHome;
+        if (origHome2 == null) delete process.env.HOME; else process.env.HOME = origHome2;
+      }
+    });
+
+    await atest("previewExport: current vs history + estimate, store bytes unchanged", async () => {
+      const file = tmp("preview-counts.jsonl");
+      const store = new JsonlStore(file);
+      store.add(normalize({ id: 1, text: "current tea", created: "2026-03-05T12:00:00.000Z" }));
+      store.add(normalize({
+        id: 2, text: "old coffee", created: "2026-03-05T11:00:00.000Z",
+        superseded_by: 1, valid_to: "2026-03-05T12:00:00.000Z",
+      }));
+      store.add(normalize({ id: 3, text: "deleted", created: "2026-01-01T00:00:00.000Z", deleted: true }));
+      const before = fs.readFileSync(file);
+      const p = await exp.previewExport(file, { outDir: tmp("preview-out") });
+      assert.strictEqual(p.count.total, 3);
+      assert.strictEqual(p.count.current, 1);
+      assert.strictEqual(p.count.superseded, 1);
+      assert.strictEqual(p.count.deleted, 1);
+      assert.ok(p.estimateBytes > 0);
+      assert.deepStrictEqual(fs.readFileSync(file), before, "preview is read-only");
+    });
+
+    await atest("GET /api/export preview + POST writes zip, empty store, never demo-seed", async () => {
+      const panel = await startPanelChild();
+      try {
+        const page = await (await fetch(panel.url + "/")).text();
+        assert.ok(page.includes("Export my memories"));
+        assert.ok(/read-only/i.test(page));
+        const prev = await (await fetch(panel.url + "/api/export")).json();
+        assert.strictEqual(prev.demo, false);
+        assert.strictEqual(prev.busy, false);
+        assert.strictEqual(prev.count.total, 0);
+        assert.strictEqual(prev.storePath, panel.store);
+        assert.ok(prev.destPath.indexOf(panel.desktop) === 0, prev.destPath);
+        const posted = await fetch(panel.url + "/api/export", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+        });
+        const body = await posted.json();
+        assert.strictEqual(posted.status, 200, JSON.stringify(body));
+        assert.strictEqual(body.ok, true);
+        assert.ok(body.path && fs.existsSync(body.path), "zip written");
+        assert.strictEqual(body.demo, false);
+        assert.strictEqual(body.storePath, panel.store);
+        assert.ok(body.path.indexOf("Nightfall") < 0);
+        const z = ZipReader.open(body.path);
+        const names = z.names();
+        const readme = names.find((n) => n.endsWith("/README.txt"));
+        const jsonlName = names.find((n) => n.endsWith("/memories.jsonl"));
+        assert.ok(readme, "empty store still writes README");
+        assert.ok(jsonlName, "empty store still writes memories.jsonl");
+        const jsonl = z.readStored(jsonlName).toString("utf8");
+        assert.ok(!/Nightfall/.test(jsonl), "export is the user store, never demo-seed");
+        assert.strictEqual(jsonl.trim(), "", "empty jsonl");
+      } finally {
+        await stopPanelChild(panel.child);
+      }
+    });
+
+    await atest("POST /api/export exports the USER store (not demo-seed) and is read-only", async () => {
+      const home = tmp("panel-user-home");
+      const store = path.join(home, "resonance-memory.jsonl");
+      fs.mkdirSync(home, { recursive: true });
+      const js = new JsonlStore(store);
+      js.add(normalize({
+        id: 42, text: "user-only-panel-export-xyz", created: "2026-03-05T12:00:00.000Z",
+        embedding: [0.1, 0.2, 0.3],
+      }));
+      const before = fs.readFileSync(store);
+      const panel = await startPanelChild({ home, store });
+      try {
+        const posted = await fetch(panel.url + "/api/export", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+        });
+        const body = await posted.json();
+        assert.strictEqual(body.ok, true);
+        assert.strictEqual(body.count.total, 1);
+        assert.deepStrictEqual(fs.readFileSync(store), before, "export is read-only");
+        const z = ZipReader.open(body.path);
+        const jsonlName = z.names().find((n) => n.endsWith("/memories.jsonl"));
+        const jsonl = z.readStored(jsonlName).toString("utf8");
+        assert.ok(jsonl.indexOf("user-only-panel-export-xyz") >= 0);
+        assert.ok(!/Nightfall/.test(jsonl), "demo-seed must not leak into the user export");
+      } finally {
+        await stopPanelChild(panel.child);
+      }
+    });
+
+    await atest("in-flight POST returns 409; watchdog is paused; pings still answered", async () => {
+      const hold = tmp("panel-export.hold");
+      try { if (fs.existsSync(hold)) fs.unlinkSync(hold); } catch { /* */ }
+      const panel = await startPanelChild({ hold, watchdogMs: 400 });
+      try {
+        await fetch(panel.url + "/api/ping", { method: "POST" });
+        const first = fetch(panel.url + "/api/export", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+        });
+        const t0 = Date.now();
+        let preview = null;
+        while (Date.now() - t0 < 5000) {
+          preview = await (await fetch(panel.url + "/api/export")).json();
+          if (preview.busy && preview.watchdog_paused) break;
+          await new Promise((r) => setTimeout(r, 30));
+        }
+        assert.ok(preview && preview.busy, "in-flight is server-observable");
+        assert.ok(preview.watchdog_paused, "watchdog paused for the duration");
+        const dup = await fetch(panel.url + "/api/export", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+        });
+        assert.strictEqual(dup.status, 409);
+        const dupBody = await dup.json();
+        assert.strictEqual(dupBody.code, "busy");
+        const ping = await fetch(panel.url + "/api/ping", { method: "POST" });
+        assert.strictEqual(ping.status, 200, "yield/pause: ping is answered in-flight");
+        // connectedOnce is set; if pause were missing the 400ms watchdog
+        // would have killed the process. Wait well past that, no pings.
+        await new Promise((r) => setTimeout(r, 1200));
+        assert.strictEqual(panel.child.exitCode, null, "paused watchdog must not process.exit");
+        const still = await (await fetch(panel.url + "/api/export")).json();
+        assert.strictEqual(still.busy, true);
+        assert.strictEqual(still.watchdog_paused, true);
+        fs.writeFileSync(hold, "go\n");
+        const result = await first;
+        const body = await result.json();
+        assert.strictEqual(result.status, 200, JSON.stringify(body));
+        assert.strictEqual(body.ok, true);
+        assert.ok(fs.existsSync(body.path));
+        const after = await (await fetch(panel.url + "/api/export")).json();
+        assert.strictEqual(after.busy, false);
+        assert.strictEqual(after.watchdog_paused, false);
+      } finally {
+        try { fs.writeFileSync(hold, "go\n"); } catch { /* */ }
+        await stopPanelChild(panel.child);
+      }
+    });
+
+    if (sqliteAvailable()) {
+      await atest("panel export works on SqliteStore (same engine, user store)", async () => {
+        const home = tmp("panel-sqlite-home");
+        fs.mkdirSync(path.join(home, "Desktop"), { recursive: true });
+        const jsonl = path.join(home, "resonance-memory.jsonl");
+        const { SqliteStore } = require("./store-sqlite.js");
+        const { sqlitePathFor } = require("./store.js");
+        const dbPath = sqlitePathFor(jsonl);
+        const s = new SqliteStore(dbPath);
+        s.add(normalize({
+          id: 7, text: "sqlite panel export", created: "2026-04-01T00:00:00.000Z",
+          embedding: [1, 0, 0],
+        }));
+        s.close();
+        const panel = await startPanelChild({ home, store: jsonl, storeBackend: "sqlite" });
+        try {
+          const prev = await (await fetch(panel.url + "/api/export")).json();
+          assert.strictEqual(prev.backend, "sqlite");
+          assert.ok(prev.count.total >= 1);
+          const posted = await fetch(panel.url + "/api/export", {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+          });
+          const body = await posted.json();
+          assert.strictEqual(body.ok, true, JSON.stringify(body));
+          const z = ZipReader.open(body.path);
+          const jsonlName = z.names().find((n) => n.endsWith("/memories.jsonl"));
+          const text = z.readStored(jsonlName).toString("utf8");
+          assert.ok(text.indexOf("sqlite panel export") >= 0);
+        } finally {
+          await stopPanelChild(panel.child);
+        }
       });
     }
   }

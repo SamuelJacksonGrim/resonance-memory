@@ -197,9 +197,10 @@ Three claims we can defend, and should lead with:
    hand the jsonl to a competing provider. Hosted Mem0/Zep *are* the lock-in — your memory
    lives in their cloud so leaving costs a migration you don't control. Local-only is
    necessary but not sufficient (VEKTOR et al. are local too); **export that a competitor
-   can read without our exe** is the anti-hoarding claim, and it is a CLI/maintenance
-   path on purpose (four verbs stay four). We do not sanitize the export. The panel
-   button is slice 2c; import is RM-17.
+   can read without our exe** is the anti-hoarding claim, and it is a CLI + panel
+   path on purpose (four verbs stay four — a model that can dump the store is an
+   exfil path). We do not sanitize the export. The panel button shipped as
+   slice 2c; import is RM-17.
 
 Three claims we must **not** make until earned (updated August 2026):
 - ❌ "Beats Mem0 on LOCOMO" — still don't enter the number war (§4). `RM-00` has landed, so we

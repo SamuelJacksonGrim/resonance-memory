@@ -27,8 +27,8 @@
  * RM-07 slice 1: SqliteStore is SELECTABLE (RESONANCE_STORE=sqlite or live-config
  * `store: "sqlite"`). Default stays JsonlStore — conformance (slice 1) and
  * RM-00 golden parity (slice 3, `eval/run.js --store sqlite`) are green;
- * slice 2b `--export` has shipped; the default switch is slice 4, after
- * the 2c panel button so migration is not a lock-in. openStore() is the
+ * slice 2b `--export` and slice 2c panel button have shipped; the default
+ * switch is slice 4 so migration is not a lock-in. openStore() is the
  * one construction path.
  *
  * RM-07 slice 2a: JSONL→SQLite is a separate streaming migrator
@@ -152,8 +152,8 @@ class JsonlStore {
 
 /*
  * Backend selectability (RM-07 slice 1). Default is jsonl — conformance
- * and RM-00 golden parity (slice 3) are green; slice 2b `--export` has
- * shipped; the default switch is slice 4, after the 2c panel button.
+ * and RM-00 golden parity (slice 3) are green; slice 2b `--export` and
+ * slice 2c panel button have shipped; the default switch is slice 4.
  * Live-config `store` wins over env RESONANCE_STORE, same pattern as the
  * field toggle. A backend change needs a process restart (you cannot
  * hot-swap engines under an open file).
