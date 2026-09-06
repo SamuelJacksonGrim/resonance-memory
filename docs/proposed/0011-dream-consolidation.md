@@ -553,6 +553,16 @@ the clock.
 Default time: **2pm local**. First-run schedule is default-on **after
 consent**, not before.
 
+**User-facing disclosure (ship-gate, Samuel 2026-09-05).** When the dreamer
+slice ships, its README section and an in-app note must, *in the same commit*
+(`BUG-006`), state plainly: that consolidation is **on by default**, **what it
+does** (nightly Grimoire pages / dedup, using the local machine), that a
+**toggle turns it on and off**, and that the **schedule time is adjustable**.
+Do **not** add this note before the dreamer exists — a "it's on and does X"
+claim written ahead of the behaviour is the stale-claim trap this RFC's
+"the files are the present" rule forbids. The note lands *with* the feature,
+never before it.
+
 ### W-04 becomes blocking
 
 Two writer processes. Last-writer-wins on JSONL is unacceptable; SQLite
