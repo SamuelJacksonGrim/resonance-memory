@@ -1,4 +1,4 @@
-# 0011 — Dream consolidation (the book, the dreamer, the soak)
+# 0011 — Dream consolidation (the Grimoire, the dreamer, the soak)
 
 **Status:** proposed (design **frozen** 2026-09-05; source of truth for the Phase 4 build; not an implementation) · **Backlog:** `RM-10`, `RM-15`; `RM-09` consumes the sim; `W-03` / `W-04` are prerequisites · **Depends on:** Phase 0, `RM-02`, `RM-07` as shipped · **Does not depend on:** Phase 1–3 for slices 4.0–4.1 / page index · **Gates:** Op C keep/cut = Phase 4 exit; `Related:` default-on = W-03 budget held OR persist-net-read (retrieve-then-filter) OR N-cap; crystal auto-appoint = Op C win **and** `RM-16`; idle 2pm schedule ≠ crystal auto-appoint
 
@@ -6,7 +6,7 @@
 > Three Grok rounds (`task-20260905-130041`, `-214814`, `-221519`) plus ChatGPT
 > convergence settled it; round 3's verdict was freeze. Measurement slices
 > 4.0 / 4.0b / 4.0c are the only work that follows this RFC. No crystal, no
-> book write, no `--dreamer` mutation until those numbers are in.
+> Grimoire write, no `--dreamer` mutation until those numbers are in.
 >
 > Where this note and the shipping files disagree, **the files are the
 > present** and this file is the future. Architecture §1, I8, and the
@@ -35,7 +35,7 @@ of `--export` / `--migrate` / `--dedup-existing`), [`0009`](0009-edge-threat-mod
   on WarmField / activation (I7).
 - **Not loosening `DEDUP_LO` (0.88)** to "help" consolidation.
 - **Not dream-mutation code in this RFC.** 4.0c / 4.0b / 4.0 measure; they
-  do not appoint, merge, or write a book node.
+  do not appoint, merge, or write a Grimoire node.
 - **Not an RM-16 write-path filter in the 4.0c slices.** Stamp the
   requirement here; build it at appointment.
 
@@ -86,7 +86,7 @@ mark-then-`vacuum()`.
 > journaled, reversible supersession (`superseded_by` / `valid_to`), never a
 > hard delete. User `delete_memory` stays a verb (still soft, still compacted
 > at `vacuum()`). Edge `pruneSweep` stays mark-then-vacuum, explicit, not a
-> memory delete. Book nodes do **not** supersede their sources.
+> memory delete. Grimoire nodes do **not** supersede their sources.
 
 The bite this accepts: thematic restatements below `DEDUP_LO` (0.88) stay
 current and crowd top-k over years. That is a feature of nothing-lost, not
@@ -109,7 +109,7 @@ A/B on RM-00 + the soak, promote only on a measured win that does not lose
 needles. **Non-goal for v1.** Do not smuggle it.
 
 `isHistoricalQuery` already expands the *candidate set* (current vs active).
-That is not rank. The book walk (§4) is the same kind of thing.
+That is not rank. The Grimoire walk (§4) is the same kind of thing.
 
 ### 1.4 The governing invariant (new)
 
@@ -322,7 +322,7 @@ also wrong.
 - Sources stay `isCurrent()`. The crystal does **not** `supersede` them.
   A gist that invalidates its evidence is an I8 violation even if the
   bytes exist behind `valid_to`.
-- Book nodes use the same skip against *their* sources (§4).
+- Grimoire nodes use the same skip against *their* sources (§4).
 
 Crystals **are** in the default cosine pool (I2: no unmeasured down-rank).
 Needle queries must still prefer the source because the source shares more
@@ -339,7 +339,7 @@ substrate risk — without measuring "was the prose good." A live
 gate. If the fixture-crystal arm already loses `needle_retention`, **cut**
 — the failure is the write, not the prompt.
 
-### Op D — the book (temporal index)
+### Op D — the Grimoire (temporal index)
 
 After each successful dream of a grain, write (or refresh) the index node
 for that grain: a page for the day, and when the week / month / year
@@ -348,9 +348,18 @@ walks. Fully specified in §4.
 
 ---
 
-## 4. The book
+## 4. The Grimoire
 
-The whole index is **the book**. Do not reuse "book" for a level.
+**The Grimoire — Resonance Memory's temporal index of lived memory.** The whole
+structure is *the Grimoire* (Grim → grimoire: a compiled body of accumulated
+knowledge, organized for retrieval and use — which is exactly what the temporal
+index is). Do not reuse "Grimoire" for a level.
+
+> The Grimoire contains **Tomes**. Tomes contain **Volumes**. Volumes contain
+> **Chapters**. Chapters contain **Pages**.
+
+"Book" survives only as ordinary-language description, never as an architectural
+term.
 
 ### Naming
 
@@ -359,16 +368,16 @@ The whole index is **the book**. Do not reuse "book" for a level.
 | day | local calendar date | **page** | Samuel's word |
 | week | ISO week in the user's TZ | **chapter** | Samuel's word |
 | month | calendar month in that TZ | **volume** | A bound gathering of chapters. Open question §9 (a) if Samuel prefers "part" |
-| year | calendar year in that TZ | **tome** | A year of a life is a tome of the book. Not "book" (that's the whole spine). Not "yearbook" |
+| year | calendar year in that TZ | **tome** | A year of a life is a tome of the Grimoire. Not "Grimoire" (that's the whole spine). Not "yearbook" |
 
 ### Two spines — do not conflate them
 
 RM-04 is **valid time** ("when it was true"): `valid_from` / `valid_to`.
 "Where did I live in 2019" already has this.
 
-The book is **transaction time** ("when we talked / when it was saved"):
+The Grimoire is **transaction time** ("when we talked / when it was saved"):
 `created` (and for a crystal, the dream's `valid_from`). "What did I talk
-to you about on Thursday January 2026" is a book walk.
+to you about on Thursday January 2026" is a Grimoire walk.
 
 "I went to Kyoto in 2019," saved on 2026-01-08, lives on the
 **2026-01-08 page**, not in a 2019 tome. The 2019 fact remains findable
@@ -380,7 +389,7 @@ A second lexical detector, `isTemporalNavigationQuery`, same family as
 `isHistoricalQuery` (server-assigned, not model-assigned). Overlap is
 real: "what did I used to do on Thursdays" is valid-time habitual, not a
 page walk. Cue-gate it the way RM-03 cue-gates supersession —
-date / weekday / "on or around" / "that week" without a "used to" → book;
+date / weekday / "on or around" / "that week" without a "used to" → Grimoire;
 "used to" → `active()` validity chain.
 
 ### Calendar is civil, not rolling counts
@@ -414,16 +423,16 @@ confidence:      number                    // journal/UI, NOT rank (I2)
 ```
 
 `normalize()` backfills `kind: "memory"` for every existing row.
-`isCurrent()` stays true for sources. Book nodes do **not** set `valid_to`
+`isCurrent()` stays true for sources. Grimoire nodes do **not** set `valid_to`
 on what they index.
 
 Same-grain + same-`temporal_key` is a restatement: confirm, refresh gist,
 do not append. PII / extract / embed still run. One `save()`. The
-crystal↔source skip covers book-node↔its-sources.
+crystal↔source skip covers Grimoire-node↔its-sources.
 
 ### Candidate-set exclusion
 
-**Book nodes are out of the default `current()` cosine pool**, the same
+**Grimoire nodes are out of the default `current()` cosine pool**, the same
 way superseded rows are excluded from default and included when history
 is asked. A daily gist in the ordinary pool will crowd "what's my tea
 order" because Thursday's page mentioned tea. That is Op C's needle
@@ -437,7 +446,7 @@ This is a **candidate-set** change, already the historical-query pattern,
 not an I2 rank amendment. Putting pages in the default pool is a measured
 A/B, not the v1 default. Open question §9 (b).
 
-Crystals (Op C) stay *in* the default pool. Book nodes are the temporal
+Crystals (Op C) stay *in* the default pool. Grimoire nodes are the temporal
 spine; crystals are theme gists. Different crowding, different gate.
 
 ### Traversal
@@ -455,9 +464,9 @@ Query: "What did I talk to you about on or around Thursday January 2026"
 4. Miss: walk up. Chapter for that ISO week → its pages → union of
    indexes. Then cosine. This is how a forgotten Tuesday still falls out
    of "that week."
-5. **No book node yet (dream hasn't run): fail open to ordinary cosine
+5. **No Grimoire node yet (dream hasn't run): fail open to ordinary cosine
    over `created` in that window** (filter current memories by
-   local-date). The book is an accelerator, not a gate. A user who never
+   local-date). The Grimoire is an accelerator, not a gate. A user who never
    dreams still answers "Thursday" by timestamp.
 
 **Temporal recall must not depend on the dreamer.** The timestamp is
@@ -515,7 +524,7 @@ ideas that got glued together, only one of which is already true:
 If after the soak we see `Related:` still dumping January in March,
 *then* we tune H via `RM-09` **on the eval**, not by grain.
 
-**Book-index edges are STRUCTURAL:** `provenance.origin = "book-index"`,
+**Grimoire-index edges are STRUCTURAL:** `provenance.origin = "grimoire-index"`,
 Hebbian weight 0, **not unreinforced-prune-eligible**. Same two-signal
 instinct as save-time neighbors: structure does not fade; learned
 co-activation does. The temporal spine never goes blind because a
@@ -763,7 +772,7 @@ measuring "field on vs off," which RM-00 already does.
 
 Arms (runner flags, same shape as `--extract`): `control` / `redundancy`
 (Op A) / `nominate` (Op B journal only, store bytes identical) /
-`crystal` (fixture gist through `save()`) / `book-walk`.
+`crystal` (fixture gist through `save()`) / `grimoire-walk`.
 
 Register in `eval/metrics.js`, do not fork a scorer. Reuse
 `duplicate_rate`, `recall_at_k` / `mrr` **split by query kind**. New names:
@@ -779,8 +788,8 @@ Register in `eval/metrics.js`, do not fork a scorer. Reuse
 | `storage_ratio` | all (superlinear = fail; crystals may raise N slightly) |
 | `provenance_integrity` | Op C (every crystal has sources covering the cluster; every source still `isCurrent()`) |
 | `hub_contamination` | Op B / 4.4 |
-| `book_hit_rate` | Op D (temporal-nav queries) |
-| `book_crowding` | Op D (page gist in default top-k — **must be 0**) |
+| `grimoire_hit_rate` | Op D (temporal-nav queries) |
+| `grimoire_crowding` | Op D (page gist in default top-k — **must be 0**) |
 | `cofire_rate` / `near_miss_cofire` | 4.0b sim |
 
 **Do not AND `duplicate_rate` down with gist-recall up as one Phase 4
@@ -839,7 +848,7 @@ Gates, restated:
 
 - **Op C keep / cut = Phase 4 exit.** No measurable gain on C → cut the
   phase, keep A as RM-02.d (periodic `--dedup-existing` from the panel)
-  if A won on missed-dups, keep D-page if the book-walk won. That is a
+  if A won on missed-dups, keep D-page if the grimoire-walk won. That is a
   shipped negative. Open question §9 (d) on the exact keep-the-dreamer
   policy.
 - **`Related:` default-on = W-03 budget held OR persist-net-read
@@ -871,9 +880,9 @@ must not be persisted into clusters (I7). Amend the phase-4 header from
 | **I5** | Dream is a write path, so unbounded *here* is the point — but not on recall, and not a full JSONL rewrite. Incremental patches / one txn per page. Accrual stays C(k,2). Recall's ~5-id UPDATE is not blocked behind a dream. |
 | **I6** | No `tick()`. Cluster evidence uses `effectiveHebbian(now)`. A dream is not a recall for decay. No epoch-modulated H in v1. |
 | **I7** | WarmField / activation never persisted into clusters. Op B walks learned Hebbian edges only. |
-| **I8** | As amended §1.2: no silent / unjournaled removal; dream never destroys a real memory; only journaled reversible duplicate retirement. Book nodes do not supersede sources. User `delete_memory` unchanged. `pruneSweep` unchanged. |
-| **I9 (recall)** | Primaries byte-identical field on/off. Book gist is an additive header, never a ranked peer. `Related:` stays additive. |
-| **I9 (write)** | No private door into the store. Typed `detectNearDuplicate` skip for crystal↔source and book-node↔source; still one `save()`. |
+| **I8** | As amended §1.2: no silent / unjournaled removal; dream never destroys a real memory; only journaled reversible duplicate retirement. Grimoire nodes do not supersede sources. User `delete_memory` unchanged. `pruneSweep` unchanged. |
+| **I9 (recall)** | Primaries byte-identical field on/off. Grimoire gist is an additive header, never a ranked peer. `Related:` stays additive. |
+| **I9 (write)** | No private door into the store. Typed `detectNearDuplicate` skip for crystal↔source and Grimoire-node↔source; still one `save()`. |
 | **Learning vs presentation** | §1.4. Accrual is substrate. `Related:` and the panel graph are consumers. Presentation-layer cost must not gate learning. |
 | **`RM-16` gates consumers** | §2. Accrual-on does not appoint. Tainted clusters cannot auto-appoint. Do not smuggle a write-path filter into 4.0c. |
 
@@ -897,21 +906,23 @@ must not be persisted into clusters (I7). Amend the phase-4 header from
 ### Open questions for Samuel
 
 The field split, fade-as-I6 (not rank), retrieve-then-filter, theme-structured
-sim, and freeze-0011 itself are **settled**. These four are not:
+sim, and freeze-0011 itself are **settled**. Naming and the cosine-exclusion are
+now settled too (Samuel, 2026-09-05). These remain open:
 
-1. **Volume / tome naming final?** Volume = calendar month, tome = calendar
-   year is the call in this RFC. "Part" / "yearbook" were the rejected
-   alternatives. Confirm or rename before 4.1b paints the panel.
-2. **Book nodes out of default cosine — confirm?** v1 default is exclusion
-   (candidate-set, like superseded rows), included only on
-   `isTemporalNavigationQuery`. Putting them in the pool is a measured A/B,
-   not the default.
+1. **Naming — SETTLED.** The whole structure is **the Grimoire**; levels are
+   **Page** (day) / **Chapter** (week) / **Volume** (month) / **Tome** (year).
+   "Part" / "yearbook" / reusing "Grimoire" for a level were rejected.
+2. **Grimoire nodes out of default cosine — CONFIRMED** (Samuel, 2026-09-05):
+   v1 default is exclusion (candidate-set, like superseded rows), included only
+   on `isTemporalNavigationQuery`. Keep the Grimoire a navigation/index
+   structure, not another retrieval corpus. Putting nodes in the pool would be
+   a later measured A/B, not the default.
 3. **2pm via OS scheduled task after install / panel consent — confirm?**
    Panel is consent + journal + schedule config, not the clock (it
    heartbeat-auto-shuts down). Not a silent Task Scheduler entry.
 4. **If Op C loses and A / D win: keep the dreamer for pages + dedup, cut
    crystals, record the negative?** That is the lean. Confirm the cut
-   policy so a losing Op C does not take a winning book with it.
+   policy so a losing Op C does not take a winning Grimoire with it.
 
 ---
 
