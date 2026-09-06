@@ -927,12 +927,19 @@ now settled too (Samuel, 2026-09-05). These remain open:
    on `isTemporalNavigationQuery`. Keep the Grimoire a navigation/index
    structure, not another retrieval corpus. Putting nodes in the pool would be
    a later measured A/B, not the default.
-3. **2pm via OS scheduled task after install / panel consent — confirm?**
-   Panel is consent + journal + schedule config, not the clock (it
-   heartbeat-auto-shuts down). Not a silent Task Scheduler entry.
-4. **If Op C loses and A / D win: keep the dreamer for pages + dedup, cut
-   crystals, record the negative?** That is the lean. Confirm the cut
-   policy so a losing Op C does not take a winning Grimoire with it.
+3. **2pm via OS scheduled task after install / panel consent — CONFIRMED**
+   (Samuel, 2026-09-05): OS scheduled task, after consent. Panel is consent +
+   journal + schedule config, not the clock (it heartbeat-auto-shuts down).
+   Not a silent Task Scheduler entry.
+4. **Op C cut policy — CONFIRMED** (Samuel, 2026-09-05): if gist-writing (Op C)
+   does not measurably earn its keep while dedup (Op A) and the Grimoire (Op D)
+   do, cut **only** Op C, keep the dreamer for pages + dedup, and record the
+   negative. A losing Op C never takes a winning Grimoire with it. (Samuel's
+   own read: he expects Op C to work out; this is the safety net, not a
+   prediction — the soak / sim decide, not assertion.)
+
+All four open questions are now settled. Any further change is an amendment to
+this RFC, not a pending decision.
 
 ---
 
