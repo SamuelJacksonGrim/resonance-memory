@@ -246,9 +246,9 @@ function mrrStats(results, corpus, opts) {
 register({
   name: "recall_at_k",
   defaults: { k: 5 },
-  description: "Fraction of labeled queries whose top-k ranked ids contain at least one relevant id (success@k).",
+  description: "Fraction of labeled queries whose top-k ranked ids contain at least one relevant id (success@k). explain().byKind splits on query_kind when present (RM-15).",
   compute(results, corpus, opts) { return recallAtKStats(results, corpus, opts).rate; },
-  explain: recallAtKStats,
+  explain: recallAtKStatsSplit,
 });
 
 /*
@@ -276,9 +276,9 @@ register({
  */
 register({
   name: "mrr",
-  description: "Mean reciprocal rank of the first relevant id (misses contribute 0).",
+  description: "Mean reciprocal rank of the first relevant id (misses contribute 0). explain().byKind splits on query_kind when present (RM-15).",
   compute(results, corpus, opts) { return mrrStats(results, corpus, opts).mrr; },
-  explain: mrrStats,
+  explain: mrrStatsSplit,
 });
 
 function groupsFromWrites(writes) {
@@ -734,6 +734,706 @@ function isSaveRefusal(msg) {
   return false;
 }
 
+function queryKindOf(q) {
+  return (q && (q.query_kind || q.probe_kind)) || null;
+}
+
+function splitByQueryKind(statsFn, results, corpus, opts) {
+  const base = statsFn(results, corpus, opts);
+  const queries = asQueryList(results);
+  const kinds = new Set();
+  for (const q of queries) {
+    const k = queryKindOf(q);
+    if (k) kinds.add(k);
+  }
+  const byKind = {};
+  for (const kind of kinds) {
+    const subset = queries.filter((q) => queryKindOf(q) === kind);
+    byKind[kind] = statsFn({ queries: subset }, corpus, opts);
+  }
+  base.byKind = byKind;
+  return base;
+}
+
+function recallAtKStatsSplit(results, corpus, opts) {
+  return splitByQueryKind(recallAtKStats, results, corpus, opts);
+}
+
+function mrrStatsSplit(results, corpus, opts) {
+  return splitByQueryKind(mrrStats, results, corpus, opts);
+}
+
+function asRecordList(results) {
+  if (!results) return [];
+  if (Array.isArray(results)) return results;
+  if (Array.isArray(results.records)) return results.records;
+  if (Array.isArray(results.all_records)) return results.all_records;
+  return [];
+}
+
+function recordById(records) {
+  const m = new Map();
+  for (const r of records || []) {
+    if (r && r.id != null) m.set(String(r.id), r);
+  }
+  return m;
+}
+
+function survivorId(rec, byId) {
+  if (!rec) return null;
+  const seen = new Set();
+  let cur = rec;
+  while (cur && cur.superseded_by != null && !seen.has(String(cur.id))) {
+    seen.add(String(cur.id));
+    const next = byId.get(String(cur.superseded_by));
+    if (!next) return String(cur.superseded_by);
+    cur = next;
+  }
+  return cur ? String(cur.id) : null;
+}
+
+function textHasValue(text, value) {
+  if (value == null || value === "") return false;
+  return norm(text).includes(norm(value));
+}
+
+function slotProbeList(results, corpus) {
+  if (results && Array.isArray(results.slot_probes)) return results.slot_probes;
+  const queries = asQueryList(results).filter((q) => queryKindOf(q) === "slot");
+  if (queries.length) return queries;
+  if (corpus && Array.isArray(corpus.slot_probes)) return corpus.slot_probes;
+  return [];
+}
+
+function stalenessStats(results, corpus, opts) {
+  const k = opts && opts.k != null ? Number(opts.k) : 5;
+  const probes = slotProbeList(results, corpus);
+  if (!probes.length) {
+    return { n: 0, n_stale: 0, rate: null, misses: [], byProbe: [] };
+  }
+  const scored = [];
+  for (const p of probes) {
+    const current = p.current_value != null ? p.current_value : p.value;
+    const rankedTexts = (p.ranked_texts || []).slice(0, k);
+    const rankedIds = asIds(p.ranked_ids || p.ranked).slice(0, k);
+    const relevant = asIds(p.relevant_ids || p.current_ids);
+    let hit = false;
+    // RFC: "slot queries where current value is wrong". Prefer the value
+    // string — a mid-band merge retires the origin id but keeps the
+    // longer original text, so keying on write_id false-stales a still-
+    // correct answer (Koneko restated as "black cat named Koneko").
+    if (current != null) {
+      hit = rankedTexts.some((t) => textHasValue(t, current));
+    } else if (relevant.length) {
+      hit = relevant.some((id) => rankedIds.includes(id));
+    } else {
+      continue; // unlabeled
+    }
+    scored.push({
+      id: p.id || p.slot || p.query || null,
+      slot: p.slot || null,
+      hit,
+      stale: !hit,
+    });
+  }
+  const n = scored.length;
+  const nStale = scored.filter((s) => s.stale).length;
+  return {
+    k, n, n_stale: nStale,
+    rate: n ? nStale / n : null,
+    misses: scored.filter((s) => s.stale).map((s) => s.id),
+    byProbe: scored,
+  };
+}
+
+/*
+ * staleness_rate — RM-15's core curve (0011 §7.3).
+ *
+ * Among labeled slot probes ("where do I live" / "where do I work" / …),
+ * the fraction whose top-k does NOT contain the persona's CURRENT slot
+ * value. A superseded city ranking above the current one is a stale hit.
+ *
+ * Probe is labeled by `current_value` (substring of ranked_texts) and/or
+ * `relevant_ids` (current slot record ids). Unlabeled probes skipped.
+ * No probes → null (not a 0 that looks like a perfect store).
+ *
+ * results shape: { slot_probes: [{ slot, ranked_texts, ranked_ids,
+ *   current_value, relevant_ids }] } or queries with query_kind:"slot".
+ */
+register({
+  name: "staleness_rate",
+  defaults: { k: 5 },
+  description: "Fraction of slot probes whose top-k does not contain the current slot value.",
+  compute(results, corpus, opts) { return stalenessStats(results, corpus, opts).rate; },
+  explain: stalenessStats,
+});
+
+function filterNeedleQueries(results, opts) {
+  const kind = (opts && opts.query_kind) || "episodic";
+  const queries = asQueryList(results);
+  const tagged = queries.filter((q) => q && (q.needle || queryKindOf(q) === kind));
+  if (tagged.length) return tagged;
+  if (results && Array.isArray(results.needle_queries)) return results.needle_queries;
+  return [];
+}
+
+function needleRetentionStats(results, corpus, opts) {
+  const queries = filterNeedleQueries(results, opts);
+  if (!queries.length) {
+    return { k: (opts && opts.k) || 5, n: 0, hits: 0, rate: null, misses: [] };
+  }
+  return recallAtKStats({ queries }, corpus, opts);
+}
+
+/*
+ * needle_retention@k — I8-as-retrieval (0011 §7.3).
+ *
+ * Relevant = the SOURCE id of a planted unique-token episodic, not a
+ * gist that happens to contain the token. Same success@k formula as
+ * recall_at_k, restricted to needle / query_kind:"episodic" queries.
+ * Missing the set → null so a control arm without probes is NA, not 0.
+ */
+register({
+  name: "needle_retention@k",
+  defaults: { k: 5, query_kind: "episodic" },
+  description: "Success@k on planted unique-token needles; relevant is the source id.",
+  compute(results, corpus, opts) { return needleRetentionStats(results, corpus, opts).rate; },
+  explain: needleRetentionStats,
+});
+
+function pairList(results, corpus) {
+  if (results && Array.isArray(results.must_not_merge)) return results.must_not_merge;
+  if (corpus && Array.isArray(corpus.must_not_merge)) return corpus.must_not_merge;
+  return [];
+}
+
+function pairIds(pair) {
+  if (Array.isArray(pair) && pair.length >= 2) return [String(pair[0]), String(pair[1])];
+  const a = pair.a_id || pair.a || pair.a_write_id;
+  const b = pair.b_id || pair.b || pair.b_write_id;
+  if (a == null || b == null) return null;
+  return [String(a), String(b)];
+}
+
+function falseMergeStats(results, corpus) {
+  const records = asRecordList(results);
+  const pairs = pairList(results, corpus);
+  if (!pairs.length) {
+    return { n: 0, n_false: 0, rate: null, false_pairs: [] };
+  }
+  const byId = recordById(records);
+  const writeToId = results && results.write_to_id instanceof Map
+    ? results.write_to_id
+    : (results && results.write_to_id) || {};
+  function resolve(label) {
+    if (byId.has(label)) return label;
+    const mapped = writeToId instanceof Map ? writeToId.get(label) : writeToId[label];
+    return mapped != null ? String(mapped) : label;
+  }
+  const scored = [];
+  for (const pair of pairs) {
+    const ids = pairIds(pair);
+    if (!ids) continue;
+    const aId = resolve(ids[0]);
+    const bId = resolve(ids[1]);
+    const a = byId.get(aId);
+    const b = byId.get(bId);
+    if (!a || !b) {
+      scored.push({ pair: ids, false_merge: false, reason: "missing-record" });
+      continue;
+    }
+    const sa = survivorId(a, byId);
+    const sb = survivorId(b, byId);
+    const merged = sa != null && sb != null && sa === sb;
+    scored.push({ pair: ids, survivor: sa, false_merge: merged });
+  }
+  const n = scored.length;
+  const nFalse = scored.filter((s) => s.false_merge).length;
+  return {
+    n, n_false: nFalse,
+    rate: n ? nFalse / n : null,
+    false_pairs: scored.filter((s) => s.false_merge).map((s) => s.pair),
+    byPair: scored,
+  };
+}
+
+/*
+ * false_merge_rate — Op A / Op C (0011 §7.3).
+ *
+ * Fraction of labeled must_not_merge pairs that share a superseded_by
+ * survivor (a near-miss that got eaten). 0 is the control / Op A floor.
+ * No labeled pairs → null.
+ *
+ * results shape: { records: [{id, superseded_by}], must_not_merge?:
+ *   [[idA,idB]|{a_id,b_id}] }. corpus.must_not_merge accepted.
+ * write_to_id maps generator write_ids onto store ids.
+ */
+register({
+  name: "false_merge_rate",
+  description: "Fraction of must_not_merge pairs that share a superseded_by survivor.",
+  compute(results, corpus) { return falseMergeStats(results, corpus).rate; },
+  explain: falseMergeStats,
+});
+
+function storageRatioStats(results, corpus, opts) {
+  const nCurrent = results && results.n_current != null
+    ? Number(results.n_current)
+    : (Array.isArray(results && results.records) ? results.records.length
+      : (Array.isArray(results) ? results.length : null));
+  const nWrites = results && results.n_writes != null ? Number(results.n_writes)
+    : (corpus && corpus.n_writes != null ? Number(corpus.n_writes)
+      : (corpus && corpus.n_asserts != null ? Number(corpus.n_asserts) : null));
+  const nAsserts = results && results.n_asserts != null ? Number(results.n_asserts)
+    : (corpus && corpus.n_asserts != null ? Number(corpus.n_asserts) : nWrites);
+  const controlN = opts && opts.control_n != null ? Number(opts.control_n)
+    : (results && results.control_n != null ? Number(results.control_n) : null);
+  if (nCurrent == null) {
+    return { n_current: null, n_writes: nWrites, n_asserts: nAsserts, control_n: controlN, rate: null };
+  }
+  const baseline = controlN != null ? controlN : (nAsserts != null ? nAsserts : nWrites);
+  return {
+    n_current: nCurrent,
+    n_writes: nWrites,
+    n_asserts: nAsserts,
+    control_n: controlN,
+    baseline,
+    rate: baseline ? nCurrent / baseline : null,
+  };
+}
+
+/*
+ * storage_ratio — all arms (0011 §7.3). Superlinear = fail.
+ *
+ *   control: n_current / n_asserts  (writes that tried to store a fact)
+ *   treatment: pass opts.control_n = control's n_current; crystals may
+ *              raise N slightly (keep/cut cap is control × 1.05).
+ */
+register({
+  name: "storage_ratio",
+  description: "current().length / assert-count (control) or / control n_current (treatment).",
+  compute(results, corpus, opts) { return storageRatioStats(results, corpus, opts).rate; },
+  explain: storageRatioStats,
+});
+
+function naResult(reason) {
+  return { value: null, rate: null, n: 0, reason: reason || "not-in-control-arm" };
+}
+
+function hasCrystals(results, corpus) {
+  const recs = asRecordList(results);
+  if (recs.some((r) => r && (r.kind === "crystal" || r.source === "model_inferred" && Array.isArray(r.crystal_of)))) {
+    return true;
+  }
+  if (results && Array.isArray(results.crystals) && results.crystals.length) return true;
+  if (corpus && Array.isArray(corpus.crystals) && corpus.crystals.length) return true;
+  return false;
+}
+
+function gistQueries(results) {
+  const qs = asQueryList(results).filter((q) => queryKindOf(q) === "gist" || q.gist);
+  if (qs.length) return qs;
+  return results && Array.isArray(results.gist_queries) ? results.gist_queries : [];
+}
+
+function gistRecallStats(results, corpus, opts) {
+  if (!hasCrystals(results, corpus) && !gistQueries(results).length) {
+    return Object.assign(naResult("no crystals"), { k: (opts && opts.k) || 5, crystal_hit_rate: null });
+  }
+  const queries = gistQueries(results);
+  if (!queries.length) return Object.assign(naResult("no gist queries"), { crystal_hit_rate: null });
+  const k = opts && opts.k != null ? Number(opts.k) : 5;
+  let crystalHits = 0;
+  const scored = [];
+  for (const q of queries) {
+    const ranked = asIds(q.ranked_ids || q.ranked).slice(0, k);
+    const relevant = asIds(q.relevant_ids || q.relevant);
+    const crystals = asIds(q.crystal_ids || []);
+    const hit = relevant.some((id) => ranked.includes(id));
+    const crystalHit = crystals.some((id) => ranked.includes(id));
+    if (crystalHit) crystalHits++;
+    scored.push({ id: q.id || q.query, hit, crystalHit });
+  }
+  const n = scored.length;
+  return {
+    k, n,
+    hits: scored.filter((s) => s.hit).length,
+    rate: n ? scored.filter((s) => s.hit).length / n : null,
+    crystal_hit_rate: n ? crystalHits / n : null,
+    misses: scored.filter((s) => !s.hit).map((s) => s.id),
+  };
+}
+
+register({
+  name: "gist_recall@k",
+  defaults: { k: 5 },
+  description: "Op C: success@k where relevant is the crystal OR any current source. NA without crystals.",
+  compute(results, corpus, opts) { return gistRecallStats(results, corpus, opts).rate; },
+  explain: gistRecallStats,
+});
+
+function falseGenStats(results, corpus, opts) {
+  if (!hasCrystals(results, corpus)) return naResult("no crystals");
+  const k = opts && opts.k != null ? Number(opts.k) : 5;
+  const queries = filterNeedleQueries(results, opts);
+  if (!queries.length) return Object.assign(naResult("no needle queries"), { n_false: 0 });
+  let nFalse = 0;
+  const byQuery = [];
+  for (const q of queries) {
+    const ranked = asIds(q.ranked_ids || q.ranked).slice(0, k);
+    const source = asIds(q.relevant_ids || q.source_ids);
+    const crystals = asIds(q.crystal_ids || []);
+    const hasCrystal = crystals.some((id) => ranked.includes(id));
+    const hasSource = source.some((id) => ranked.includes(id));
+    const crystalAte = hasCrystal && !hasSource;
+    const nearMissInCrystal = !!q.near_miss_in_crystal;
+    const bad = crystalAte || nearMissInCrystal;
+    if (bad) nFalse++;
+    byQuery.push({ id: q.id || q.query, crystalAte, nearMissInCrystal, bad });
+  }
+  return {
+    n: queries.length, n_false: nFalse,
+    rate: queries.length ? nFalse / queries.length : null,
+    byQuery,
+  };
+}
+
+register({
+  name: "false_generalization_rate",
+  defaults: { k: 5 },
+  description: "Op C: needle top-k has a crystal and not the source, or a near-miss pair shares a crystal.",
+  compute(results, corpus, opts) { return falseGenStats(results, corpus, opts).rate; },
+  explain: falseGenStats,
+});
+
+function iou(a, b) {
+  const A = new Set((a || []).map(String));
+  const B = new Set((b || []).map(String));
+  if (!A.size && !B.size) return 1;
+  let inter = 0;
+  for (const x of A) if (B.has(x)) inter++;
+  const union = A.size + B.size - inter;
+  return union ? inter / union : 0;
+}
+
+function clusterMembers(c) {
+  if (!c) return [];
+  if (Array.isArray(c)) return c.map(String);
+  return (c.members || c.ids || c.member_ids || []).map(String);
+}
+
+/*
+ * Hungarian (Kuhn-Munkres) on a square cost matrix. We maximize IoU by
+ * minimizing (1-IoU). n is cluster count (Op B size 3–8, a handful of
+ * gold themes) so O(n³) is fine.
+ */
+function hungarian(cost) {
+  const n = cost.length;
+  if (!n) return [];
+  const u = new Array(n + 1).fill(0);
+  const v = new Array(n + 1).fill(0);
+  const p = new Array(n + 1).fill(0);
+  const way = new Array(n + 1).fill(0);
+  for (let i = 1; i <= n; i++) {
+    p[0] = i;
+    let j0 = 0;
+    const minv = new Array(n + 1).fill(Infinity);
+    const used = new Array(n + 1).fill(false);
+    do {
+      used[j0] = true;
+      const i0 = p[j0];
+      let delta = Infinity;
+      let j1 = 0;
+      for (let j = 1; j <= n; j++) {
+        if (used[j]) continue;
+        const cur = cost[i0 - 1][j - 1] - u[i0] - v[j];
+        if (cur < minv[j]) { minv[j] = cur; way[j] = j0; }
+        if (minv[j] < delta) { delta = minv[j]; j1 = j; }
+      }
+      for (let j = 0; j <= n; j++) {
+        if (used[j]) { u[p[j]] += delta; v[j] -= delta; }
+        else minv[j] -= delta;
+      }
+      j0 = j1;
+    } while (p[j0] !== 0);
+    do {
+      const j1 = way[j0];
+      p[j0] = p[j1];
+      j0 = j1;
+    } while (j0);
+  }
+  const colOfRow = new Array(n).fill(-1);
+  for (let j = 1; j <= n; j++) {
+    if (p[j]) colOfRow[p[j] - 1] = j - 1;
+  }
+  return colOfRow;
+}
+
+function matchClusters(pred, gold, thresh) {
+  const t = thresh == null ? 0.5 : thresh;
+  const P = pred || [];
+  const G = gold || [];
+  const n = Math.max(P.length, G.length);
+  if (!n) return { matches: [], unmatchedPred: [], unmatchedGold: [] };
+  const cost = [];
+  for (let i = 0; i < n; i++) {
+    const row = [];
+    for (let j = 0; j < n; j++) {
+      const a = i < P.length ? clusterMembers(P[i]) : [];
+      const b = j < G.length ? clusterMembers(G[j]) : [];
+      const sim = (i < P.length && j < G.length) ? iou(a, b) : 0;
+      row.push(1 - sim);
+    }
+    cost.push(row);
+  }
+  const colOfRow = hungarian(cost);
+  const matches = [];
+  const usedGold = new Set();
+  const usedPred = new Set();
+  for (let i = 0; i < P.length; i++) {
+    const j = colOfRow[i];
+    if (j == null || j < 0 || j >= G.length) continue;
+    const sim = 1 - cost[i][j];
+    if (sim >= t) {
+      matches.push({ pred: i, gold: j, iou: sim });
+      usedPred.add(i);
+      usedGold.add(j);
+    }
+  }
+  return {
+    matches,
+    unmatchedPred: P.map((_, i) => i).filter((i) => !usedPred.has(i)),
+    unmatchedGold: G.map((_, i) => i).filter((i) => !usedGold.has(i)),
+  };
+}
+
+function goldClusters(results, corpus) {
+  if (results && Array.isArray(results.gold_clusters)) return results.gold_clusters;
+  if (corpus && Array.isArray(corpus.gold_clusters)) return corpus.gold_clusters;
+  if (corpus && Array.isArray(corpus.themes)) {
+    return corpus.themes.map((t) => ({ id: t.id, members: t.members || t.ids || [] }));
+  }
+  return null;
+}
+
+function predClusters(results) {
+  if (!results) return null;
+  if (Array.isArray(results.predicted_clusters)) return results.predicted_clusters;
+  if (Array.isArray(results.clusters)) return results.clusters;
+  return null;
+}
+
+function clusterScoreStats(results, corpus, opts) {
+  const pred = predClusters(results);
+  const gold = goldClusters(results, corpus);
+  if (pred == null) return Object.assign(naResult("no predicted clusters"), { precision: null, recall: null });
+  if (!gold || !gold.length) return Object.assign(naResult("no gold clusters"), { precision: null, recall: null });
+  const thresh = opts && opts.iou != null ? Number(opts.iou) : 0.5;
+  const matched = matchClusters(pred, gold, thresh);
+  const precision = pred.length ? matched.matches.length / pred.length : 1;
+  const recall = gold.length ? matched.matches.length / gold.length : 1;
+  return {
+    n_pred: pred.length,
+    n_gold: gold.length,
+    n_matched: matched.matches.length,
+    iou_threshold: thresh,
+    precision,
+    recall,
+    matches: matched.matches,
+    unmatchedPred: matched.unmatchedPred,
+    unmatchedGold: matched.unmatchedGold,
+  };
+}
+
+register({
+  name: "cluster_precision",
+  defaults: { iou: 0.5 },
+  description: "Op B: fraction of predicted clusters Hungarian-matched to gold at IoU ≥ 0.5. NA without predictions.",
+  compute(results, corpus, opts) {
+    const s = clusterScoreStats(results, corpus, opts);
+    return s.precision == null ? null : s.precision;
+  },
+  explain: clusterScoreStats,
+});
+
+register({
+  name: "cluster_recall",
+  defaults: { iou: 0.5 },
+  description: "Op B: fraction of gold clusters Hungarian-matched to a prediction at IoU ≥ 0.5. NA without predictions.",
+  compute(results, corpus, opts) {
+    const s = clusterScoreStats(results, corpus, opts);
+    return s.recall == null ? null : s.recall;
+  },
+  explain: clusterScoreStats,
+});
+
+function hubContaminationStats(results, corpus) {
+  const pred = predClusters(results);
+  if (pred == null) return naResult("no predicted clusters");
+  const hubs = new Set((results && results.hub_ids || corpus && corpus.hub_ids || []).map(String));
+  if (results && results.hub && results.hub.write_id) hubs.add(String(results.hub.write_id));
+  if (!hubs.size && corpus && corpus.hub && corpus.hub.write_id) hubs.add(String(corpus.hub.write_id));
+  let nBad = 0;
+  const bad = [];
+  for (let i = 0; i < pred.length; i++) {
+    const members = clusterMembers(pred[i]);
+    const hubMembers = members.filter((id) => hubs.has(id));
+    // 4.4 / Op B: a hub cannot be the *reason* two others cluster. A
+    // cluster whose remaining members drop below size 3 without the hub
+    // is contamination (the hub glued a pair).
+    if (hubMembers.length && members.length - hubMembers.length < 3) {
+      nBad++;
+      bad.push({ pred: i, members, hubs: hubMembers });
+    }
+  }
+  return {
+    n: pred.length, n_bad: nBad,
+    rate: pred.length ? nBad / pred.length : 0,
+    bad,
+  };
+}
+
+register({
+  name: "hub_contamination",
+  description: "Op B / 4.4: fraction of predicted clusters that only meet size because of a hub node.",
+  compute(results, corpus) {
+    const s = hubContaminationStats(results, corpus);
+    return s.rate == null ? null : s.rate;
+  },
+  explain: hubContaminationStats,
+});
+
+function provenanceIntegrityStats(results, corpus) {
+  if (!hasCrystals(results, corpus)) return naResult("no crystals");
+  const records = asRecordList(results);
+  const byId = recordById(records);
+  const crystals = (results.crystals || records.filter((r) => r && (r.kind === "crystal" || Array.isArray(r.crystal_of))));
+  if (!crystals.length) return naResult("no crystals");
+  let nOk = 0;
+  const byCrystal = [];
+  for (const c of crystals) {
+    const sources = (c.crystal_of || c.sources || []).map(String);
+    const current = sources.filter((id) => {
+      const r = byId.get(id);
+      return r && !r.deleted && !r.valid_to;
+    });
+    const ok = sources.length > 0 && current.length === sources.length;
+    if (ok) nOk++;
+    byCrystal.push({ id: c.id, n_sources: sources.length, n_current: current.length, ok });
+  }
+  return {
+    n: crystals.length, n_ok: nOk,
+    rate: crystals.length ? nOk / crystals.length : null,
+    byCrystal,
+  };
+}
+
+register({
+  name: "provenance_integrity",
+  description: "Op C: every crystal has sources covering the cluster and every source is still current.",
+  compute(results, corpus) { return provenanceIntegrityStats(results, corpus).rate; },
+  explain: provenanceIntegrityStats,
+});
+
+function bookQueries(results, kind) {
+  return asQueryList(results).filter((q) => queryKindOf(q) === kind);
+}
+
+function bookHitStats(results, corpus, opts) {
+  const queries = bookQueries(results, "temporal-nav");
+  if (!queries.length) return Object.assign(naResult("no temporal-nav queries"), { k: (opts && opts.k) || 5 });
+  return recallAtKStats({ queries }, corpus, opts);
+}
+
+register({
+  name: "grimoire_hit_rate",
+  defaults: { k: 5 },
+  description: "Op D: success@k on temporal-nav queries. NA until grimoire-walk.",
+  compute(results, corpus, opts) { return bookHitStats(results, corpus, opts).rate; },
+  explain: bookHitStats,
+});
+
+function bookCrowdingStats(results, corpus, opts) {
+  const k = opts && opts.k != null ? Number(opts.k) : 5;
+  const queries = asQueryList(results).filter((q) => queryKindOf(q) !== "temporal-nav");
+  const pageIds = new Set((results && results.grimoire_ids ||
+    corpus && corpus.grimoire_ids || []).map(String));
+  if (!pageIds.size) return Object.assign(naResult("no Grimoire nodes"), { k, n_crowded: 0 });
+  if (!queries.length) return { k, n: 0, n_crowded: 0, rate: 0 };
+  let nCrowded = 0;
+  for (const q of queries) {
+    const ranked = asIds(q.ranked_ids || q.ranked).slice(0, k);
+    if (ranked.some((id) => pageIds.has(id))) nCrowded++;
+  }
+  return { k, n: queries.length, n_crowded: nCrowded, rate: nCrowded / queries.length };
+}
+
+register({
+  name: "grimoire_crowding",
+  defaults: { k: 5 },
+  description: "Op D: fraction of ordinary queries whose top-k contains a page gist. Must be 0.",
+  compute(results, corpus, opts) {
+    const s = bookCrowdingStats(results, corpus, opts);
+    return s.rate == null ? null : s.rate;
+  },
+  explain: bookCrowdingStats,
+});
+
+function pairKey(a, b) {
+  const x = String(a), y = String(b);
+  return x < y ? x + "\t" + y : y + "\t" + x;
+}
+
+function cofireStats(results, corpus, opts) {
+  const matrix = results && results.cofire;
+  const pairs = (results && results.true_pairs) || (corpus && corpus.true_pairs);
+  if (!matrix && !Array.isArray(results && results.cofire_events)) {
+    return Object.assign(naResult("no cofire matrix (4.0b sim)"), { mean: null });
+  }
+  const truePairs = pairs || [];
+  if (!truePairs.length) return Object.assign(naResult("no true pairs"), { mean: null });
+  const counts = matrix && matrix.counts ? matrix.counts : {};
+  const denom = matrix && matrix.n_queries != null ? matrix.n_queries : (results.cofire_events || []).length;
+  const rates = [];
+  for (const pair of truePairs) {
+    const ids = pairIds(pair);
+    if (!ids) continue;
+    const key = pairKey(ids[0], ids[1]);
+    const c = counts[key] || 0;
+    rates.push(denom ? c / denom : 0);
+  }
+  const mean = rates.length ? rates.reduce((s, x) => s + x, 0) / rates.length : null;
+  return { n_pairs: rates.length, n_queries: denom, mean, rate: mean, rates };
+}
+
+register({
+  name: "cofire_rate",
+  description: "4.0b: mean pairwise cofire_rate on true theme pairs. NA until the fire-together sim.",
+  compute(results, corpus, opts) { return cofireStats(results, corpus, opts).rate; },
+  explain: cofireStats,
+});
+
+function nearMissCofireStats(results, corpus, opts) {
+  const matrix = results && results.cofire;
+  const pairs = (results && results.near_miss_pairs) || (corpus && corpus.near_miss_pairs) ||
+    (corpus && corpus.must_not_merge);
+  if (!matrix && !Array.isArray(results && results.cofire_events)) {
+    return Object.assign(naResult("no cofire matrix (4.0b sim)"), { mean: null });
+  }
+  if (!pairs || !pairs.length) return Object.assign(naResult("no near-miss pairs"), { mean: null });
+  return cofireStats({
+    cofire: matrix,
+    true_pairs: pairs,
+    cofire_events: results.cofire_events,
+  }, corpus, opts);
+}
+
+register({
+  name: "near_miss_cofire",
+  description: "4.0b: mean cofire of labeled near-miss pairs. NA until the fire-together sim.",
+  compute(results, corpus, opts) { return nearMissCofireStats(results, corpus, opts).rate; },
+  explain: nearMissCofireStats,
+});
+
 module.exports = {
   scoreSingle, scoreRepeat, containsAll, fieldSignals,
   register, getMetric, listMetrics, computeMetric, explainMetric, computeAll,
@@ -741,4 +1441,5 @@ module.exports = {
   normFact, isCorrectStored, isSaveRefusal,
   COVER_MAX_WORDS, coverScore,
   firstRelevantRank,
+  iou, matchClusters, survivorId,
 };

@@ -2570,6 +2570,213 @@ test("subset of 3 needles in n=100 is well-formed (S1 e2e fixture)", () => {
   assert.ok(corpus.records.filter((r) => r.role === "distractor").length >= 9);
 });
 
+// ------------------------------------------------- RM-15 soak generator + metrics (0011 §7.3)
+section("RM-15 soak generator + control metrics");
+
+const soakGen = require("./eval/soak/generate.js");
+const soakRun = require("./eval/soak/run.js");
+
+test("soak generator is deterministic for a seed; larger n is a prefix", () => {
+  const a = soakGen.generateSoakCorpus({ n: 120, seed: 7 });
+  const b = soakGen.generateSoakCorpus({ n: 120, seed: 7 });
+  assert.deepStrictEqual(
+    a.events.map((e) => e.event + "\t" + (e.text || e.query || e.hours || "")),
+    b.events.map((e) => e.event + "\t" + (e.text || e.query || e.hours || ""))
+  );
+  const c = soakGen.generateSoakCorpus({ n: 120, seed: 8 });
+  assert.notDeepStrictEqual(
+    a.events.map((e) => e.text || e.query || e.event),
+    c.events.map((e) => e.text || e.query || e.event)
+  );
+  const small = soakGen.generateSoakCorpus({ n: 100, seed: 1 });
+  const large = soakGen.generateSoakCorpus({ n: 400, seed: 1 });
+  assert.deepStrictEqual(
+    small.events.map((e) => e.event + "\t" + (e.text || e.query || "")),
+    large.events.slice(0, 100).map((e) => e.event + "\t" + (e.text || e.query || ""))
+  );
+});
+
+test("soak n=1000 emits every 0011 §7.3 event type, labeled at generation", () => {
+  const corpus = soakGen.generateSoakCorpus({ n: 1000, seed: soakGen.DEFAULT_SEED });
+  assert.strictEqual(corpus.events.length, 1000);
+  const types = new Set(corpus.events.map((e) => e.event));
+  for (const t of [
+    "assert", "restate", "missed_dup", "correct", "episodic", "theme_assert",
+    "near_miss", "recall", "accidental_recall", "hub_query", "time_skip", "dream",
+  ]) {
+    assert.ok(types.has(t), "missing event type " + t + " (have " + [...types].join(",") + ")");
+  }
+  const writes = corpus.events.filter((e) => e.role === "write");
+  assert.ok(writes.length > 50, "distractor haystack should make writes a real store, got " + writes.length);
+  for (const w of writes) {
+    assert.ok(w.t && w.write_id && w.text, "write labeled with t/write_id/text");
+    assert.strictEqual(w.gate, false);
+  }
+  const queries = corpus.events.filter((e) => e.role === "query");
+  assert.ok(queries.length > 20, "recall/hub/accidental queries present");
+  for (const q of queries) {
+    assert.ok(q.query && q.query_kind, "query labeled with query_kind at generation");
+  }
+  const hubN = corpus.events.filter((e) => e.event === "hub_query").length;
+  assert.ok(hubN >= 25 && hubN <= 35, "hub_query ~30x, got " + hubN);
+  const dreams = corpus.events.filter((e) => e.event === "dream");
+  assert.deepStrictEqual(dreams.map((d) => d.checkpoint).sort((a, b) => a - b), [250, 500, 1000]);
+  assert.ok(corpus.must_not_merge.length >= 3, "near-miss pairs labeled");
+  assert.ok(Object.keys(corpus.missed_dup_groups).length >= 2, "Op A missed_dup pairs planted");
+  assert.ok(corpus.episodics.length >= 5, "I8 unique-token needles planted");
+});
+
+test("soak slots change over the timeline; haystack does not steal them", () => {
+  const corpus = soakGen.generateSoakCorpus({ n: 1000, seed: soakGen.DEFAULT_SEED });
+  const job = corpus.events.filter((e) => e.slot === "job" && (e.event === "assert" || e.event === "correct"));
+  const values = job.map((e) => e.value);
+  assert.ok(values.includes("Acme") && values.includes("Globex") && values.includes("Vireo Systems"),
+    "job slot evolves: " + values.join(" -> "));
+  const city = corpus.events.filter((e) => e.slot === "city" && (e.event === "assert" || e.event === "correct"));
+  assert.ok(city.map((e) => e.value).includes("Denver") && city.map((e) => e.value).includes("Portland"));
+  const hay = corpus.events.filter((e) => e.event === "haystack");
+  assert.ok(hay.length > 100, "haystack volume for top-k crowding, got " + hay.length);
+  for (const h of hay) {
+    assert.ok(!soakGen.haystackBlocked(h.text), "haystack stole a reserved slot: " + h.text);
+    assert.ok(!/quillan|vellichor|cinderwake|sapphire ukulele|amber metronome/i.test(h.text),
+      "haystack ate an I8 needle token: " + h.text);
+  }
+});
+
+test("soak events carry gate:false so the RM-00 golden cannot flip", () => {
+  const corpus = soakGen.generateSoakCorpus({ n: 80, seed: 3 });
+  const { isGoldenCase } = require("./eval/run.js");
+  assert.strictEqual(isGoldenCase({
+    id: "soak-rm15", kind: "soak", role: "meta", gate: false,
+  }), false);
+  for (const e of corpus.events) {
+    assert.strictEqual(e.gate, false);
+    assert.strictEqual(isGoldenCase(e), false, e.id + " must not be a golden case");
+  }
+});
+
+test("staleness_rate math on a tiny labeled fixture", () => {
+  const probes = {
+    slot_probes: [
+      { slot: "job", ranked_texts: ["Actually I work at Globex now"], ranked_ids: ["2"], current_value: "Globex", relevant_ids: ["2"] },
+      { slot: "city", ranked_texts: ["I live in Austin"], ranked_ids: ["1"], current_value: "Denver", relevant_ids: ["9"] },
+    ],
+  };
+  assert.strictEqual(computeMetric("staleness_rate", probes, null), 0.5);
+  const expl = explainMetric("staleness_rate", probes, null);
+  assert.strictEqual(expl.n, 2);
+  assert.strictEqual(expl.n_stale, 1);
+  assert.deepStrictEqual(expl.misses, ["city"]);
+  assert.strictEqual(computeMetric("staleness_rate", { queries: [] }, null), null,
+    "no probes → NA, not a fake 0");
+});
+
+test("needle_retention@k math: relevant is the source id", () => {
+  const results = {
+    queries: [
+      { id: "n1", query_kind: "episodic", needle: true, ranked_ids: ["s1", "x"], relevant_ids: ["s1"] },
+      { id: "n2", query_kind: "episodic", needle: true, ranked_ids: ["g1"], relevant_ids: ["s2"] },
+      { query_kind: "slot", ranked_ids: ["s1"], relevant_ids: ["s1"] },
+    ],
+  };
+  assert.strictEqual(computeMetric("needle_retention@k", results, null, { k: 5 }), 0.5);
+  const expl = explainMetric("needle_retention@k", results, null, { k: 1 });
+  assert.strictEqual(expl.n, 2, "slot query is not a needle");
+  assert.deepStrictEqual(expl.misses, ["n2"]);
+  assert.strictEqual(computeMetric("needle_retention@k", { queries: [] }, null), null);
+});
+
+test("false_merge_rate: must_not_merge pair sharing a survivor is 1", () => {
+  const merged = {
+    records: [
+      { id: "1", text: "I have a peanut allergy" },
+      { id: "2", text: "I love peanut butter on toast", superseded_by: "1", valid_to: "2026-02-01" },
+    ],
+  };
+  const corpus = { must_not_merge: [["1", "2"]] };
+  assert.strictEqual(computeMetric("false_merge_rate", merged, corpus), 1);
+  const distinct = {
+    records: [
+      { id: "1", text: "I have a peanut allergy" },
+      { id: "2", text: "I love peanut butter on toast" },
+    ],
+  };
+  assert.strictEqual(computeMetric("false_merge_rate", distinct, corpus), 0);
+  assert.strictEqual(computeMetric("false_merge_rate", { records: [] }, {}), null);
+});
+
+test("storage_ratio: current / asserts, or / control_n when given", () => {
+  assert.strictEqual(computeMetric("storage_ratio", { n_current: 12, n_asserts: 10 }, null), 1.2);
+  assert.strictEqual(computeMetric("storage_ratio", { n_current: 12, n_asserts: 10 }, null, { control_n: 10 }), 1.2);
+  assert.strictEqual(computeMetric("storage_ratio", { n_current: 11, n_asserts: 20 }, null, { control_n: 10 }), 1.1);
+  assert.strictEqual(computeMetric("storage_ratio", {}, null), null);
+});
+
+test("0011 §7.3 metric names are registered; dream-only ones are NA on an empty control result", () => {
+  const names = listMetrics().map((m) => m.name);
+  for (const n of [
+    "staleness_rate", "needle_retention@k", "false_merge_rate", "storage_ratio",
+    "gist_recall@k", "false_generalization_rate", "cluster_precision", "cluster_recall",
+    "hub_contamination", "provenance_integrity", "grimoire_hit_rate", "grimoire_crowding",
+    "cofire_rate", "near_miss_cofire", "duplicate_rate", "recall_at_k", "mrr",
+  ]) {
+    assert.ok(names.includes(n), "missing metric " + n);
+  }
+  const empty = {};
+  assert.strictEqual(computeMetric("gist_recall@k", empty, null), null);
+  assert.strictEqual(computeMetric("false_generalization_rate", empty, null), null);
+  assert.strictEqual(computeMetric("cluster_precision", empty, null), null);
+  assert.strictEqual(computeMetric("cluster_recall", empty, null), null);
+  assert.strictEqual(computeMetric("hub_contamination", empty, null), null);
+  assert.strictEqual(computeMetric("provenance_integrity", empty, null), null);
+  assert.strictEqual(computeMetric("grimoire_hit_rate", empty, null), null);
+  assert.strictEqual(computeMetric("grimoire_crowding", empty, null), null);
+  assert.strictEqual(computeMetric("cofire_rate", empty, null), null);
+  assert.strictEqual(computeMetric("near_miss_cofire", empty, null), null);
+});
+
+test("cluster_precision/recall Hungarian match at IoU ≥ 0.5", () => {
+  const gold = [
+    { id: "morning", members: ["a", "b", "c"] },
+    { id: "climb", members: ["d", "e", "f"] },
+  ];
+  const perfect = { predicted_clusters: [
+    { members: ["c", "a", "b"] },
+    { members: ["f", "e", "d"] },
+  ], gold_clusters: gold };
+  assert.strictEqual(computeMetric("cluster_precision", perfect, null), 1);
+  assert.strictEqual(computeMetric("cluster_recall", perfect, null), 1);
+  const partial = { predicted_clusters: [
+    { members: ["a", "b"] },
+  ], gold_clusters: gold };
+  // IoU( {a,b}, {a,b,c} ) = 2/3 ≥ 0.5 → 1 pred matched, 1/1 precision, 1/2 recall
+  assert.strictEqual(computeMetric("cluster_precision", partial, null), 1);
+  assert.strictEqual(computeMetric("cluster_recall", partial, null), 0.5);
+});
+
+test("recall_at_k explain splits by query_kind (reuse, not a forked scorer)", () => {
+  const results = { queries: [
+    { id: "s1", query_kind: "slot", ranked_ids: ["a"], relevant_ids: ["a"] },
+    { id: "s2", query_kind: "slot", ranked_ids: ["x"], relevant_ids: ["b"] },
+    { id: "e1", query_kind: "episodic", ranked_ids: ["n"], relevant_ids: ["n"] },
+  ] };
+  assert.strictEqual(computeMetric("recall_at_k", results, null), 2 / 3);
+  const expl = explainMetric("recall_at_k", results, null);
+  assert.strictEqual(expl.byKind.slot.rate, 0.5);
+  assert.strictEqual(expl.byKind.episodic.rate, 1);
+});
+
+test("unimplemented soak arms error clearly; control is the only implemented arm", () => {
+  assert.strictEqual(soakRun.parseArm(["--arm", "control"]), "control");
+  assert.strictEqual(soakRun.parseArm(["--arm=crystal"]), "crystal");
+  assert.strictEqual(soakRun.ARMS.control.implemented, true);
+  for (const arm of ["redundancy", "nominate", "crystal", "grimoire-walk"]) {
+    assert.strictEqual(soakRun.ARMS[arm].implemented, false);
+    assert.ok(/not implemented until slice/.test(soakRun.UNIMPLEMENTED_MSG(arm)), arm);
+  }
+  assert.throws(() => soakRun.parseArm(["--arm", "nope"]), /unknown --arm/);
+});
+
 // ------------------------------------------------- RM-01.b write-side extraction
 // Tier 0 (normalize/strip/split) + Tier 1 (PII refusal). Pure, so these
 // assert against corpus gold without an embedder. save() wiring + embed
@@ -4383,6 +4590,53 @@ async function asyncTests() {
     }
     assert.strictEqual(computeMetric("recall_at_k", { queries: ranked }, null, { k: 1 }), 1);
     assert.strictEqual(computeMetric("mrr", { queries: ranked }, null), 1);
+  });
+
+  section("RM-15 soak runner (control arm plumbing, synthetic embed)");
+
+  await atest("control arm plays a tiny soak, skips dream, scores checkpoints", async () => {
+    const corpus = soakGen.generateSoakCorpus({ n: 80, seed: 1 });
+    const texts = soakGen.collectTexts(corpus);
+    const dim = Math.max(32, texts.length + 4);
+    const vecs = new Map();
+    texts.forEach((t, i) => {
+      const v = new Array(dim).fill(0);
+      v[i % dim] = 1;
+      vecs.set(t, v);
+    });
+    const synEmbed = async (ts) => ts.map((t) => {
+      if (!vecs.has(t)) {
+        const v = new Array(dim).fill(0);
+        v[vecs.size % dim] = 1;
+        vecs.set(t, v);
+      }
+      return vecs.get(t);
+    });
+    const report = await soakRun.playSoak({
+      arm: "control",
+      events: corpus.events,
+      meta: { must_not_merge: corpus.must_not_merge },
+      storeKind: "jsonl",
+      k: 5,
+      fieldEnabled: false,
+      embed: synEmbed,
+      checkpoints: [40, 80],
+    });
+    assert.strictEqual(report.arm, "control");
+    assert.strictEqual(report.n_events, 80);
+    assert.ok(report.dreams_skipped >= 0);
+    assert.strictEqual(report.curve.length, 2);
+    assert.strictEqual(report.curve[0].checkpoint, 40);
+    assert.strictEqual(report.curve[1].checkpoint, 80);
+    for (const row of report.curve) {
+      assert.ok(row.n_current >= 1, "store grew");
+      for (const key of ["staleness_rate", "duplicate_rate", "needle_retention", "storage_ratio", "false_merge_rate"]) {
+        const v = row.metrics[key];
+        assert.ok(v == null || (v >= 0 && v <= 2), key + "=" + v + " out of range");
+      }
+      assert.strictEqual(row.scaffolded["gist_recall@k"], null);
+      assert.strictEqual(row.scaffolded.cluster_precision, null);
+    }
   });
 
   if (sqliteAvailable()) {

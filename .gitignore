@@ -37,3 +37,4 @@ spike/rm-07-sqlite/tmp/
 
 # Generated at build time (assets baked into the exe)
 embedded-assets.js
+eval/soak/last-run.json

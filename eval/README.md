@@ -21,6 +21,7 @@ npm run measure              # reporting metrics (A/B): recall@k, duplicate_rate
 npm run measure -- --bands   # also print pairwise cosine within each dup group
 npm run measure -- --json    # machine-readable (the 02.b A/B compares this)
 npm run scale                # S1 needle-in-haystack at 1k/10k/50k/100k (live embed first run)
+npm run soak                 # RM-15 control curve (0011 §7.3; field-on, no dream)
 ```
 
 Default (RM-07 slice 4) is SqliteStore. `--store jsonl` (or
@@ -123,7 +124,10 @@ eval/
   substrate/             S1 needle-in-haystack scale (generator + live-embed cache +
                          quality/latency runner). Seed + generator committed; vectors
                          cached in substrate/.cache/ (gitignored). See RESULTS.md "S1".
-```
+  soak/                  RM-15 control harness (0011 §7.3). Generator + runner
+                         arms. Slice 4.0 is measurement only: control arm plays
+                         the persona soak field-on, no dream. See soak/README.md.
+
 
 ## Case format
 
@@ -213,6 +217,35 @@ dilute precision; `pii_refusal_rate` in the explain breakdown is refused-and-wro
 
 `extraction_recall` (RM-01.b): `|gold facts with a matching stored record| / |gold facts|`.
 Refuse-everything scores precision 1.0 and recall 0 — the A/B is two-sided.
+
+### RM-15 control soak (`eval/soak/`, `eval/corpora/soak-rm15.jsonl`)
+
+Longitudinal coherence, 0011 §7.3. A seeded generator (S1 shape — not a
+1,000-line hand-write) emits a timed, labeled event log for one evolving
+persona (job / city / allergy / pet / project change) plus standing themes
+and a distractor haystack. Checkpoints at 100 / 250 / 500 / 1000.
+
+`node eval/soak/run.js` (or `npm run soak`) plays the log through
+`pipeline.js` → `memory-core.js`, field-on for Hebbian accrual, **no dream**.
+That control curve is the baseline every later treatment arm measures
+against. Other arm flags (`--arm redundancy|nominate|crystal|grimoire-walk`)
+are scaffolded and error `"not until slice 4.x"`.
+
+New registry metrics (still in `eval/metrics.js`, no forked scorer):
+`staleness_rate`, `needle_retention@k`, `false_merge_rate`, `storage_ratio`,
+plus names later slices fill (`gist_recall@k`, `cluster_precision` / `_recall`,
+`hub_contamination`, `provenance_integrity`, `grimoire_hit_rate` /
+`grimoire_crowding`, `cofire_rate` / `near_miss_cofire`). `recall_at_k` / `mrr` `explain().byKind`
+split on `query_kind`. The soak is `gate: false` and skipped by `eval/run.js`
+and `eval/measure.js` — it cannot flip golden.
+
+Refresh embeddings the usual way, then commit the cache diff:
+
+```powershell
+$env:EVAL_REFRESH=1; node eval/soak/run.js --embed-only; Remove-Item Env:EVAL_REFRESH
+```
+
+See [`soak/README.md`](soak/README.md) for the 4.0 control numbers.
 
 ---
 
