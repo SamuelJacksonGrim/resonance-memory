@@ -15,15 +15,22 @@ before anyone writes the implementation.
 | [0007](0007-eval-harness.md) | The evaluation harness | `RM-00` | proposed |
 | [0009](0009-edge-threat-model.md) | Edge-substrate threat-model sketch | `RM-16` (feeds; does not build) | **sketch** — Phase 0.6. Implementation stays gated to Phase 2 / the 2.2 promotion gate |
 | [0010](0010-sqlite-backend.md) | SQLite backend behind the Store seam | `RM-07` | **slice 1 shipped** (selectable `SqliteStore`) · **slice 2a shipped** (streaming JSONL→SQLite migrator) · **slice 2b shipped** (sovereignty zip) · **slice 2c shipped** (panel export button) · **slice 3 shipped** (RM-00 golden = JSONL 27/31 case-for-case) · **slice 4 shipped** (SQLite default; auto-migrate on first open; fail-open to JSONL). `node:sqlite` + BLOB + JS cosine; no sqlite-vec |
+| [0011](0011-dream-consolidation.md) | Dream consolidation: the book, the dreamer, the soak | `RM-10`, `RM-15` (`RM-09` consumes the sim; W-03 / W-04 are prerequisites) | **proposed** (design frozen 2026-09-05 — source of truth for the Phase 4 build). Measurement slices next (4.0 / 4.0b / 4.0c). No dream mutation until those numbers are in. |
 
 > **Phase specs live in [`../phases/`](../phases/), not here.** These `proposed/` docs are RFC-style
 > *rationale* — reference material a phase links to. The edge-substrate design that was drafted here
 > as `0008` graduated to [`phase-0`](../phases/phase-0-edge-substrate.md) (the canonical build spec
 > for roadmap Phase 0). `0009` is the Phase 0.6 on-paper threat model of that substrate; it does
-> not implement `RM-16`.
+> not implement `RM-16`. **`0011` is the frozen Phase 4 design** (the book, the dreamer, the soak);
+> [`phase-4`](../phases/phase-4-consolidation.md) remains the checklist. `0011` is the mechanism.
 
 ⚠️ **0003 touches a ratified invariant** (`ranking = cosine only`) and proposes a specific,
 measured process for amending it. Read that section before implementing anything in it.
+
+**0011 is the frozen Phase 4 design.** Argue with it by amending the RFC, not by implementing
+a different dream. Measurement slices (4.0 / 4.0b / 4.0c) first; no dream mutation until those
+numbers are in. It does not repeal [0009](0009-edge-threat-model.md) — the poison cap moves
+from the learning bit onto the consumers.
 
 ## Reading order
 
@@ -51,6 +58,10 @@ If you're picking this up cold:
    rescue bridge, or survive indefinitely. The load-bearing property: semantic
    recomputes, a poisoned reinforcement is a durable false memory. Carry-forward
    requirements for `RM-16` at the Phase 2.2 gate.
+9. **[0011](0011-dream-consolidation.md)** — Phase 4 frozen: learning vs presentation,
+   the 0009 three-window poison split, four operations, the book, fade = I6,
+   `--dreamer` safety, the 4.0b / 4.0c measurement slices. Does not repeal 0009;
+   the poison cap moves from the learning bit onto the consumers.
 
 ## Conventions
 
@@ -67,4 +78,4 @@ If you're picking this up cold:
 
 ## Related
 
-[[ROADMAP]] · [[ARCHITECTURE]] · [[BACKLOG]] · [[0001-write-pipeline]] · [[0002-temporal-supersession]] · [[0003-hybrid-retrieval]] · [[0004-scoping]] · [[0005-store-abstraction]] · [[0006-constraints-decay-pruning]] · [[0007-eval-harness]] · [[0009-edge-threat-model]] · [[0010-sqlite-backend]] · [[phase-0-edge-substrate]] · [[phase-2-retrieval-dynamics]]
+[[ROADMAP]] · [[ARCHITECTURE]] · [[BACKLOG]] · [[0001-write-pipeline]] · [[0002-temporal-supersession]] · [[0003-hybrid-retrieval]] · [[0004-scoping]] · [[0005-store-abstraction]] · [[0006-constraints-decay-pruning]] · [[0007-eval-harness]] · [[0009-edge-threat-model]] · [[0010-sqlite-backend]] · [[0011-dream-consolidation]] · [[phase-0-edge-substrate]] · [[phase-2-retrieval-dynamics]] · [[phase-4-consolidation]]
