@@ -21,7 +21,8 @@
     "export": "node entry.js --export",
     "eval": "node eval/run.js",
     "measure": "node eval/measure.js",
-    "scale": "node eval/substrate/scale.js"
+    "scale": "node eval/substrate/scale.js",
+    "soak": "node eval/soak/run.js"
   },
   "repository": {
     "type": "git",
