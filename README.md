@@ -92,6 +92,30 @@ Under the hood it's refreshingly simple:
 The clever stuff lives *inside*, so your AI never has to think harder — it just gets a better
 memory.
 
+## What's coming: the book of days
+
+*(Not built yet — this is where Resonance Memory is headed. An honest signpost, so you always
+know what ships today and what's on the horizon.)*
+
+Today your memory keeps everything and finds it by meaning. The next chapter — literally — is
+**time**.
+
+Every memory already knows when it happened. Soon, while your machine sleeps, Resonance Memory
+will sleep too: each night it will quietly gather the day's threads into a **page** — the shape
+of what you thought about, built, decided. Seven pages become a **chapter**; chapters become
+months, months a year. Not a diary you keep — one that writes itself, out of what you already
+told it.
+
+And nothing is thrown away to make it. This isn't compression, it's an *index*. Associations you
+stop walking grow quiet — the way a year-old thought doesn't leap to mind — but they're never
+gone; ask directly and they're right there, full strength.
+
+What it buys you is the thing a database never had: the ability to find what you can't quite
+name. *"What was that idea I had around Thursday last January?"* — and it walks the book with
+you. The chapter for that week. The page for that day. Down to the memory itself, if you saved
+it — or close enough to shake it loose on your own. Not just *what* you said, but *when*, and
+*what it was part of* — your own history, handed back to you.
+
 ## Good to know
 
 - **"Windows protected your PC" on first launch?** That's SmartScreen being cautious about any
