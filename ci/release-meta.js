@@ -50,6 +50,7 @@ const RELEASE_ASSETS = [
 ];
 
 const REPO_BLOB = "https://github.com/SamuelJacksonGrim/resonance-memory/blob";
+const REPO_HOME = "https://github.com/SamuelJacksonGrim/resonance-memory";
 
 function usage() {
   return [
@@ -197,9 +198,20 @@ function releaseNotes(opts) {
     lines.push("");
   }
   lines.push(
-    "Single-file executables. Node is baked in; you do **not** install Node. " +
-    "Grab the file for *your* OS and CPU — a Linux binary will not run on Windows, " +
-    "and that is not a bug."
+    "**A lasting, private memory for your local AI.** It remembers *you* across " +
+    "conversations, learns how your memories connect, and never leaves your machine — " +
+    "free, local-only, no account, AGPL-3.0."
+  );
+  lines.push("");
+  lines.push(
+    "New here? This page is just the download. Start with the **[full walkthrough — " +
+    "what it is, what it does, and 60-second setup](" + REPO_HOME + "#readme)**."
+  );
+  lines.push("");
+  lines.push(
+    "Single-file executables — one file per OS. Node is baked in; you do **not** need " +
+    "to install Node prior to download. Grab the file for *your* OS and CPU — a Linux " +
+    "binary will not run on Windows, and that is not a bug."
   );
   lines.push("");
   lines.push("## Downloads");
@@ -230,12 +242,26 @@ function releaseNotes(opts) {
   lines.push("");
   lines.push("Full notes, including how to build from source: [`docs/BUILDING.md`](" + building + ").");
   lines.push("");
-  lines.push("## What you just downloaded");
+  lines.push("## What this is");
   lines.push("");
-  lines.push("Four verbs (`save_memory` / `recall_memory` / `edit_memory` / `delete_memory`). Local only. AGPL-3.0-or-later.");
+  lines.push(
+    "Your local model forgets everything the moment you close the chat — your name, " +
+    "your preferences, the decision you explained yesterday. Resonance gives it a " +
+    "memory that survives across conversations, stored entirely on your computer. Your " +
+    "AI only ever sees four verbs (`save` / `recall` / `edit` / `delete`); all the " +
+    "sophistication — meaning-based recall, an associative field that learns which of " +
+    "your memories belong together, entity/polarity discrimination — lives underneath, " +
+    "so even a small model can't misuse it."
+  );
   lines.push("");
-  lines.push("Double-click (or run the binary) opens the control panel at `http://127.0.0.1:9090/`.");
-  lines.push("`--mcp` is what an AI client launches. `--export` / `--import` carry the store between machines.");
+  lines.push("- **Double-click** (or run the binary) → the control panel opens at `http://127.0.0.1:9090/`.");
+  lines.push("- **`--mcp`** is what an AI client (LM Studio, Claude Desktop) launches to get the memory.");
+  lines.push("- **`--export` / `--import`** carry your whole memory between machines — it's yours to keep.");
+  lines.push("");
+  lines.push(
+    "**Full setup walkthrough, what it can do, and the design:** " +
+    "[README](" + REPO_HOME + "#readme). Build from source: [`docs/BUILDING.md`](" + building + ")."
+  );
   lines.push("");
   return lines.join("\n") + "\n";
 }
