@@ -3638,6 +3638,11 @@ test("release notes: unsigned + Gatekeeper/SmartScreen; rc banner on prerelease"
   assert.ok(/unsigned/i.test(stable));
   assert.ok(stable.includes("docs/BUILDING.md"));
   assert.ok(!/notariz/i.test(stable) || /future/i.test(stable));
+  // The release page is the storefront: it must explain what RM is and route to the
+  // README, not just dump a download table (product call 2026-09-07).
+  assert.ok(/#readme/.test(stable), "notes link the README walkthrough (a downloader may never find it on the repo page)");
+  assert.ok(/remembers?\b.*\byou|memory that survives|lasting, private memory/i.test(stable), "notes actually say what RM is, not just how to run it");
+  assert.ok(/do \*\*not\*\* need to install Node prior to download/.test(stable), "Node wording is the requested phrasing");
   const rc = releaseMeta.releaseNotes({ tag: "v0.2.0-rc1", pkgVersion: "0.2.0" });
   assert.ok(/pre-release/i.test(rc));
   assert.ok(rc.includes("v0.2.0-rc1"));
