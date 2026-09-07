@@ -135,6 +135,11 @@ redacted version, so the user knows it didn't happen. The existing tool descript
 says "do NOT save passwords/secrets" — this enforces what the prompt merely requests, which is
 the whole design philosophy of the project ("a small model *cannot* misuse it").
 
+The snippet above is what 01.b shipped. A later hardening pass widened the prefix
+list for 2026 issued shapes (`github_pat_`, real `ghp_`, Stripe `sk_live_`,
+`AIza…`, `hf_`, JWT, …) without matching English words. The live list is
+`SECRET_PATTERNS` in `record.js`; do not copy this block forward.
+
 **Provenance (`RM-16`) attaches here too:** stamp `source` on the record so a fact the model
 inferred, or scraped from tool output, is never weighted like something the user said.
 

@@ -902,6 +902,40 @@ on messy-hard is a recorded miss, not a silent one.
 
 ---
 
+# Tier 1 prefix widening (2026 issued shapes)
+
+**Date:** 2026-09-07 · **Product:** `record.js` `SECRET_PATTERNS` /
+`guardSecrets` only. Recall path untouched. Golden must hold 27/31.
+**Reproduce:** `node test.js` (modern-shape refuse + prose canaries);
+`node eval/measure.js --corpus messy` (offline; new PII rows are refused
+pre-embed so the cache does not grow); `node eval/run.js`.
+
+01.b caught hyphen fakes (`ghp-`, `sk-`, `xoxb-`) plus cards / PEM / AWS
+`AKIA` / `password:`. GitHub's *issued* shape is underscore (`ghp_`,
+`github_pat_`); Stripe is `sk_live_`; Google is `AIza…`. Those missed.
+The widening is prefix+length+charset, not English — a false positive
+drops the whole write (refuse-not-redact), which is worse than missing
+an exotic key.
+
+True-positives added to `eval/corpora/messy.jsonl` (refused, empty gold).
+Prose canaries live in `test.js` so they do not perturb recall@5
+geometry or require `EVAL_REFRESH`.
+
+Historical 01.b A/B above is unchanged (6 PII writes, precision 1.0).
+Measured on the widened corpus (`node eval/measure.js --corpus messy`):
+
+```
+writes=34  stored_current=18
+recall@5               1.0000   (19/19 queries hit)
+extraction_precision   1.0000   (correct=19/19 stored, labeled=34)
+extraction_recall      1.0000   (hit=19/19 gold facts)
+pii_refusal_rate       1.0000   (17/17 PII writes refused)
+```
+
+Same 19 gold facts as 01.b; 11 new PII rows, all refused pre-embed.
+
+---
+
 # S1 — recall accuracy + latency at scale (needle-in-haystack)
 
 **Date:** 2026-09-05 · **Product behaviour:** unchanged (`memory-core.js` /

@@ -2543,7 +2543,10 @@ test("messy corpus loads; every write has gold_facts + noise labels", () => {
     }
   }
   const pii = s.writes.filter((w) => w.expect_refusal);
-  assert.ok(pii.length >= 4, "a few secret/PII shapes");
+  // Slack + Stripe live only in the MODERN_SECRET_TRUE_POSITIVES unit table, not
+  // this data corpus: their contiguous fakes trip GitHub push protection, so the
+  // corpus carries the shapes that don't (github_pat/ghp, AIza, hf_, JWT, PEM, …).
+  assert.ok(pii.length >= 15, "01.b shapes plus the 2026 prefix widening");
 });
 
 test("messy-hard corpus loads; every write is a long blob with gold facts", () => {
@@ -2592,9 +2595,12 @@ test("messy corpus: current-save simulation is the pre-extraction baseline", () 
   assert.strictEqual(expl.n_labeled, s.writes.length);
   assert.strictEqual(expl.n_stored, s.writes.length, "today save() stores one blob per write");
   // 5 controls + 1 should-not-split compound pass through as-is; filler,
-  // imperative, to-split multi, and PII blobs are not gold.
+  // imperative, to-split multi, and PII blobs are not gold. PII widening
+  // adds refused writes only (empty gold), so n_correct stays 6 and the
+  // denominator is the write count.
   assert.strictEqual(expl.n_correct, 6);
-  assert.strictEqual(expl.rate, 6 / 23);
+  assert.strictEqual(expl.rate, 6 / s.writes.length);
+  assert.ok(s.writes.length > 23, "widened PII corpus is larger than the 01.a seed");
   assert.strictEqual(expl.n_pii, s.writes.filter((w) => w.expect_refusal).length);
   assert.strictEqual(expl.pii_refusal_rate, 0);
 });
@@ -3021,6 +3027,85 @@ test("digit-trap controls survive the card guard (4821, 1500mg)", () => {
   assert.deepStrictEqual(prepareWrite("The garage code is 4821").facts, ["The garage code is 4821"]);
   assert.deepStrictEqual(prepareWrite("I take 1500mg of metformin daily").facts,
     ["I take 1500mg of metformin daily"]);
+});
+
+/*
+ * Synthetic tokens: prefix + charset + length of a real issued shape,
+ * never a live credential. Each row fails without its pattern.
+ */
+const MODERN_SECRET_TRUE_POSITIVES = [
+  ["my GitHub fine-grained PAT is github_pat_" + "a".repeat(22) + "_" + "b".repeat(59), "GitHub token"],
+  ["my GitHub token is ghp_" + "a".repeat(36), "GitHub token"],
+  ["OAuth token gho_" + "a".repeat(36), "GitHub token"],
+  ["my OpenAI project key is sk-proj-abcdefghijklmnopqrstuvwxyz123456", "API key"],
+  ["my Anthropic key is sk-ant-api03-abcdefghijklmnopqrstuvwxyz123456", "API key"],
+  // Prefixes split so no contiguous Slack token literal lives on disk (GitHub push
+  // protection flags those even as fakes); the runtime string is identical, so the
+  // guard is exercised exactly as if it were whole.
+  ["slack bot xox" + "b-12345678901-1234567890123-" + "a".repeat(24), "API key"],
+  ["slack app xa" + "pp-1-A01234567890-1234567890123-" + "a".repeat(24), "API key"],
+  ["stripe secret sk_live_" + "a".repeat(24), "API key"],
+  ["stripe restricted rk_live_" + "a".repeat(24), "API key"],
+  ["stripe test sk_test_" + "a".repeat(24), "API key"],
+  ["google api AIza" + "x".repeat(35), "API key"],
+  ["huggingface hf_" + "a".repeat(37), "API key"],
+  ["groq gsk_" + "a".repeat(32), "API key"],
+  ["sts key ASIAIOSFODNN7EXAMPLE", "AWS"],
+  ["keep this -----BEGIN OPENSSH PRIVATE KEY-----", "private key"],
+  ["jwt eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijklmnopqrstuvwxyz012345", "token"],
+  ["passphrase: correct-horse-battery-staple", "credential"],
+  ["api_key=" + "a".repeat(24), "credential"],
+  ["access_token=" + "b".repeat(24), "credential"],
+];
+
+const SECRET_PROSE_FALSE_POSITIVES = [
+  "The garage code is 4821",
+  "I take 1500mg of metformin daily",
+  "The secret to the recipe is browning the butter",
+  "My password manager is Bitwarden",
+  "Remember my GitHub username is samgrim97",
+  "The session token expired yesterday",
+  "I keep my API keys in a local .env file",
+  "I use a JWT library for the login flow",
+  "My SSH public key is ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakePublicKeyMaterialNotASecret",
+  "I set HF_HOME to D:\\models",
+  "scikit-learn is the pipeline for this project",
+  "The Stripe dashboard lives at dashboard.stripe.com",
+  "our wifi passphrase is on the router sticker",
+  "I rotate tokens every 90 days",
+  "My Stripe publishable key is pk_live_" + "a".repeat(24),
+  "API_KEY=nomic-embed-text-v1.5",
+  "I renamed the branch ghp_experimentation_branch",
+  "the short id is ghp_short",
+  "I wrote down the wifi password on a sticky note, the secret is that it is the dog's name",
+];
+
+test("modern secret shapes refuse: prefix+length, store nothing", () => {
+  for (const [text, kind] of MODERN_SECRET_TRUE_POSITIVES) {
+    const g = guardSecrets(text);
+    assert.strictEqual(g.ok, false, kind + " must refuse: " + text);
+    const r = prepareWrite(text);
+    assert.strictEqual(r.ok, false, kind + " prepareWrite must refuse");
+    assert.deepStrictEqual(r.facts, [], kind + " stores nothing");
+    assert.ok(/not saved/i.test(r.message), kind + " message: " + r.message);
+    assert.ok(/secrets don't belong/i.test(r.message), kind + " names the policy");
+  }
+});
+
+test("prose that mentions secrets still stores (false-positive canaries)", () => {
+  for (const text of SECRET_PROSE_FALSE_POSITIVES) {
+    const g = guardSecrets(text);
+    assert.strictEqual(g.ok, true, "must store, not refuse: " + text);
+    const r = prepareWrite(text);
+    assert.strictEqual(r.ok, true, "prepareWrite must accept: " + text);
+    assert.deepStrictEqual(r.facts, [text], "must persist the canary byte-identical: " + text);
+  }
+});
+
+test("PII mixed with a modern secret is still store-nothing, not redaction", () => {
+  const r = prepareWrite("I live in Texas; my GitHub PAT is github_pat_" + "a".repeat(22) + "_" + "b".repeat(59));
+  assert.strictEqual(r.ok, false, "contaminated write refuses the whole payload");
+  assert.deepStrictEqual(r.facts, [], "must not salvage the Texas fact");
 });
 
 test("clean control passes through byte-identical", () => {
@@ -6139,6 +6224,8 @@ async function asyncTests() {
       "the AWS key is AKIAIOSFODNN7EXAMPLE",
       "keep this -----BEGIN RSA PRIVATE KEY-----",
       "my GitHub token is ghp-abcdefghijklmnopqrstuvwx",
+      "my GitHub PAT is github_pat_" + "a".repeat(22) + "_" + "b".repeat(59),
+      "stripe secret sk_live_" + "a".repeat(24),
     ];
     for (let i = 0; i < payloads.length; i++) {
       const text = payloads[i];
@@ -6165,6 +6252,23 @@ async function asyncTests() {
       "I take 1500mg of metformin daily",
     ]);
     assert.strictEqual(embeds(), 3, "clean facts: one embed each, no extra");
+  });
+
+  await atest("save() stores prose that mentions secrets (Bitwarden / recipe / username)", async () => {
+    const { store, core, embeds, resetEmbeds } = extractCore("rm01-prose-secret.jsonl");
+    resetEmbeds();
+    const canaries = [
+      "The secret to the recipe is browning the butter",
+      "My password manager is Bitwarden",
+      "Remember my GitHub username is samgrim97",
+    ];
+    for (const text of canaries) {
+      const msg = await core.save(text);
+      assert.ok(/Saved/.test(msg), text + " → " + msg);
+    }
+    const texts = store.current().map((r) => r.text);
+    assert.deepStrictEqual(texts, canaries);
+    assert.strictEqual(embeds(), 3, "prose canaries: one embed each, no extra");
   });
 
   await atest("save() mixed fact+secret stores nothing (refusal, not redaction)", async () => {
