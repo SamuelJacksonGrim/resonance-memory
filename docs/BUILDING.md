@@ -141,6 +141,25 @@ escape hatch — artifacts sit on the Actions run, no Release is created.
 
 ---
 
+## PR-path CI (the always-on gate)
+
+The release matrix above only runs on a tag. Between releases, a
+regression on `main` would sit unnoticed until someone cut the next
+`v*`. [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) closes
+that: every push to `main` and every pull request runs the same
+`node test.js` + `node eval/run.js` gate on `ubuntu-latest` (Node 24).
+The checks UI shows **`CI / gate`**. A red check is a stop.
+
+It does **not** build binaries — that is `release.yml`'s job. The two
+workflows share action SHA pins (`actions/checkout`,
+`actions/setup-node`). The eval is offline (committed
+`eval/embeddings.cache.json`); it will not reach an embedder in CI. A
+new push to a PR cancels the stale run (`cancel-in-progress: true`);
+the release workflow deliberately does the opposite, because a publish
+must not be cancelled mid-upload.
+
+---
+
 ## macOS — built by CI, not by hand
 
 Node SEA cannot produce a Mach-O binary from Windows or WSL, and this

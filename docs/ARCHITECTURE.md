@@ -172,6 +172,7 @@ same record the panel renders, the installer targets, `--dedup-existing` scans,
 | `build-exe.js` | The build pipeline (§9). `--target win\|linux\|macos`; refuses to cross-compile. |
 | `ci/smoke-exe.js` | RM-11 CI smoke of a SEA binary (`--mcp` initialize + `tools/list`). |
 | `ci/release-meta.js` | RM-11 CI tag/checksums/notes helpers. |
+| `.github/workflows/ci.yml` | Always-on PR/main gate: `node test.js` + `node eval/run.js` on `ubuntu-latest`. Complements the release matrix; does not build binaries. |
 | `.github/workflows/release.yml` | RM-11 release matrix: gate + native SEA on windows/ubuntu/macos-latest + GitHub Release. The macOS binary is made here. |
 | `build-demo-seed.js` | Regenerates `demo-seed.jsonl` via a live embedder. |
 | `demo-seed.jsonl` | The synthetic first-launch showcase (a fictional game dev's notes). **Tracked**; 100% synthetic. |
@@ -529,7 +530,10 @@ which in this project means the GitHub Actions `macos-latest` job in
 `.github/workflows/release.yml` (no Mac hardware on the desk). A `v*` tag
 gates on `test.js` + `eval/run.js`, builds natively on each OS, smokes
 `--mcp` on that runner, and attaches the three binaries plus `SHA256SUMS`
-to a GitHub Release. macOS ships arm64-only. Binaries are unsigned.
+to a GitHub Release. Between tags, `.github/workflows/ci.yml` runs the
+same `test.js` + `eval/run.js` gate on every push to `main` and every
+pull request (checks UI: `CI / gate`) so a regression cannot sit on
+`main` until the next release. macOS ships arm64-only. Binaries are unsigned.
 
 ---
 

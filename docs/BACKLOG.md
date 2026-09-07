@@ -38,6 +38,9 @@ Build `eval/` with seeded, offline, reproducible scoring.
 - [x] Golden-set regression gate: any metric drop fails with a diff of which cases flipped.
 - [x] Deterministic: fixed seeds, cached embeddings committed, **no network, no API key**.
 - [x] Runs in <60s on a laptop.
+- [x] PR-path CI (`.github/workflows/ci.yml`) runs the golden on every
+      push to `main` and every pull request. Complements the RM-11
+      release matrix, which only runs on a tag.
 
 **Acceptance:** a deliberately-broken change (e.g. rank by recency) is caught by the gate.
 

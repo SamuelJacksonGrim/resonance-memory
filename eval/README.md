@@ -45,7 +45,10 @@ was added: a silent epsilon would hide a real inequivalence, and this run
 did not need one.
 
 Normal runs are **offline and deterministic** — they read `embeddings.cache.json` and
-never touch the network. Adding a new corpus case needs its embeddings once:
+never touch the network. CI (`.github/workflows/ci.yml`) runs `node eval/run.js` on
+every push to `main` and every pull request under that same contract: no
+`EVAL_REFRESH`, no embedder, a cache miss fails the `CI / gate` check instead of
+hanging. Adding a new corpus case needs its embeddings once:
 
 ```powershell
 $env:EVAL_REFRESH=1; npm run eval; Remove-Item Env:EVAL_REFRESH
