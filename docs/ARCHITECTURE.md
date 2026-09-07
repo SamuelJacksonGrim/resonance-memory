@@ -109,10 +109,11 @@ The shipped binary is one file that dispatches on `process.argv[2]` (`entry.js`)
 | `memory --migrate` | **Migrator** | `migrate-sqlite.js` | RM-07 slice 2a: stream JSONL → sibling `.db`. Opt-in. Not a fifth verb. Not auto-run on startup. |
 | `memory --export` [`--name`] [`--out`] | **Export** | `export-memory.js` | RM-07 slice 2b: sovereignty zip bundle. Read-only. Not a fifth verb. |
 | `memory --export-jsonl` | **Export (raw)** | `export-memory.js` | The `memories.jsonl` scripting primitive the zip wraps. |
+| `memory --import` [`--apply`] [`--merge`] [`--with-edges`] | **Import** | `import-memory.js` | RM-17: restore a zip or `memories.jsonl`. Dry-run default. Not a fifth verb. |
 
 All of these share the same substrate modules, so a memory saved through the MCP server is the
 same record the panel renders, the installer targets, `--dedup-existing` scans,
-`--migrate` copies into SQLite, and `--export` writes into the zip.
+`--migrate` copies into SQLite, `--export` writes into the zip, and `--import` reads it back.
 
 ```
                          entry.js  (argv dispatch)
@@ -142,7 +143,7 @@ same record the panel renders, the installer targets, `--dedup-existing` scans,
 
 | File | Role | Depends on |
 |---|---|---|
-| `entry.js` | Mode dispatch on `argv`. | server / panel / install / dedup-existing / migrate / export-memory |
+| `entry.js` | Mode dispatch on `argv`. | server / panel / install / dedup-existing / migrate / export-memory / import-memory |
 | `server.js` | MCP server. Declares the four tool schemas + descriptions, wires the *environment* (network embedder, live field toggle, live extract toggle, lazy EdgeStore) into the shared core, runs the stdio JSON-RPC loop, vacuums soft-deletes and `pruneSweep`s faded+weak edges at startup. Reads the version from `package.json` so `serverInfo` can't drift. Outbound `sampling/createMessage` is the Tier 2 path when the client advertised sampling. | `memory-core`, `store`, `edges`, `extract`, `package.json` |
 | `memory-core.js` | **The four cognitive verbs, as one implementation.** `createCore({ store, embed, fieldEnabled, getEdgeStore, dedupThresholds, extractEnabled, extract })` → `{ save, recall, edit, remove }`. Also `dedupExisting` / `planDedupExisting` (RM-02.c) so `--dedup-existing` cannot fork the 02.b bands. Everything environment-specific is *injected*. This is the code both `server.js` and `eval/pipeline.js` run — the RM-00 golden is the proof they never diverge. | `field`, `record`, `extract` |
 | `extract.js` | RM-01.c Tier 2: opt-in LLM extraction (prompt, parser, sanity gate, `/v1/chat/completions`, MCP sampling, capability detect). Off by default. `save()` is the only caller. | stdlib + `fetch` |
@@ -153,6 +154,7 @@ same record the panel renders, the installer targets, `--dedup-existing` scans,
 | `migrate-sqlite.js` | RM-07 slice 2a streaming JSONL→SQLite migrator (10-step protocol). Opt-in `--migrate`; `openStore()` calls the same function on first open (slice 4). `.bak` is a recovery snapshot, not the sovereignty export. | `store`, `store-sqlite`, `record` |
 | `zip.js` | Zero-dep ZIP64 writer (slice 2b). `createDeflateRaw` + `zlib.crc32` + `.zip.tmp` rename. ZIP64 on every archive. | stdlib (`zlib`) |
 | `export-memory.js` | RM-07 slice 2b sovereignty export. `--export` zip bundle; `--export-jsonl` raw primitive. Read-only. The 2c panel button shells `runExport()` / `previewExport()`. Not an MCP tool. | `zip`, `store`, `record`, `edges` |
+| `import-memory.js` | RM-17 sovereignty import. `--import` dry-run default; `--apply` restores (or `--merge`s). Direct store write, not `save()`. `--with-edges` opt-in for Hebbian (`0009` planted-sidecar refusal). Not an MCP tool. | `zip`, `store`, `record`, `edges` |
 | `field.js` | Associative layer (Phase 2a): a kNN semantic graph over stored vectors, neighborhood expansion, and constraint rescue. No new embedding calls, no LLM extraction. | stdlib only |
 | `ledger.js` | Retired Hebbian sidecar (Phase 2b). Off the live path as of Slice C; kept so tests can compare EdgeStore bonuses against the shipped epoch-decay math. | `record` |
 | `edges.js` | Unified persistent edge store (Phase 0 / `RM-21`): one undirected record, two independent signals (`semantic` derived cache validated by version comparison, `hebbian` source of truth), typed provenance, one-way `.assoc.json` → `.edges.json` migration (`kind: "resonance-edges"`). **On the live recall path** — Hebbian bonus (via `effectiveHebbian`)/reinforce/save. Decay is lazy wall-clock (I6); `tick()` is retired. A reinforcing mutation materializes `effectiveHebbian` before applying α (0.3). MCP request-ID idempotency: a 256-entry LRU of processed JSON-RPC ids. **RM-07 slice 5:** persistence adapter — SqliteStore shares the `.db` (`processed_ids` + weight UPDATE are one txn); JsonlStore keeps the sidecar. `effectiveHebbian` is never stored. Soft prune (0.4 / I8): `pruneSweep()` marks `pruned_at` only when *both* unreinforced and semantically weak (`SEMANTIC_PRUNE_GATE` 0.25); hard drop is `vacuum()`, explicit. Reactivation is in-place on save/edit/reinforce of an endpoint. `field.js` still builds the semantic kNN at recall. | `record` |

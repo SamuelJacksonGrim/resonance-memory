@@ -194,6 +194,7 @@ SQLite is the working copy. JSONL is the interchange format RM already uses.
 |---|---|---|
 | JSONL → SQLite | Stream line-at-a-time (`readline` + batched INSERT in one transaction) into a temp `.db.migrating`. Count-verify. WAL checkpoint. Atomic rename to `.db`. **Then** rename JSONL → `.jsonl.bak`. See [the 10-step protocol](#the-10-step-commit-protocol). | The 834 MB file that cannot `readFileSync` still migrates. 50k/768-d proof: **lossless in 2.5 s**. |
 | SQLite → JSONL | Stream `iterate()`, reconstruct `normalize()`-shape records. Embeddings as JSON arrays (the format a competitor's importer can read without RM). **Slice 2b shipped** (`--export` zip wraps `memories.jsonl`; `--export-jsonl` is the raw primitive). | 50k/768-d: 50,000/50,000 field-equal, embeddings within 1e-5. |
+| Zip / JSONL → store (RM-17) | `--import` streams `memories.jsonl` back in (direct store write, not `save()`). `--with-edges` opt-in for Hebbian; planted sidecar refused. | CLI shipped; panel button still open. |
 | RM → RM, same/other device | copy the `.db` **after** `PRAGMA wal_checkpoint(TRUNCATE)` so `-wal`/`-shm` do not have to travel. SQLite files are cross-platform. | Convenience, not the sovereignty path. |
 
 **`.bak` is a recovery snapshot, not the sovereignty export.** The retained JSONL is a

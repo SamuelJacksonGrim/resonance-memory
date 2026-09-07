@@ -157,6 +157,13 @@ it — or close enough to shake it loose on your own. Not just *what* you said, 
   can read — to your Desktop. It does not change the live store. Add
   `--name` / `--out` to pick the filename and folder. Extract to a short
   path on Windows.
+- **Moving to a new machine, or loading a zip back in?** From a terminal, run
+  `resonance-memory.exe --import the-zip.zip` (or `npm run import -- the-zip.zip`).
+  That **reports** what it would restore and writes nothing. Add `--apply`
+  only when the plan looks right (empty store = restore; a store that already
+  has memories needs `--merge`). Learned associations (the links the graph
+  grew) stay off unless you also pass `--with-edges` — that is on purpose,
+  so a zip you did not make cannot quietly rewrite how your memories connect.
 
 ## Support the Architect
 

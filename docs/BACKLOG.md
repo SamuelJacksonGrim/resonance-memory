@@ -493,13 +493,20 @@ covered by `RM-06` and `RM-16`.
 primary↔primary / primary↔neighborhood / zero N↔N. This generalizes that
 instinct to the whole write path **and** to the writer of the learned signal.)*
 
-### `RM-17` — Portability: export / import / backup · **S** · `todo`
-- [ ] One-click export to plain JSONL + a documented schema; import with dedup.
-- [ ] Reinforces the trust claim: your memories are *yours*, and leaving is easy.
-- [ ] **Priority rose at Phase 0:** the sidecar holds irreplaceable Hebbian state
-      (semantic rebuilds; learned weight does not). Export must preserve
-      `hebbian.weight`; import is an injection path for `RM-16` /
-      [`0009`](proposed/0009-edge-threat-model.md) §5 and §7.3.
+### `RM-17` — Portability: export / import / backup · **S** · `in progress` — export shipped; import CLI shipped
+- [x] One-click export to plain JSONL + a documented schema *(RM-07 slice 2b zip
+      + `--export-jsonl`; panel button 2c)*.
+- [x] Import with dedup *(CLI `--import`, dry-run default; `--apply` restores
+      into an empty dest; `--merge` skip-id / skip-text / remap colliding ids.
+      Direct store write — does not go through `save()`, so ids, embeddings,
+      and history survive. Streaming; not `readFileSync`.)*
+- [x] Export preserves `hebbian.weight`. Import does **not** silently bless a
+      planted sidecar (`0009` §5 / §7.3): `--with-edges` is opt-in, requires
+      `manifest.format = "resonance-memory-export"`, a raw `.edges.json` is
+      refused, dest-already-has-edges needs `--replace-edges`.
+- [ ] Panel import button (the 2c analogue: path + confirm; shells the same
+      `runImport()` engine). Not an MCP tool.
+- [x] Reinforces the trust claim: your memories are *yours*, and leaving is easy.
 
 ### `RM-18` — Encryption at rest (optional) · **M** · `todo`
 - [ ] Opt-in passphrase encryption for the store; off by default (it costs the

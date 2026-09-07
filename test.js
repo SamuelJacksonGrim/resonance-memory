@@ -3386,6 +3386,7 @@ test("README + manifest layout field", () => {
   assert.ok(/memories\.jsonl/.test(readme));
   assert.ok(/catalog\.txt/.test(readme));
   assert.ok(/MAX_PATH/.test(readme));
+  assert.ok(/--import/.test(readme), "zip README tells you how to load it back (RM-17)");
   const man = JSON.parse(exp.buildManifest({
     exportedAt: "2026-09-05T00:00:00.000Z",
     name: "resonance-memories-2026-09-05",
@@ -3424,7 +3425,9 @@ test("export is not an MCP tool (four verbs stay four)", () => {
   assert.ok(/name: "delete_memory"/.test(src));
   assert.ok(!/name: "export_memory"/.test(src));
   assert.ok(!/name: "export"/.test(src));
-  const toolNames = [...src.matchAll(/name:\s*"(save_memory|recall_memory|edit_memory|delete_memory|export\w*)"/g)]
+  assert.ok(!/name: "import_memory"/.test(src));
+  assert.ok(!/name: "import"/.test(src));
+  const toolNames = [...src.matchAll(/name:\s*"(save_memory|recall_memory|edit_memory|delete_memory|export\w*|import\w*)"/g)]
     .map((m) => m[1]);
   assert.deepStrictEqual(
     toolNames.filter((n, i) => toolNames.indexOf(n) === i),
@@ -4485,6 +4488,380 @@ async function asyncTests() {
           assert.ok(text.indexOf("sqlite panel export") >= 0);
         } finally {
           await stopPanelChild(panel.child);
+        }
+      });
+    }
+  }
+
+  section("RM-17 import — sovereignty return trip");
+
+  {
+    const { spawnSync } = require("child_process");
+    const { ZipWriter } = require("./zip.js");
+    const { JsonlStore } = require("./store.js");
+    const { EdgeStore, makeEdge, openEdgeStore, isSqliteStore } = require("./edges.js");
+    const imp = require("./import-memory.js");
+    const exp17 = require("./export-memory.js");
+
+    function stamp(p) {
+      if (!fs.existsSync(p)) return null;
+      const st = fs.statSync(p);
+      const buf = fs.readFileSync(p);
+      return st.size + ":" + require("crypto").createHash("sha256").update(buf).digest("hex");
+    }
+
+    function seedImportStore(name) {
+      const file = tmp("import-src-" + name + ".jsonl");
+      const store = new JsonlStore(file);
+      store.add(normalize({
+        id: 1, text: "I prefer tea", created: "2026-03-05T12:00:00.000Z",
+        embedding: [0.1, 0.2, 0.3], access_count: 4,
+      }));
+      store.add(normalize({
+        id: 2, text: "I used to prefer coffee", created: "2026-03-05T13:00:00.000Z",
+        embedding: [0.2, 0.1, 0.3], superseded_by: 1, valid_to: "2026-03-05T12:00:00.000Z",
+      }));
+      store.add(normalize({
+        id: 3, text: "old secret I deleted", created: "2026-01-09T00:00:00.000Z",
+        embedding: [0.0, 0.1, 0.0], deleted: true,
+      }));
+      const E = new EdgeStore(file + ".edges.json");
+      E.put(makeEdge(1, 2, { origin: "co-activation", now: "2026-03-05T12:00:00.000Z", hebbianWeight: 0.42 }));
+      E.save();
+      return { file, store };
+    }
+
+    async function exportZip(name, file) {
+      const outDir = tmp("import-zip-" + name);
+      fs.mkdirSync(outDir, { recursive: true });
+      return exp17.runExport({ mode: "zip", name, outDir, storePath: file });
+    }
+
+    function embClose17(a, b, eps) {
+      eps = eps == null ? 1e-5 : eps;
+      if (a == null && b == null) return true;
+      if (!a || !b || a.length !== b.length) return false;
+      for (let i = 0; i < a.length; i++) if (Math.abs(a[i] - b[i]) > eps) return false;
+      return true;
+    }
+
+    await atest("dry-run mutates NOTHING (dest + source bytes)", async () => {
+      const { file } = seedImportStore("dry");
+      const zip = await exportZip("dry", file);
+      const dest = tmp("import-dest-dry.jsonl");
+      const beforeSrc = stamp(zip.path);
+      const beforeDestDb = stamp(sqlitePathFor(dest));
+      const plan = await imp.runImport({
+        source: zip.path, destPath: dest, apply: false,
+      }, { backend: "jsonl" });
+      assert.strictEqual(plan.apply, false);
+      assert.strictEqual(plan.willAdd, 3);
+      assert.strictEqual(plan.records.deleted, 1);
+      assert.strictEqual(plan.records.superseded, 1);
+      assert.ok(plan.isRmExport);
+      assert.ok(!fs.existsSync(dest), "dry-run must not create dest jsonl");
+      assert.ok(!fs.existsSync(sqlitePathFor(dest)), "dry-run must not mint an empty .db");
+      assert.strictEqual(stamp(zip.path), beforeSrc, "source zip unchanged");
+      assert.strictEqual(stamp(sqlitePathFor(dest)), beforeDestDb);
+    });
+
+    await atest("restore zip into empty jsonl: ids, embeddings, deleted, superseded preserved", async () => {
+      const { file } = seedImportStore("full");
+      const zip = await exportZip("full", file);
+      const dest = tmp("import-dest-full.jsonl");
+      const result = await imp.runImport({
+        source: zip.path, destPath: dest, apply: true,
+      }, { backend: "jsonl" });
+      assert.strictEqual(result.apply, true);
+      assert.strictEqual(result.added, 3);
+      assert.strictEqual(result.edgesRestored, 0, "Hebbian is opt-in");
+      const store = new JsonlStore(dest);
+      const recs = store.all();
+      assert.strictEqual(recs.length, 3);
+      const tea = recs.find((r) => r.id === 1);
+      assert.strictEqual(tea.text, "I prefer tea");
+      assert.ok(embClose17(tea.embedding, [0.1, 0.2, 0.3]));
+      assert.strictEqual(tea.access_count, 4);
+      const coffee = recs.find((r) => r.id === 2);
+      assert.strictEqual(coffee.superseded_by, 1);
+      assert.ok(recs.some((r) => r.deleted && r.id === 3));
+      assert.ok(!fs.existsSync(dest + ".edges.json"), "no silent Hebbian bless");
+    });
+
+    await atest("--with-edges restores Hebbian weight from an RM export zip", async () => {
+      const { file } = seedImportStore("heb");
+      const zip = await exportZip("heb", file);
+      const dest = tmp("import-dest-heb.jsonl");
+      const result = await imp.runImport({
+        source: zip.path, destPath: dest, apply: true, withEdges: true,
+      }, { backend: "jsonl" });
+      assert.strictEqual(result.edgesRestored, 1);
+      const E = new EdgeStore(dest + ".edges.json");
+      const e = E.get(1, 2);
+      assert.ok(e, "edge 1:2 present");
+      assert.strictEqual(e.hebbian.weight, 0.42);
+    });
+
+    await atest("raw memories.jsonl restores facts and never looks for a sibling sidecar", async () => {
+      const { file } = seedImportStore("jsonl");
+      const outDir = tmp("import-raw-out");
+      fs.mkdirSync(outDir, { recursive: true });
+      const raw = await exp17.runExport({
+        mode: "jsonl", name: "raw", outFile: outDir, storePath: file,
+      });
+      const dest = tmp("import-dest-jsonl.jsonl");
+      const result = await imp.runImport({
+        source: raw.path, destPath: dest, apply: true, withEdges: false,
+      }, { backend: "jsonl" });
+      assert.strictEqual(result.added, 3);
+      assert.ok(!fs.existsSync(dest + ".edges.json"));
+    });
+
+    await atest("--with-edges on a raw jsonl is refused (planted-sidecar refusal)", async () => {
+      const jsonl = tmp("import-plain.jsonl");
+      fs.writeFileSync(jsonl, JSON.stringify(normalize({
+        id: 1, text: "plain", created: "2026-01-01T00:00:00.000Z", embedding: [1, 0, 0],
+      })) + "\n");
+      const dest = tmp("import-dest-refuse.jsonl");
+      const plan = await imp.runImport({
+        source: jsonl, destPath: dest, apply: false, withEdges: true,
+      }, { backend: "jsonl" });
+      assert.ok(plan.errors.some((e) => e.code === "IMPORT_NOT_EXPORT"));
+      await assert.rejects(
+        () => imp.runImport({
+          source: jsonl, destPath: dest, apply: true, withEdges: true,
+        }, { backend: "jsonl" }),
+        (e) => e && e.code === "IMPORT_NOT_EXPORT"
+      );
+      assert.ok(!fs.existsSync(dest));
+    });
+
+    await atest("a raw .edges.json as the source is refused", async () => {
+      const p = tmp("planted.edges.json");
+      fs.writeFileSync(p, JSON.stringify({ kind: "resonance-edges", version: 1, edges: {} }));
+      const dest = tmp("import-dest-planted.jsonl");
+      await assert.rejects(
+        () => imp.runImport({ source: p, destPath: dest, apply: true }, { backend: "jsonl" }),
+        (e) => e && e.code === "IMPORT_REFUSED_SIDECAR"
+      );
+      assert.ok(!fs.existsSync(dest));
+    });
+
+    await atest("non-empty dest without --merge is refused; dest unchanged", async () => {
+      const { file } = seedImportStore("nomerge");
+      const zip = await exportZip("nomerge", file);
+      const dest = tmp("import-dest-nomerge.jsonl");
+      const live = new JsonlStore(dest);
+      live.add(normalize({
+        id: 99, text: "already here", created: "2026-02-01T00:00:00.000Z", embedding: [0, 1, 0],
+      }));
+      const before = stamp(dest);
+      const plan = await imp.runImport({
+        source: zip.path, destPath: dest, apply: false,
+      }, { backend: "jsonl" });
+      assert.ok(plan.errors.some((e) => e.code === "IMPORT_DEST_NONEMPTY"));
+      await assert.rejects(
+        () => imp.runImport({
+          source: zip.path, destPath: dest, apply: true,
+        }, { backend: "jsonl" }),
+        (e) => e && e.code === "IMPORT_DEST_NONEMPTY"
+      );
+      assert.strictEqual(stamp(dest), before);
+    });
+
+    await atest("merge: same-id same-text skipped; same-id different-text remapped; dest kept", async () => {
+      const { file } = seedImportStore("merge");
+      const zip = await exportZip("merge", file);
+      const dest = tmp("import-dest-merge.jsonl");
+      const live = new JsonlStore(dest);
+      live.add(normalize({
+        id: 1, text: "I prefer tea", created: "2026-02-01T00:00:00.000Z", embedding: [9, 9, 9],
+      }));
+      live.add(normalize({
+        id: 2, text: "dest-only coffee story", created: "2026-02-01T00:00:00.000Z", embedding: [0, 0, 1],
+      }));
+      const result = await imp.runImport({
+        source: zip.path, destPath: dest, apply: true, merge: true,
+      }, { backend: "jsonl" });
+      const recs = new JsonlStore(dest).all();
+      const tea = recs.find((r) => String(r.id) === "1");
+      assert.strictEqual(tea.text, "I prefer tea");
+      assert.ok(embClose17(tea.embedding, [9, 9, 9]), "dest tea kept, not overwritten");
+      const destCoffee = recs.find((r) => String(r.id) === "2");
+      assert.strictEqual(destCoffee.text, "dest-only coffee story");
+      assert.ok(recs.some((r) => r.text === "I used to prefer coffee" && String(r.id) !== "2"),
+        "incoming coffee remapped off dest id 2");
+      assert.ok(recs.some((r) => r.deleted && r.text === "old secret I deleted"));
+      assert.ok(result.skipped >= 1, "tea skipped as restatement");
+      assert.ok(result.remapped >= 1, "id 2 remapped");
+    });
+
+    await atest("merge skip-text: byte-identical different id does not append", async () => {
+      const srcFile = tmp("import-src-skiptext.jsonl");
+      const src = new JsonlStore(srcFile);
+      src.add(normalize({
+        id: 50, text: "I prefer tea", created: "2026-03-01T00:00:00.000Z", embedding: [0.1, 0.2, 0.3],
+      }));
+      const outDir = tmp("import-skiptext-out");
+      fs.mkdirSync(outDir, { recursive: true });
+      const raw = await exp17.runExport({
+        mode: "jsonl", name: "st", outFile: outDir, storePath: srcFile,
+      });
+      const dest = tmp("import-dest-skiptext.jsonl");
+      const live = new JsonlStore(dest);
+      live.add(normalize({
+        id: 1, text: "I prefer tea", created: "2026-01-01T00:00:00.000Z", embedding: [1, 0, 0],
+      }));
+      const result = await imp.runImport({
+        source: raw.path, destPath: dest, apply: true, merge: true,
+      }, { backend: "jsonl" });
+      const recs = new JsonlStore(dest).all();
+      assert.strictEqual(recs.length, 1, "did not append a duplicate sentence");
+      assert.strictEqual(recs[0].id, 1);
+      assert.strictEqual(result.added, 0);
+    });
+
+    await atest("zip without RM manifest: memories import, --with-edges refused", async () => {
+      const jsonl = tmp("import-plain2.jsonl");
+      fs.writeFileSync(jsonl, JSON.stringify(normalize({
+        id: 7, text: "competitor row", created: "2026-01-01T00:00:00.000Z", embedding: [1, 0, 0],
+      })) + "\n");
+      const zpath = tmp("import-competitor.zip");
+      const w = new ZipWriter(zpath);
+      w.addStored("memories.jsonl", fs.readFileSync(jsonl));
+      w.finalize();
+      const dest = tmp("import-dest-comp.jsonl");
+      const ok = await imp.runImport({
+        source: zpath, destPath: dest, apply: true,
+      }, { backend: "jsonl" });
+      assert.strictEqual(ok.added, 1);
+      assert.strictEqual(new JsonlStore(dest).get(7).text, "competitor row");
+      const dest2 = tmp("import-dest-comp2.jsonl");
+      await assert.rejects(
+        () => imp.runImport({
+          source: zpath, destPath: dest2, apply: true, withEdges: true,
+        }, { backend: "jsonl" }),
+        (e) => e && e.code === "IMPORT_NOT_EXPORT"
+      );
+    });
+
+    await atest("CLI --import (entry.js) is dry-run default; not a fifth verb", async () => {
+      const { file } = seedImportStore("cli");
+      const zip = await exportZip("cli", file);
+      const dest = tmp("import-dest-cli.jsonl");
+      const entry = path.join(__dirname, "entry.js");
+      const dry = spawnSync(process.execPath, [
+        entry, "--import", zip.path, "--into", dest, "--json",
+      ], { encoding: "utf8", env: Object.assign({}, process.env, { RESONANCE_STORE: "jsonl" }) });
+      assert.strictEqual(dry.status, 0, dry.stderr || dry.stdout);
+      const plan = JSON.parse(dry.stdout);
+      assert.strictEqual(plan.apply, false);
+      assert.ok(!fs.existsSync(dest));
+      const applied = spawnSync(process.execPath, [
+        entry, "--import", zip.path, "--into", dest, "--apply", "--json",
+      ], { encoding: "utf8", env: Object.assign({}, process.env, { RESONANCE_STORE: "jsonl" }) });
+      assert.strictEqual(applied.status, 0, applied.stderr || applied.stdout);
+      const body = JSON.parse(applied.stdout);
+      assert.strictEqual(body.apply, true);
+      assert.strictEqual(body.added, 3);
+    });
+
+    await atest("source zip is not mutated by apply", async () => {
+      const { file } = seedImportStore("ro");
+      const zip = await exportZip("ro", file);
+      const before = stamp(zip.path);
+      const dest = tmp("import-dest-ro.jsonl");
+      await imp.runImport({
+        source: zip.path, destPath: dest, apply: true,
+      }, { backend: "jsonl" });
+      assert.strictEqual(stamp(zip.path), before);
+    });
+
+    await atest("dest that already has edges refuses --with-edges without --replace-edges", async () => {
+      const { file } = seedImportStore("eexist");
+      const zip = await exportZip("eexist", file);
+      const dest = tmp("import-dest-eexist.jsonl");
+      const live = new JsonlStore(dest);
+      live.add(normalize({
+        id: 9, text: "dest fact", created: "2026-02-01T00:00:00.000Z", embedding: [0, 1, 0],
+      }));
+      const E = new EdgeStore(dest + ".edges.json");
+      E.put(makeEdge(9, 9, { origin: "co-activation", now: "2026-02-01T00:00:00.000Z", hebbianWeight: 0.9 }));
+      E.save();
+      await assert.rejects(
+        () => imp.runImport({
+          source: zip.path, destPath: dest, apply: true, merge: true, withEdges: true,
+        }, { backend: "jsonl" }),
+        (e) => e && e.code === "IMPORT_EDGES_EXIST"
+      );
+      const still = new EdgeStore(dest + ".edges.json");
+      assert.strictEqual(still.get(9, 9).hebbian.weight, 0.9, "dest Hebbian kept");
+    });
+
+    if (sqliteAvailable()) {
+      await atest("sqlite restore: lossless ids + f32 embeddings, Hebbian into the table", async () => {
+        const { file } = seedImportStore("sql");
+        const zip = await exportZip("sql", file);
+        const dest = tmp("import-dest-sql.jsonl");
+        const result = await imp.runImport({
+          source: zip.path, destPath: dest, apply: true, withEdges: true,
+        }, { backend: "sqlite" });
+        assert.strictEqual(result.added, 3);
+        assert.strictEqual(result.edgesRestored, 1);
+        const s = await openStore(dest, { backend: "sqlite", log() {} });
+        try {
+          assert.ok(isSqliteStore(s) || s.constructor.name === "SqliteStore");
+          const tea = s.get(1);
+          assert.strictEqual(tea.text, "I prefer tea");
+          assert.ok(embClose17(tea.embedding, [0.1, 0.2, 0.3]));
+          assert.strictEqual(s.get(2).superseded_by, 1);
+          assert.ok(s.get(3).deleted);
+          const E = openEdgeStore({ store: s, storePath: dest });
+          assert.strictEqual(E.get(1, 2).hebbian.weight, 0.42);
+        } finally {
+          if (s && typeof s.close === "function") s.close();
+        }
+      });
+
+      await atest("kill-9 mid sqlite import leaves dest empty (txn rollback)", async () => {
+        const { file } = seedImportStore("kill");
+        const zip = await exportZip("kill", file);
+        const dest = tmp("import-dest-kill.jsonl");
+        const ready = tmp("import-kill.ready");
+        const { spawn } = require("child_process");
+        const child = spawn(process.execPath, [
+          path.join(__dirname, "import-memory.js"),
+          "--import", zip.path, "--into", dest, "--apply",
+        ], {
+          env: Object.assign({}, process.env, {
+            RESONANCE_STORE: "sqlite",
+            RM_IMPORT_CRASH_AFTER: "1",
+            RM_IMPORT_CRASH_READY: ready,
+          }),
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        const t0 = Date.now();
+        while (!fs.existsSync(ready)) {
+          if (Date.now() - t0 > 15000) {
+            try { child.kill("SIGKILL"); } catch { /* */ }
+            throw new Error("import crash-child never wrote ready: " +
+              String(child.stderr && child.stderr.read()));
+          }
+          await new Promise((r) => setTimeout(r, 20));
+        }
+        child.kill("SIGKILL");
+        await new Promise((resolve) => {
+          if (child.exitCode != null || child.signalCode) return resolve();
+          child.on("exit", resolve);
+          setTimeout(resolve, 5000);
+        });
+        const dbPath = sqlitePathFor(dest);
+        if (fs.existsSync(dbPath)) {
+          const { SqliteStore } = require("./store-sqlite.js");
+          const s = new SqliteStore(dbPath, { readOnly: true });
+          try {
+            assert.strictEqual(s.rowCount(), 0, "rolled back; no half store");
+          } finally { s.close(); }
         }
       });
     }

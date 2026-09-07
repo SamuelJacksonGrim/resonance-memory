@@ -19,6 +19,7 @@
     "dedup-existing": "node entry.js --dedup-existing",
     "migrate": "node entry.js --migrate",
     "export": "node entry.js --export",
+    "import": "node entry.js --import",
     "eval": "node eval/run.js",
     "measure": "node eval/measure.js",
     "scale": "node eval/substrate/scale.js",
