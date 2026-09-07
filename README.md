@@ -37,11 +37,13 @@ That's the honest hard part of memory, and it's built in. (Some distinctions sti
 
 ## Get started (about 60 seconds)
 
+**Download the binary for your OS** from [Releases](https://github.com/SamuelJacksonGrim/resonance-memory/releases): `resonance-memory.exe` (Windows x64), `resonance-memory-linux-x64` (Linux), `resonance-memory-macos-arm64` (Apple Silicon). Node is baked in; you do not install Node. Checksums are in `SHA256SUMS`. The binaries are unsigned — Windows SmartScreen / macOS Gatekeeper will warn; see [`docs/BUILDING.md`](docs/BUILDING.md).
+
 **One-time: give it a "meaning engine."** Resonance finds things by meaning, borrowed from a tiny helper model in **LM Studio**. Search for **`nomic-embed-text-v1.5`** (~80 MB), download it, make sure LM Studio's local server is running. LM Studio loads it automatically the first time your AI saves a memory. *(No LM Studio? Memory still works — it just matches on exact words instead of meaning.)*
 
 Then:
 
-1. **Double-click `resonance-memory.exe`.** A page opens in your browser. *(No window pops up — on purpose.)*
+1. **Launch the binary** (Windows: double-click `resonance-memory.exe` — no console window, on purpose. Linux/macOS: `chmod +x` and run it). A page opens in your browser at `http://127.0.0.1:9090/`.
 2. Click **Connect** next to your app (LM Studio or Claude Desktop).
 3. **Restart that app once** so it picks up the memory.
 

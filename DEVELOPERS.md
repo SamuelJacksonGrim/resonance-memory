@@ -27,6 +27,9 @@ an opaque `id`.
 | `export-memory.js` | Slice 2b CLI + the engine the 2c panel button shells. `--export` writes the zip bundle; `--export-jsonl` is the raw primitive. Read-only. Not an MCP tool. |
 | `import-memory.js` | RM-17 CLI + the engine the panel import button shells. `--import` dry-run default; `--apply` restores. Direct store write (not `save()`). `--with-edges` opt-in for Hebbian. Not an MCP tool. |
 | `build-exe.js` | Embed runtime assets → esbuild → Node SEA blob → postject → OS finish (Windows PE flip / macOS ad-hoc codesign / chmod) → stage `dist/`. `--target win\|linux\|macos`; refuses to cross-compile. |
+| `ci/smoke-exe.js` | RM-11 CI smoke of a just-built binary (`--mcp` initialize + `tools/list`, four verbs, timeout-kill). |
+| `ci/release-meta.js` | RM-11 CI: tag/`package.json` gate, runner asserts, checksums, Release notes. |
+| `.github/workflows/release.yml` | RM-11 release matrix (the macOS build path). `v*` tag → gate + native SEA on windows/ubuntu/macos-latest → smoke → GitHub Release. |
 | `embedded-assets.js` | **Generated** each build (gitignored): `demo-seed.jsonl` + `system-prompt.md` baked in as strings so the shipped exe is one self-contained file. |
 | `inspect_sidecar.js` | Dependency-free telemetry for the Hebbian ledger. |
 | `build-demo-seed.js` | Regenerates `demo-seed.jsonl` (synthetic, pre-embedded) via the embedder. |
@@ -121,6 +124,11 @@ unaffected because the client pipes stdio. macOS gets a free ad-hoc
 `codesign --sign -` after postject (required for the kernel to exec; **not**
 Developer ID / notarization). Binaries ship unsigned; see BUILDING.md for the
 honest OS-warning path. Node ≥ 22.5 (`node:sqlite`).
+
+Shippable binaries for strangers come from GitHub Releases, built by
+`.github/workflows/release.yml` (native matrix, smoked on each runner).
+That is also how the macOS binary is made at all — this project has no
+Mac hardware. `macos-latest` is arm64; Intel macOS is not in the matrix.
 
 ## Design invariants (do not violate)
 

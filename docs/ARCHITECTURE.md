@@ -169,7 +169,10 @@ same record the panel renders, the installer targets, `--dedup-existing` scans,
 
 | File | Role |
 |---|---|
-| `build-exe.js` | The build pipeline (§9). |
+| `build-exe.js` | The build pipeline (§9). `--target win\|linux\|macos`; refuses to cross-compile. |
+| `ci/smoke-exe.js` | RM-11 CI smoke of a SEA binary (`--mcp` initialize + `tools/list`). |
+| `ci/release-meta.js` | RM-11 CI tag/checksums/notes helpers. |
+| `.github/workflows/release.yml` | RM-11 release matrix: gate + native SEA on windows/ubuntu/macos-latest + GitHub Release. The macOS binary is made here. |
 | `build-demo-seed.js` | Regenerates `demo-seed.jsonl` via a live embedder. |
 | `demo-seed.jsonl` | The synthetic first-launch showcase (a fictional game dev's notes). **Tracked**; 100% synthetic. |
 | `system-prompt.md` | Optional copy-in system prompt for weaker models. Baked into the exe. |
@@ -509,16 +512,24 @@ broken change (e.g. rank by recency) is caught by the gate.
 [1] esbuild               → bundle entry.js + all requires into one file, strip per-file
                             AGPL headers, prepend a single collapsed notice
 [2] Node SEA blob         → --experimental-sea-config sea-config.json
-[3] copy the node runtime → resonance-memory.exe (Windows) / memory (mac/linux)
+[3] copy the node runtime → resonance-memory.exe (Windows) /
+                            resonance-memory-linux-<arch> /
+                            resonance-memory-macos-<arch>
 [4] postject inject       → embed the SEA blob into the copied runtime
     (Windows) flip PE subsystem console(3) → GUI(2) so double-click opens no console window;
     MCP mode is unaffected (LM Studio pipes stdin/stdout)
+    (macOS) codesign --remove-signature, postject, ad-hoc codesign --sign -
 [5] stage dist/           → the shippable bundle
 ```
 
 Zero runtime dependencies is load-bearing: it keeps the exe small, the build simple, and the
 test suite instant. Build-time tools (`esbuild`, `postject`) are invoked via `npx --yes`, never
-installed into `package.json`. SEA is per-platform — the macOS binary must be built on a Mac.
+installed into `package.json`. SEA is per-platform — the macOS binary must be built on a Mac,
+which in this project means the GitHub Actions `macos-latest` job in
+`.github/workflows/release.yml` (no Mac hardware on the desk). A `v*` tag
+gates on `test.js` + `eval/run.js`, builds natively on each OS, smokes
+`--mcp` on that runner, and attaches the three binaries plus `SHA256SUMS`
+to a GitHub Release. macOS ships arm64-only. Binaries are unsigned.
 
 ---
 

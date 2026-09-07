@@ -117,7 +117,10 @@ migration. Already noted under "Known limitations" in the changelog.
 **Severity:** medium (adoption, not correctness) · **Status:** 🔲 open · **Owner:** `RM-11`
 
 First launch shows a scary OS warning. For a product whose core pitch is "trust this with your
-private memories," an "unknown publisher" dialog is a real adoption tax.
+private memories," an "unknown publisher" dialog is a real adoption tax. The RM-11 release
+matrix now *ships* the unsigned binaries (plus Gatekeeper/SmartScreen guidance in the
+Release body and `docs/BUILDING.md`); it cannot silence the OS. Signing / notarization
+is the remainder of `RM-11`.
 
 ---
 

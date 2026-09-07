@@ -9,6 +9,21 @@ stable; sophistication grows in the substrate, not in the API.
 ## [Unreleased]
 
 ### Added
+- **RM-11 release CI.** `.github/workflows/release.yml` is the first
+  workflow in the repo and the macOS build path (this project has no
+  Mac hardware). A `v*` tag runs the local gate (`node test.js` +
+  `node eval/run.js`) on Node 24, then builds a native SEA binary on
+  `windows-latest` / `ubuntu-latest` / `macos-latest`, smokes each one
+  with `ci/smoke-exe.js` (`--mcp` initialize + `tools/list`, exactly
+  the four verbs, timeout-kills so a hang cannot ship), and attaches
+  `resonance-memory.exe`, `resonance-memory-linux-x64`,
+  `resonance-memory-macos-arm64`, and `SHA256SUMS` to a GitHub Release.
+  `v0.2.0-rc1` is a prerelease of `package.json` 0.2.0 — an rc tag does
+  not require bumping the version string. `workflow_dispatch` builds
+  without publishing. macOS is arm64-only (Node SEA CI skips x64).
+  Binaries stay unsigned; Gatekeeper / SmartScreen guidance lives in
+  the Release body and `docs/BUILDING.md`. Actions pinned to
+  full-length SHAs; `gh release` rather than a third-party action.
 - **RM-17 panel import button.** Confirm modal shells `runImport()` — the
   same engine as `--import`, not a second writer. Path + Browse (native
   dialog; paste-a-path always works). `--with-edges` is a checkbox
