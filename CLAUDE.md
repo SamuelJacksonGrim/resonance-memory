@@ -68,6 +68,7 @@ roadmap, and per-repo backlog live in the companion repo
 | `build-exe.js` | The build. Embeds runtime assets → esbuild bundle → Node SEA blob → postject inject → OS finish (Windows PE flip / macOS ad-hoc codesign / chmod +x) → stage `dist/`. `--target win\|linux\|macos`; refuses to cross-compile. |
 | `ci/smoke-exe.js` | RM-11 CI smoke: spawn a SEA binary `--mcp`, feed initialize + `tools/list`, assert `serverInfo.name` and exactly the four verbs, timeout-kill. A hang must not ship. |
 | `ci/release-meta.js` | RM-11 CI: tag vs `package.json`, runner arch/Node-floor asserts, `SHA256SUMS`, Release notes. |
+| `.github/workflows/ci.yml` | Always-on PR/main gate. `ubuntu-latest`, Node 24: `node test.js` + `node eval/run.js`. Complements the release matrix; does not build binaries. Checks UI: `CI / gate`. |
 | `.github/workflows/release.yml` | RM-11 release matrix. `v*` tag (or `workflow_dispatch`): gate → native build on windows/ubuntu/macos-latest → smoke → GitHub Release. The macOS binary is made here; this project has no Mac hardware. |
 | `build-demo-seed.js` | Regenerates `demo-seed.jsonl` (synthetic, pre-embedded) via the embedder. |
 | `demo-seed.jsonl` | The synthetic demo graph (a fictional game dev's notes). **Tracked** and shipped — it's the first-launch showcase. 100% synthetic; never real user data. |
@@ -331,7 +332,8 @@ load-bearing ones, enforced here:
 
 - **Run `npm test`.** It's dependency-free and takes under a second. Run `npm run eval` too
   if you touched the recall path, the field, or the ledger — `golden.json` is the regression
-  gate.
+  gate. CI also runs both on every PR and every push to `main`
+  (`.github/workflows/ci.yml`, checks UI `CI / gate`).
 - **A behaviour change isn't done until the docs describing that behaviour change with it.**
   Six claims in `docs/` went stale in a single session this way (`BUG-006`). Grep for what
   you changed, and never assert how the system behaves without re-opening the file that

@@ -3656,9 +3656,23 @@ test("release assets match build-exe.js names (win exe, linux x64, macos arm64)"
   ]);
 });
 
+function workflowUses(yml) {
+  const uses = [];
+  for (const line of String(yml).split(/\r?\n/)) {
+    const m = line.match(/uses:\s*(\S+)/);
+    if (m) uses.push(m[1]);
+  }
+  return uses;
+}
+
+function workflowPin(uses, action) {
+  const hit = uses.find((u) => u.startsWith(action + "@"));
+  return hit ? hit.slice(action.length + 1) : null;
+}
+
 test("workflow YAML: SHA-pinned actions, three native runners, gate before release", () => {
   const ymlPath = path.join(__dirname, ".github", "workflows", "release.yml");
-  assert.ok(fs.existsSync(ymlPath), "first workflow must live at .github/workflows/release.yml");
+  assert.ok(fs.existsSync(ymlPath), "release matrix must live at .github/workflows/release.yml");
   const yml = fs.readFileSync(ymlPath, "utf8");
   assert.ok(yml.indexOf("v[0-9]*") >= 0, "tag glob should be v[0-9]* (not a bare v* that matches 'validation')");
   assert.ok(yml.indexOf("workflow_dispatch:") >= 0);
@@ -3678,16 +3692,78 @@ test("workflow YAML: SHA-pinned actions, three native runners, gate before relea
   assert.ok(yml.indexOf("expect_arch: arm64") >= 0);
   // Intel Mac is a documented non-goal this slice (Node SEA skips x64).
   assert.ok(!/macos-13/.test(yml), "macos-13 (Intel) must not sneak into the matrix");
-  const uses = [];
-  for (const line of yml.split(/\r?\n/)) {
-    const m = line.match(/uses:\s*(\S+)/);
-    if (m) uses.push(m[1]);
-  }
+  const uses = workflowUses(yml);
   assert.ok(uses.length >= 4, "expected checkout/setup-node/upload/download at minimum");
   for (const u of uses) {
     assert.ok(/@[0-9a-f]{40}$/.test(u), u + " is not pinned to a full-length SHA");
   }
   assert.ok(!uses.some((u) => /softprops|action-gh-release/.test(u)), "use gh CLI, not a third-party release action");
+});
+
+test("PR-path CI: SHA-pinned, main+PR, cancel-in-progress, same pins as release.yml", () => {
+  const ciPath = path.join(__dirname, ".github", "workflows", "ci.yml");
+  const relPath = path.join(__dirname, ".github", "workflows", "release.yml");
+  assert.ok(fs.existsSync(ciPath), "always-on gate must live at .github/workflows/ci.yml");
+  const yml = fs.readFileSync(ciPath, "utf8");
+  const rel = fs.readFileSync(relPath, "utf8");
+  // Negative checks ignore comments so a "why we don't X" note can't
+  // trip the contract (EVAL_REFRESH is named in the header on purpose).
+  const active = yml.split(/\r?\n/).filter((l) => !/^\s*#/.test(l)).join("\n");
+
+  // Checks UI reads "CI / gate".
+  assert.ok(/^name:\s*CI\s*$/m.test(yml), "workflow name must be 'CI'");
+  assert.ok(/name:\s*gate\s*$/m.test(yml), "job name must be 'gate'");
+  assert.ok(/AGPL-3\.0/.test(yml), "AGPL header on the new workflow file");
+
+  // Triggers: push to main + every pull_request. Not every scratch branch
+  // (those get coverage when they open a PR). Tags are release.yml's job.
+  assert.ok(/^\s+push:\s*$/m.test(yml));
+  assert.ok(/^\s+-\s+main\s*$/m.test(yml), "push must be scoped to main");
+  assert.ok(/^\s+pull_request:\s*$/m.test(yml));
+  assert.ok(!/workflow_dispatch:/.test(active), "this is the always-on gate, not a manual build");
+  assert.ok(!/^\s+tags:/m.test(active), "tags belong to release.yml");
+  assert.ok(!/\*\*/.test(active), "must not glob every branch");
+
+  // Opposite of release.yml: a new PR push should cancel the stale run.
+  assert.ok(/cancel-in-progress:\s*true/.test(yml));
+  assert.ok(/contents:\s*read/.test(yml));
+  assert.ok(!/contents:\s*write/.test(active), "PR-path CI never publishes");
+  assert.ok(/persist-credentials:\s*false/.test(yml));
+
+  // Cheap: ubuntu only, the two gate commands, no SEA matrix.
+  assert.ok(/ubuntu-latest/.test(yml));
+  assert.ok(!/windows-latest/.test(active), "native matrix is release.yml");
+  assert.ok(!/macos-latest/.test(active), "native matrix is release.yml");
+  assert.ok(/node-version:\s*["']24["']/.test(yml));
+  assert.ok(yml.includes("node test.js"), "unit suite must run as a step");
+  assert.ok(yml.includes("node eval/run.js"), "golden must run as a step");
+  assert.ok(!/EVAL_REFRESH/.test(active), "must not set EVAL_REFRESH (would hit the network)");
+  assert.ok(!/build-exe\.js/.test(active), "SEA build is release.yml, not this file");
+  assert.ok(!/smoke-exe/.test(active));
+  assert.ok(!/upload-artifact|download-artifact|gh release/.test(active));
+  assert.ok(!/continue-on-error:\s*true/.test(active), "a red test must fail the job");
+  assert.ok(!/\|\|\s*true/.test(active), "a red test must not be swallowed");
+
+  // SHA pins, and they must match release.yml for the shared actions so
+  // we never introduce a second unvetted action version.
+  const ciUses = workflowUses(yml);
+  const relUses = workflowUses(rel);
+  assert.ok(ciUses.length >= 2, "expected checkout + setup-node");
+  for (const u of ciUses) {
+    assert.ok(/@[0-9a-f]{40}$/.test(u), u + " is not pinned to a full-length SHA");
+  }
+  const checkoutSha = workflowPin(relUses, "actions/checkout");
+  const nodeSha = workflowPin(relUses, "actions/setup-node");
+  assert.ok(checkoutSha && nodeSha, "release.yml must pin checkout and setup-node");
+  assert.strictEqual(
+    workflowPin(ciUses, "actions/checkout"), checkoutSha,
+    "ci.yml must reuse release.yml's checkout SHA",
+  );
+  assert.strictEqual(
+    workflowPin(ciUses, "actions/setup-node"), nodeSha,
+    "ci.yml must reuse release.yml's setup-node SHA",
+  );
+  assert.ok(!ciUses.some((u) => /softprops|action-gh-release/.test(u)));
 });
 
 // ------------------------------------------------ RM-07 slice 2b export / zip

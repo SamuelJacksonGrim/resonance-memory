@@ -17,8 +17,20 @@ stable; sophistication grows in the substrate, not in the API.
   handing over the "paste the block below…" intro too).
 
 ### Added
-- **RM-11 release CI.** `.github/workflows/release.yml` is the first
-  workflow in the repo and the macOS build path (this project has no
+- **PR-path CI.** `.github/workflows/ci.yml` runs the deterministic
+  gate (`node test.js` + `node eval/run.js`) on every push to `main`
+  and every pull request, so a regression is caught when it lands,
+  not when someone cuts a tag. Complements `release.yml` (the heavy
+  native-build matrix, tag-only). One `ubuntu-latest` job, Node 24,
+  no secrets, no network (eval reads `eval/embeddings.cache.json`;
+  `EVAL_REFRESH` is never set, so a cache miss fails loud instead of
+  hanging on localhost:1234). Actions reuse the same SHA pins as
+  `release.yml`. Stale PR runs cancel (`cancel-in-progress: true` —
+  the opposite of the release workflow, which must not cancel a
+  publish). Checks UI: `CI / gate`. A red step fails the job
+  (`process.exit(1)` from both commands; no `continue-on-error`).
+- **RM-11 release CI.** `.github/workflows/release.yml` is the
+  native-build / macOS path (this project has no
   Mac hardware). A `v*` tag runs the local gate (`node test.js` +
   `node eval/run.js`) on Node 24, then builds a native SEA binary on
   `windows-latest` / `ubuntu-latest` / `macos-latest`, smokes each one

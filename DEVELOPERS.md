@@ -29,6 +29,7 @@ an opaque `id`.
 | `build-exe.js` | Embed runtime assets → esbuild → Node SEA blob → postject → OS finish (Windows PE flip / macOS ad-hoc codesign / chmod) → stage `dist/`. `--target win\|linux\|macos`; refuses to cross-compile. |
 | `ci/smoke-exe.js` | RM-11 CI smoke of a just-built binary (`--mcp` initialize + `tools/list`, four verbs, timeout-kill). |
 | `ci/release-meta.js` | RM-11 CI: tag/`package.json` gate, runner asserts, checksums, Release notes. |
+| `.github/workflows/ci.yml` | Always-on PR/main gate (`node test.js` + `node eval/run.js` on `ubuntu-latest`). Complements the release matrix; does not build binaries. Checks UI: `CI / gate`. |
 | `.github/workflows/release.yml` | RM-11 release matrix (the macOS build path). `v*` tag → gate + native SEA on windows/ubuntu/macos-latest → smoke → GitHub Release. |
 | `embedded-assets.js` | **Generated** each build (gitignored): `demo-seed.jsonl` + `system-prompt.md` baked in as strings so the shipped exe is one self-contained file. |
 | `inspect_sidecar.js` | Dependency-free telemetry for the Hebbian ledger. |
@@ -166,6 +167,8 @@ Things a contributor should know before touching the code:
   retrieval). It ships flag-off and is promoted only on a measured A/B win. Don't flip a
   ranking default without that measurement.
 - **Run `npm test` before pushing.** It's dependency-free and takes under a second.
+  CI re-runs `node test.js` + `node eval/run.js` on every PR and every push to
+  `main` (`.github/workflows/ci.yml`).
 - **A behaviour change isn't done until the docs describing that behaviour change with it.**
   Six claims in `docs/` went stale in a single session this way — see `BUG-006`. Grep for what
   you changed before you push, and never assert how the system behaves without re-opening the
