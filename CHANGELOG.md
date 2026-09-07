@@ -12,8 +12,11 @@ stable; sophistication grows in the substrate, not in the API.
 - **RM-17 panel import button.** Confirm modal shells `runImport()` — the
   same engine as `--import`, not a second writer. Path + Browse (native
   dialog; paste-a-path always works). `--with-edges` is a checkbox
-  default-off (the `0009` planted-sidecar refusal). Merge required when
-  this store already has memories. Heartbeat pause + yield like export
+  default-off (the `0009` planted-sidecar refusal). Merge into a store that
+  already has memories is an **explicit opt-in**, never pre-checked — the
+  checkbox starts off and the dry-run's `IMPORT_DEST_NONEMPTY` keeps Import
+  disabled until the user ticks it, matching the CLI's `--merge` refusal.
+  The safe common case (empty store) never shows the row. Heartbeat pause + yield like export
   so a long restore cannot `process.exit(0)` a truncated ingest. First-run
   empty-store card names the button for the "zip from another machine"
   hole. Not a fifth MCP verb.

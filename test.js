@@ -3558,6 +3558,8 @@ test("panel page source ships the import button + confirm modal (RM-17)", () => 
   assert.ok(!/id="importWithEdges"[^>]*checked/.test(src), "with-edges default-off in the markup");
   assert.ok(/planted sidecar is an injection path/.test(src), "0009 refusal is user-visible");
   assert.ok(src.includes('id="importMerge"'), "merge checkbox for nonempty dest");
+  assert.ok(!/importMerge\.checked\s*=\s*true/.test(src), "merge is an explicit opt-in, never pre-checked (product call 2026-09-07)");
+  assert.ok(src.includes("IMPORT_DEST_NONEMPTY"), "panel translates the non-empty-dest guard to point at the checkbox, not --merge");
   assert.ok(src.includes("/api/import"), "import route");
   assert.ok(src.includes("runImport"), "shells the CLI engine, not a second writer");
   assert.ok(/not an MCP tool/i.test(src), "import stays off the four verbs");
