@@ -499,7 +499,7 @@ covered by `RM-06` and `RM-16`.
 primary↔primary / primary↔neighborhood / zero N↔N. This generalizes that
 instinct to the whole write path **and** to the writer of the learned signal.)*
 
-### `RM-17` — Portability: export / import / backup · **S** · `in progress` — export shipped; import CLI shipped
+### `RM-17` — Portability: export / import / backup · **S** · ✅ `done` — export + import CLI + panel button shipped
 - [x] One-click export to plain JSONL + a documented schema *(RM-07 slice 2b zip
       + `--export-jsonl`; panel button 2c)*.
 - [x] Import with dedup *(CLI `--import`, dry-run default; `--apply` restores
@@ -510,8 +510,9 @@ instinct to the whole write path **and** to the writer of the learned signal.)*
       planted sidecar (`0009` §5 / §7.3): `--with-edges` is opt-in, requires
       `manifest.format = "resonance-memory-export"`, a raw `.edges.json` is
       refused, dest-already-has-edges needs `--replace-edges`.
-- [ ] Panel import button (the 2c analogue: path + confirm; shells the same
-      `runImport()` engine). Not an MCP tool.
+- [x] Panel import button (the 2c analogue: path + confirm; shells the same
+      `runImport()` engine). `--with-edges` checkbox default-off. Heartbeat
+      pause + yield like export. Not an MCP tool.
 - [x] Reinforces the trust claim: your memories are *yours*, and leaving is easy.
 
 ### `RM-18` — Encryption at rest (optional) · **M** · `todo`
@@ -523,14 +524,14 @@ instinct to the whole write path **and** to the writer of the learned signal.)*
 - [ ] Turns the 3D graph from a pretty object into a debugging instrument, and makes `RM-05`
       and `RM-09` tuning legible instead of magic.
 
-### `RM-20` — First-run quality · **S** · `in progress` — panel empty-store nudge shipped
+### `RM-20` — First-run quality · **S** · `in progress` — empty-store nudge + import-from-zip hole named
 - [x] The empty-store experience: what to say to your AI to seed it well.
       *(Panel card when `memories === 0`; "Copy a starter prompt" clipboard.
       README "first thing worth doing" under Get started.)*
 - [x] Detect "connected but never saved anything" and offer a nudge in the panel.
       *(Same card retitles when any MCP client is installed and the store is empty.)*
-- [ ] Panel import button still open (RM-17) — the other first-run hole is
-      "I have a zip from my old machine."
+- [x] Panel import button (RM-17) — first-run card names "Import memories"
+      for the "I have a zip from my old machine" hole.
 
 ---
 

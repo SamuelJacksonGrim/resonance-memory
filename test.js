@@ -3551,6 +3551,19 @@ test("panel page source ships the export button + confirm modal (not a browser t
   assert.ok(/not an MCP tool/i.test(src), "exfil path stays off the four verbs");
 });
 
+test("panel page source ships the import button + confirm modal (RM-17)", () => {
+  const src = fs.readFileSync(path.join(__dirname, "panel.js"), "utf8");
+  assert.ok(src.includes("Import memories"), "visible button");
+  assert.ok(src.includes('id="importWithEdges"'), "with-edges checkbox");
+  assert.ok(!/id="importWithEdges"[^>]*checked/.test(src), "with-edges default-off in the markup");
+  assert.ok(/planted sidecar is an injection path/.test(src), "0009 refusal is user-visible");
+  assert.ok(src.includes('id="importMerge"'), "merge checkbox for nonempty dest");
+  assert.ok(src.includes("/api/import"), "import route");
+  assert.ok(src.includes("runImport"), "shells the CLI engine, not a second writer");
+  assert.ok(/not an MCP tool/i.test(src), "import stays off the four verbs");
+  assert.ok(/Have a zip from another machine/.test(src), "first-run hole names the import button");
+});
+
 test("panel page source ships W-02 Origin/CSRF lock (not a browser test)", () => {
   const src = fs.readFileSync(path.join(__dirname, "panel.js"), "utf8");
   assert.ok(src.includes("allowPanelRequest"), "request gate is in the panel server");
@@ -4416,6 +4429,7 @@ async function asyncTests() {
       delete env.RESONANCE_MEMORY_CONFIG;
       if (opts.watchdogMs) env.RESONANCE_MEMORY_WATCHDOG_MS = String(opts.watchdogMs);
       if (hold) env.RM_PANEL_EXPORT_HOLD = hold;
+      if (opts.importHold) env.RM_PANEL_IMPORT_HOLD = opts.importHold;
       const child = spawn(process.execPath, [path.join(__dirname, "panel.js")], {
         env,
         stdio: ["ignore", "pipe", "pipe"],
@@ -4767,6 +4781,221 @@ async function asyncTests() {
         await stopPanelChild(panel.child);
       }
     });
+
+    function seedPanelImportSrc(name) {
+      const file = tmp("panel-import-src-" + name + ".jsonl");
+      const store = new JsonlStore(file);
+      store.add(normalize({
+        id: 1, text: "panel-import-tea-" + name, created: "2026-03-05T12:00:00.000Z",
+        embedding: [0.1, 0.2, 0.3],
+      }));
+      store.add(normalize({
+        id: 2, text: "panel-import-coffee-" + name, created: "2026-03-05T11:00:00.000Z",
+        embedding: [0.2, 0.1, 0.3], superseded_by: 1,
+      }));
+      const { EdgeStore, makeEdge } = require("./edges.js");
+      const E = new EdgeStore(file + ".edges.json");
+      E.put(makeEdge(1, 2, {
+        origin: "co-activation", now: "2026-03-05T12:00:00.000Z", hebbianWeight: 0.42,
+      }));
+      E.save();
+      return file;
+    }
+    async function zipForPanelImport(name) {
+      const file = seedPanelImportSrc(name);
+      const outDir = tmp("panel-import-zip-" + name);
+      fs.mkdirSync(outDir, { recursive: true });
+      return exp.runExport({ mode: "zip", name, outDir, storePath: file });
+    }
+
+    await atest("GET /api/import dest snapshot; with-edges default false; pick is no_dialog", async () => {
+      const panel = await startPanelChild();
+      try {
+        const page = await (await fetch(panel.url + "/")).text();
+        assert.ok(page.includes("Import memories"));
+        assert.ok(/planted sidecar is an injection path/.test(page));
+        const snap = await (await fetch(panel.url + "/api/import")).json();
+        assert.strictEqual(snap.withEdgesDefault, false);
+        assert.strictEqual(snap.destEmpty, true);
+        assert.strictEqual(snap.destCount, 0);
+        assert.strictEqual(snap.busy, false);
+        assert.ok(!fs.existsSync(panel.store), "GET must not mint the dest store");
+        const token = await readPanelToken(panel.url);
+        const pick = await fetch(panel.url + "/api/import/pick", {
+          method: "POST", headers: panelPostHeaders(token), body: "{}",
+        });
+        const pickBody = await pick.json();
+        assert.strictEqual(pick.status, 200);
+        assert.strictEqual(pickBody.code, "no_dialog");
+        const noToken = await fetch(panel.url + "/api/import", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ source: "x.zip", apply: true }),
+        });
+        assert.strictEqual(noToken.status, 403);
+        assert.strictEqual((await noToken.json()).code, "forbidden_csrf");
+      } finally {
+        await stopPanelChild(panel.child);
+      }
+    });
+
+    await atest("POST /api/import dry-run writes nothing; apply restores; with-edges opt-in", async () => {
+      const zip = await zipForPanelImport("apply");
+      const panel = await startPanelChild();
+      const token = await readPanelToken(panel.url);
+      try {
+        const dry = await fetch(panel.url + "/api/import", {
+          method: "POST", headers: panelPostHeaders(token),
+          body: JSON.stringify({ source: zip.path, apply: false }),
+        });
+        const plan = await dry.json();
+        assert.strictEqual(dry.status, 200);
+        assert.strictEqual(plan.apply, false);
+        assert.strictEqual(plan.ok, true);
+        assert.strictEqual(plan.willAdd, 2);
+        assert.strictEqual(plan.withEdges, false);
+        assert.ok(!fs.existsSync(panel.store), "dry-run must not create dest");
+        const applied = await fetch(panel.url + "/api/import", {
+          method: "POST", headers: panelPostHeaders(token),
+          body: JSON.stringify({ source: zip.path, apply: true }),
+        });
+        const body = await applied.json();
+        assert.strictEqual(applied.status, 200, JSON.stringify(body));
+        assert.strictEqual(body.ok, true);
+        assert.strictEqual(body.apply, true);
+        assert.strictEqual(body.added, 2);
+        assert.strictEqual(body.edgesRestored, 0, "Hebbian is opt-in");
+        const recs = new JsonlStore(panel.store).all();
+        assert.ok(recs.some((r) => r.text === "panel-import-tea-apply"));
+        assert.ok(recs.some((r) => r.superseded_by === 1));
+        assert.ok(!fs.existsSync(panel.store + ".edges.json"), "no silent Hebbian bless");
+
+        const home2 = tmp("panel-import-heb-home");
+        fs.mkdirSync(path.join(home2, "Desktop"), { recursive: true });
+        const store2 = path.join(home2, "resonance-memory.jsonl");
+        const panel2 = await startPanelChild({ home: home2, store: store2 });
+        try {
+          const token2 = await readPanelToken(panel2.url);
+          const heb = await fetch(panel2.url + "/api/import", {
+            method: "POST", headers: panelPostHeaders(token2),
+            body: JSON.stringify({ source: zip.path, apply: true, withEdges: true }),
+          });
+          const hebBody = await heb.json();
+          assert.strictEqual(hebBody.ok, true, JSON.stringify(hebBody));
+          assert.strictEqual(hebBody.edgesRestored, 1);
+          const { EdgeStore } = require("./edges.js");
+          const E = new EdgeStore(store2 + ".edges.json");
+          const e = E.get(1, 2);
+          assert.ok(e && e.hebbian && e.hebbian.weight === 0.42);
+        } finally {
+          await stopPanelChild(panel2.child);
+        }
+      } finally {
+        await stopPanelChild(panel.child);
+      }
+    });
+
+    await atest("POST /api/import nonempty dest without merge is refused; dest unchanged", async () => {
+      const zip = await zipForPanelImport("nomerge");
+      const home = tmp("panel-import-nomerge-home");
+      fs.mkdirSync(path.join(home, "Desktop"), { recursive: true });
+      const store = path.join(home, "resonance-memory.jsonl");
+      const live = new JsonlStore(store);
+      live.add(normalize({
+        id: 99, text: "already-here-panel", created: "2026-02-01T00:00:00.000Z",
+        embedding: [0, 1, 0],
+      }));
+      const before = fs.readFileSync(store);
+      const panel = await startPanelChild({ home, store });
+      try {
+        const token = await readPanelToken(panel.url);
+        const posted = await fetch(panel.url + "/api/import", {
+          method: "POST", headers: panelPostHeaders(token),
+          body: JSON.stringify({ source: zip.path, apply: true }),
+        });
+        const body = await posted.json();
+        assert.strictEqual(body.ok, false);
+        assert.strictEqual(body.code, "IMPORT_DEST_NONEMPTY");
+        assert.deepStrictEqual(fs.readFileSync(store), before, "dest unchanged");
+      } finally {
+        await stopPanelChild(panel.child);
+      }
+    });
+
+    await atest("POST /api/import in-flight returns 409; watchdog paused", async () => {
+      const zip = await zipForPanelImport("hold");
+      const hold = tmp("panel-import.hold");
+      try { if (fs.existsSync(hold)) fs.unlinkSync(hold); } catch { /* */ }
+      const panel = await startPanelChild({ importHold: hold, watchdogMs: 400 });
+      try {
+        const token = await readPanelToken(panel.url);
+        await fetch(panel.url + "/api/ping", { method: "POST", headers: panelPostHeaders(token) });
+        const first = fetch(panel.url + "/api/import", {
+          method: "POST", headers: panelPostHeaders(token),
+          body: JSON.stringify({ source: zip.path, apply: true }),
+        });
+        const t0 = Date.now();
+        let snap = null;
+        while (Date.now() - t0 < 5000) {
+          snap = await (await fetch(panel.url + "/api/import")).json();
+          if (snap.busy && snap.watchdog_paused) break;
+          await new Promise((r) => setTimeout(r, 30));
+        }
+        assert.ok(snap && snap.busy, "in-flight is server-observable");
+        assert.ok(snap.watchdog_paused, "watchdog paused for the duration");
+        const dup = await fetch(panel.url + "/api/import", {
+          method: "POST", headers: panelPostHeaders(token),
+          body: JSON.stringify({ source: zip.path, apply: true }),
+        });
+        assert.strictEqual(dup.status, 409);
+        assert.strictEqual((await dup.json()).code, "busy");
+        const ping = await fetch(panel.url + "/api/ping", { method: "POST", headers: panelPostHeaders(token) });
+        assert.strictEqual(ping.status, 200);
+        await new Promise((r) => setTimeout(r, 1200));
+        assert.strictEqual(panel.child.exitCode, null, "paused watchdog must not process.exit");
+        fs.writeFileSync(hold, "go\n");
+        const result = await first;
+        const body = await result.json();
+        assert.strictEqual(body.ok, true, JSON.stringify(body));
+        assert.strictEqual(body.added, 2);
+        const after = await (await fetch(panel.url + "/api/import")).json();
+        assert.strictEqual(after.busy, false);
+        assert.strictEqual(after.watchdog_paused, false);
+      } finally {
+        try { fs.writeFileSync(hold, "go\n"); } catch { /* */ }
+        await stopPanelChild(panel.child);
+      }
+    });
+
+    if (sqliteAvailable()) {
+      await atest("panel import works on SqliteStore (same engine, user store)", async () => {
+        const zip = await zipForPanelImport("sqlite");
+        const home = tmp("panel-import-sqlite-home");
+        fs.mkdirSync(path.join(home, "Desktop"), { recursive: true });
+        const jsonl = path.join(home, "resonance-memory.jsonl");
+        const panel = await startPanelChild({ home, store: jsonl, storeBackend: "sqlite" });
+        try {
+          const token = await readPanelToken(panel.url);
+          const posted = await fetch(panel.url + "/api/import", {
+            method: "POST", headers: panelPostHeaders(token),
+            body: JSON.stringify({ source: zip.path, apply: true, withEdges: true }),
+          });
+          const body = await posted.json();
+          assert.strictEqual(body.ok, true, JSON.stringify(body));
+          assert.strictEqual(body.added, 2);
+          assert.strictEqual(body.edgesRestored, 1);
+          const { openStore } = require("./store.js");
+          const s = await openStore(jsonl, { backend: "sqlite" });
+          try {
+            const recs = s.all();
+            assert.ok(recs.some((r) => r.text === "panel-import-tea-sqlite"));
+          } finally {
+            if (s && typeof s.close === "function") s.close();
+          }
+        } finally {
+          await stopPanelChild(panel.child);
+        }
+      });
+    }
   }
 
   section("RM-17 import — sovereignty return trip");

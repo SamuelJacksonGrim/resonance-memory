@@ -9,6 +9,14 @@ stable; sophistication grows in the substrate, not in the API.
 ## [Unreleased]
 
 ### Added
+- **RM-17 panel import button.** Confirm modal shells `runImport()` — the
+  same engine as `--import`, not a second writer. Path + Browse (native
+  dialog; paste-a-path always works). `--with-edges` is a checkbox
+  default-off (the `0009` planted-sidecar refusal). Merge required when
+  this store already has memories. Heartbeat pause + yield like export
+  so a long restore cannot `process.exit(0)` a truncated ingest. First-run
+  empty-store card names the button for the "zip from another machine"
+  hole. Not a fifth MCP verb.
 - **W-02 panel Origin/CSRF lock.** The control panel still binds `127.0.0.1`
   only. Host must be loopback (DNS rebinding arrives as `Host: evil.example`).
   Origin, when present, must be this panel. Mutating POSTs require a
@@ -50,7 +58,7 @@ stable; sophistication grows in the substrate, not in the API.
   `manifest.format` is `resonance-memory-export`: a raw `.edges.json` is
   refused, a dest that already has associations needs `--replace-edges`.
   That is the `0009` planted-sidecar refusal, not a missing feature.
-  Not a fifth MCP verb. Panel button still open.
+  Not a fifth MCP verb. Panel button shipped (confirm modal, same engine).
 
 ### Changed
 - **Related: minSim 0.55 → 0.70** (nomic default). Fair-run: 0.55 leaked 11

@@ -6,7 +6,8 @@ working those-adjacent areas in another repo copy can pick from here
 without touching `entity.js`, `embed-invoke.js`, `field.js`, `edges.js`
 reinforce/bonus, or the live recall path in `memory-core.js`.
 
-Date: 2026-09-07.
+Date: 2026-09-07. W-02 Origin/CSRF lock and the RM-17 panel import
+button shipped on `w02-origin-lock` (stacked commits).
 
 ---
 

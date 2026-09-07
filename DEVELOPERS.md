@@ -18,14 +18,14 @@ an opaque `id`.
 | `ledger.js` | Retired Hebbian sidecar (Phase 2b). Off the live path; kept as the epoch-decay reference. |
 | `edges.js` | Unified persistent edge store (Phase 0): two-signal record + one-way `.assoc.json` → `.edges.json` migration. On the live recall path. Save-time semantic neighbors persist on `save()` (K=5, min cosine 0.25); recall still uses `field.js`. Hebbian decay is lazy wall-clock via `effectiveHebbian` (I6). Reinforce materializes the decayed weight before applying α; MCP request-ID dedup LRU (Phase 0.3). **RM-07 slice 5:** persistence adapter — SqliteStore shares the `.db`; JsonlStore keeps the sidecar. Soft prune (0.4 / I8) is an explicit `pruneSweep()` (not recall/save); reactivation is in-place on save/edit of an endpoint. |
 | `extract.js` | RM-01.c Tier 2: opt-in LLM extraction (prompt, parser, sanity, chat/sampling, capability detect). Off by default. |
-| `panel.js` | Local 127.0.0.1 control panel: field toggle, LLM-extraction toggle (surfaced when a capable model is detected), Connect/Disconnect, association graph view, first-run empty-store nudge (RM-20), **Export my memories** (slice 2c: confirm modal, POST `/api/export` shells `export-memory.js`, heartbeat pause + yield), heartbeat auto-shutdown. **W-02:** Host/Origin lock + per-process `X-Resonance-Token` on POSTs. No CORS. Not an MCP tool. |
+| `panel.js` | Local 127.0.0.1 control panel: field toggle, LLM-extraction toggle (surfaced when a capable model is detected), Connect/Disconnect, association graph view, first-run empty-store nudge (RM-20), **Export my memories** (slice 2c) / **Import memories** (RM-17: confirm modal, POST `/api/import` shells `runImport()`, with-edges default-off, heartbeat pause + yield), heartbeat auto-shutdown. **W-02:** Host/Origin lock + per-process `X-Resonance-Token` on POSTs. No CORS. Not an MCP tool. |
 | `install.js` | Detect + wire into LM Studio / Claude Desktop MCP config (preserves other servers, leaves `.bak`). |
 | `entry.js` | Bundle dispatch: `--mcp` → server, `--install`/`--uninstall` → installer, `--dedup-existing` → RM-02.c backfill (dry-run default), `--migrate` → RM-07 slice 2a JSONL→SQLite, `--export` / `--export-jsonl` → RM-07 slice 2b sovereignty export, `--import` → RM-17 restore (dry-run default), else → panel. |
 | `dedup-existing.js` | RM-02.c CLI. Reports (or `--apply`s) cosine-banded restatements/merges on a store written before 02.b. Calls `dedupExisting()` in `memory-core.js` — same bands as `save()`, no second decision. |
 | `migrate-sqlite.js` | RM-07 slice 2a. Streaming JSONL→SQLite (10-step protocol). Opt-in CLI; `openStore()` calls the same function on first open (slice 4). `.bak` is a recovery snapshot, not the sovereignty export. |
 | `zip.js` | Zero-dep ZIP64 writer (slice 2b). `createDeflateRaw` + `zlib.crc32` + stream to `.zip.tmp` + rename. ZIP64 on every archive. |
 | `export-memory.js` | Slice 2b CLI + the engine the 2c panel button shells. `--export` writes the zip bundle; `--export-jsonl` is the raw primitive. Read-only. Not an MCP tool. |
-| `import-memory.js` | RM-17 CLI. `--import` dry-run default; `--apply` restores. Direct store write (not `save()`). `--with-edges` opt-in for Hebbian. Not an MCP tool. |
+| `import-memory.js` | RM-17 CLI + the engine the panel import button shells. `--import` dry-run default; `--apply` restores. Direct store write (not `save()`). `--with-edges` opt-in for Hebbian. Not an MCP tool. |
 | `build-exe.js` | Embed runtime assets → esbuild → Node SEA blob → postject → flip PE subsystem to GUI → stage `dist/`. |
 | `embedded-assets.js` | **Generated** each build (gitignored): `demo-seed.jsonl` + `system-prompt.md` baked in as strings so the shipped exe is one self-contained file. |
 | `inspect_sidecar.js` | Dependency-free telemetry for the Hebbian ledger. |
@@ -92,7 +92,9 @@ an opaque `id`.
   same-text, remap colliding ids, dest kept). Does not go through `save()`
   — ids, embeddings, and history survive; no embedder required.
   `--with-edges` restores Hebbian from an RM export zip only; a raw
-  `.edges.json` is refused (`0009` planted-sidecar). Panel button still open.
+  `.edges.json` is refused (`0009` planted-sidecar). Panel **Import memories**
+  button shells the same `runImport()` (confirm modal, with-edges default-off,
+  heartbeat pause + yield). Not an MCP tool.
 
 ## Build
 

@@ -30,6 +30,9 @@
  *   - exports YOUR store as a zip (RM-07 slice 2c; shells export-memory.js, never
  *     demo-seed.jsonl; not an MCP tool — a model that can dump the store is an
  *     exfil path),
+ *   - imports a zip or memories.jsonl (RM-17 panel button: confirm modal,
+ *     POST /api/import shells runImport(), --with-edges checkbox default-off,
+ *     heartbeat pause + yield like export; not an MCP tool),
  *   - W-02: Host must be loopback, Origin (when present) must be this panel,
  *     mutating POSTs require a per-process token baked into the page. Settles
  *     the CSRF / DNS-rebinding ship-gate before RM-12 documents the HTTP
@@ -58,6 +61,7 @@ const { readFieldMinSim } = require("./memory-core.js");
 const { pairConflictFn, resolveEntities } = require("./entity.js");
 const extract = require("./extract.js");
 const exp = require("./export-memory.js");
+const imp = require("./import-memory.js");
 
 function baseDir() {
   // In a bundled single-executable, __dirname is virtual; resolve next to the exe.
@@ -247,6 +251,13 @@ const PAGE = `<!doctype html>
     border: 1px solid rgba(0,0,0,.12); background: #fff; color: #1c1e21; cursor: pointer; }
   button.primary { background: var(--acc); border-color: var(--acc); color: #fff; }
   button:disabled { opacity: .55; cursor: default; }
+  .btncol { display: flex; flex-direction: column; gap: 8px; align-items: stretch; }
+  .pickrow { display: flex; gap: 8px; margin: 0 0 12px; }
+  .pickrow input[type=text] { flex: 1; font-family: ui-monospace, Consolas, monospace; font-size: 12px;
+    padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(0,0,0,.12); background: #f7f8fa; color: inherit; }
+  .modal-card label.check { display: flex; align-items: flex-start; gap: 8px; font-size: 13px;
+    margin: 0 0 10px; color: #374151; line-height: 1.4; }
+  .modal-card label.check input { margin-top: 3px; }
   .graphwrap { border-radius: 14px; overflow: hidden; border: 1px solid rgba(0,0,0,.08); background: #fbfbfd; }
   canvas { display: block; width: 100%; height: 340px; touch-action: none; cursor: grab; }
   canvas:active { cursor: grabbing; }
@@ -300,6 +311,8 @@ const PAGE = `<!doctype html>
     .modal-card { background: #1f2227; border-color: rgba(255,255,255,.08); }
     .modal-card p { color: #c5cad3; }
     .modal-card .dest { background: #171a1e; }
+    .pickrow input[type=text] { background: #171a1e; border-color: rgba(255,255,255,.12); color: #e6e8eb; }
+    .modal-card label.check { color: #c5cad3; }
     .toast { color: #6ee7b7; }
     .toast code { background: rgba(255,255,255,.08); }
     .firstrun { background: #3a2f12; border-color: rgba(240,198,116,.25); }
@@ -355,11 +368,16 @@ const PAGE = `<!doctype html>
     <div class="row" id="exportRow" style="margin-top:10px">
       <div>
         <div class="label">Your memories</div>
-        <div class="hint">Download a zip of everything stored on this machine. Nothing is deleted or sent anywhere.</div>
+        <div class="hint">Download a zip of everything stored on this machine, or restore one from another machine. Nothing is sent anywhere.</div>
         <div id="exportToast" class="toast" hidden></div>
+        <div id="importToast" class="toast" hidden></div>
         <div id="exportBusy" class="busy-note" hidden>Exporting&hellip; (this can take a minute at large N)</div>
+        <div id="importBusy" class="busy-note" hidden>Importing&hellip; (this can take a minute at large N)</div>
       </div>
-      <button id="exportBtn">Export my memories</button>
+      <div class="btncol">
+        <button id="exportBtn">Export my memories</button>
+        <button id="importBtn">Import memories</button>
+      </div>
     </div>
 
     <div class="sec">
@@ -407,6 +425,28 @@ const PAGE = `<!doctype html>
       <div class="modal-actions">
         <button type="button" id="exportCancel">Cancel</button>
         <button type="button" id="exportConfirm" class="primary">Export</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="importModal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="importModalTitle">
+    <div class="modal-card">
+      <h2 id="importModalTitle">Import memories</h2>
+      <p>This restores a <b>.zip</b> (or <code>memories.jsonl</code>) into <b>this</b> store. Ids, embeddings, and history survive. Nothing is sent anywhere.</p>
+      <p>This <b>writes</b> to the live store. An empty store is restored as-is. A store that already has memories needs <b>Merge</b> (existing kept).</p>
+      <p>Pick the file to import:</p>
+      <div class="pickrow">
+        <input type="text" id="importPath" spellcheck="false" placeholder="path to .zip or memories.jsonl">
+        <button type="button" id="importBrowse">Browse</button>
+      </div>
+      <p id="importPlan">Pick a file to see the plan.</p>
+      <label class="check"><input type="checkbox" id="importWithEdges"> Also restore learned associations. Off by default &mdash; a planted sidecar is an injection path, not a missing feature.</label>
+      <label class="check" id="importMergeRow" hidden><input type="checkbox" id="importMerge"> Merge with the memories already here (required when this store is not empty). Existing memories are kept.</label>
+      <label class="check" id="importReplaceRow" hidden><input type="checkbox" id="importReplaceEdges"> Replace existing learned associations (only with the box above).</label>
+      <p id="importModalBusy" class="busy-note" hidden>Importing&hellip; (this can take a minute at large N)</p>
+      <div class="modal-actions">
+        <button type="button" id="importCancel">Cancel</button>
+        <button type="button" id="importConfirm" class="primary" disabled>Import</button>
       </div>
     </div>
   </div>
@@ -471,10 +511,10 @@ const PAGE = `<!doctype html>
       box.hidden = false;
       if(firstRunConnected){
         title.textContent = 'Connected, but nothing saved yet';
-        hint.innerHTML = 'You\\u2019re hooked up, and the store is still empty. In your next chat, tell your AI who you are and a rule it should follow, then say <b>remember that</b>. Smaller models sometimes need the nudge.';
+        hint.innerHTML = 'You\\u2019re hooked up, and the store is still empty. In your next chat, tell your AI who you are and a rule it should follow, then say <b>remember that</b>. Smaller models sometimes need the nudge. Have a zip from another machine? Use <b>Import memories</b> below.';
       } else {
         title.textContent = 'Nothing saved yet';
-        hint.innerHTML = 'Your AI has a memory, but the store is empty. Connect an app above, then in your next chat tell it a few things worth keeping &mdash; who you are, a rule it should follow, the project you&rsquo;re in &mdash; and say <b>remember that</b>.';
+        hint.innerHTML = 'Your AI has a memory, but the store is empty. Connect an app above, then in your next chat tell it a few things worth keeping &mdash; who you are, a rule it should follow, the project you&rsquo;re in &mdash; and say <b>remember that</b>. Have a zip from another machine? Use <b>Import memories</b> below.';
       }
     } else {
       box.hidden = true;
@@ -661,6 +701,189 @@ const PAGE = `<!doctype html>
       exportCount.textContent = 'Export failed. The live store was not changed.';
     }
     setExportBusy(false);
+  });
+
+  // --- sovereignty import (RM-17). Confirm first; nothing is written
+  // until Import. Shells runImport() — same engine as --import, not a
+  // second writer. --with-edges is a checkbox default-off (0009 planted-
+  // sidecar refusal). Not an MCP tool.
+  var importBtn = document.getElementById('importBtn');
+  var importModal = document.getElementById('importModal');
+  var importCancel = document.getElementById('importCancel');
+  var importConfirm = document.getElementById('importConfirm');
+  var importPath = document.getElementById('importPath');
+  var importBrowse = document.getElementById('importBrowse');
+  var importPlan = document.getElementById('importPlan');
+  var importWithEdges = document.getElementById('importWithEdges');
+  var importMerge = document.getElementById('importMerge');
+  var importReplaceEdges = document.getElementById('importReplaceEdges');
+  var importMergeRow = document.getElementById('importMergeRow');
+  var importReplaceRow = document.getElementById('importReplaceRow');
+  var importToast = document.getElementById('importToast');
+  var importBusy = document.getElementById('importBusy');
+  var importModalBusy = document.getElementById('importModalBusy');
+  var importInFlightUi = false;
+  var importDestMeta = null;
+  var importPreview = null;
+
+  function setImportBusy(on){
+    importInFlightUi = !!on;
+    importBtn.disabled = !!on;
+    importConfirm.disabled = !!on;
+    importCancel.disabled = !!on;
+    importBrowse.disabled = !!on;
+    importPath.disabled = !!on;
+    importBusy.hidden = !on;
+    importModalBusy.hidden = !on;
+    importBtn.textContent = on ? 'Importing\\u2026' : 'Import memories';
+  }
+  function showImportToast(msg){
+    importToast.hidden = false;
+    importToast.textContent = msg;
+  }
+  function closeImportModal(){
+    importModal.hidden = true;
+  }
+  function formatImportPlan(p){
+    if (!p) return 'Pick a file to see the plan.';
+    if (p.error && !p.records) return p.error;
+    var c = p.records || {};
+    var bits = [];
+    bits.push((c.total || 0) + ' records in the file (' + (c.current || 0) + ' current).');
+    bits.push('Will add ' + (p.willAdd || 0) +
+      (p.willSkipId ? ', skip ' + p.willSkipId + ' already here' : '') +
+      (p.willRemap ? ', remap ' + p.willRemap + ' colliding ids' : '') + '.');
+    if (p.withEdges) bits.push('Associations: restore ' + (p.edgesWillRestore || 0) + ' of ' + (p.edgesInSource || 0) + '.');
+    else bits.push('Associations: not restoring (box above is off on purpose).');
+    (p.warnings || []).forEach(function(w){ bits.push('Warning: ' + w); });
+    (p.errors || []).forEach(function(e){ bits.push('Cannot import: ' + (e.message || e.code || e)); });
+    return bits.join(' ');
+  }
+  function importFlags(){
+    return {
+      source: (importPath.value || '').trim(),
+      apply: false,
+      withEdges: !!(importWithEdges && importWithEdges.checked),
+      merge: !!(importMerge && importMerge.checked),
+      replaceEdges: !!(importReplaceEdges && importReplaceEdges.checked)
+    };
+  }
+  function refreshImportChecks(){
+    var destCount = importDestMeta && importDestMeta.destCount || 0;
+    var destEdges = importDestMeta && importDestMeta.destEdges || 0;
+    importMergeRow.hidden = destCount <= 0;
+    if (destCount > 0 && importMerge && !importMerge.dataset.touched) {
+      importMerge.checked = true;
+    }
+    importReplaceRow.hidden = !(importWithEdges && importWithEdges.checked && destEdges > 0);
+  }
+  async function loadImportPlan(){
+    var flags = importFlags();
+    importConfirm.disabled = true;
+    importPreview = null;
+    if (!flags.source){
+      importPlan.textContent = 'Pick a file to see the plan.';
+      return;
+    }
+    importPlan.textContent = 'Reading\\u2026';
+    try {
+      var r = await (await fetch('/api/import', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(flags)
+      })).json();
+      importPreview = r;
+      importPlan.textContent = formatImportPlan(r);
+      var errs = (r && r.errors) || [];
+      importConfirm.disabled = !!(r && r.error && !r.records) || errs.length > 0 || importInFlightUi;
+    } catch(e){
+      importPlan.textContent = 'Could not read that file.';
+      importConfirm.disabled = true;
+    }
+  }
+  importBtn.addEventListener('click', async function(){
+    if (importInFlightUi) return;
+    importToast.hidden = true;
+    importPath.value = '';
+    importWithEdges.checked = false;
+    importMerge.checked = false;
+    delete importMerge.dataset.touched;
+    importReplaceEdges.checked = false;
+    importConfirm.disabled = true;
+    importCancel.disabled = false;
+    importModalBusy.hidden = true;
+    importPlan.textContent = 'Pick a file to see the plan.';
+    importModal.hidden = false;
+    try {
+      importDestMeta = await (await fetch('/api/import')).json();
+      refreshImportChecks();
+      if (importDestMeta && importDestMeta.suggestedSource){
+        importPath.value = importDestMeta.suggestedSource;
+        await loadImportPlan();
+      }
+    } catch(e){
+      importDestMeta = null;
+    }
+  });
+  importCancel.addEventListener('click', function(){
+    if (importInFlightUi) return;
+    closeImportModal();
+  });
+  importModal.addEventListener('click', function(ev){
+    if (importInFlightUi) return;
+    if (ev.target === importModal) closeImportModal();
+  });
+  importBrowse.addEventListener('click', async function(){
+    if (importInFlightUi) return;
+    try {
+      var r = await (await fetch('/api/import/pick', {
+        method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'
+      })).json();
+      if (r && r.ok && r.path){
+        importPath.value = r.path;
+        await loadImportPlan();
+      } else if (r && r.code === 'no_dialog'){
+        importPlan.textContent = 'Paste the path to the zip (file dialog is off).';
+      }
+    } catch(e){
+      importPlan.textContent = 'Could not open a file dialog. Paste the path instead.';
+    }
+  });
+  importPath.addEventListener('change', function(){ loadImportPlan(); });
+  importWithEdges.addEventListener('change', function(){
+    refreshImportChecks();
+    loadImportPlan();
+  });
+  importMerge.addEventListener('change', function(){
+    importMerge.dataset.touched = '1';
+    loadImportPlan();
+  });
+  importReplaceEdges.addEventListener('change', function(){ loadImportPlan(); });
+  importConfirm.addEventListener('click', async function(){
+    if (importInFlightUi) return;
+    var flags = importFlags();
+    if (!flags.source) return;
+    flags.apply = true;
+    setImportBusy(true);
+    try {
+      var r = await (await fetch('/api/import', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(flags)
+      })).json();
+      if (r && r.ok && r.apply){
+        closeImportModal();
+        showImportToast('Imported ' + (r.added || 0) + ' memories into this store.');
+        loadState();
+        if (!showDemo && !graphCollapsed) loadGraph(true);
+      } else if (r && r.code === 'busy'){
+        importPlan.textContent = 'An export or import is already running.';
+      } else {
+        importPlan.textContent = formatImportPlan(r) || ((r && r.error) ? r.error : 'Import failed.');
+      }
+    } catch(e){
+      importPlan.textContent = 'Import failed. Check the path and try again.';
+    }
+    setImportBusy(false);
   });
 
   async function loadClients(){
@@ -961,6 +1184,7 @@ let lastPing = Date.now();
 let connectedOnce = false;
 let watchdogPaused = false;
 let exportInFlight = false;
+let importInFlight = false;
 
 function pauseWatchdog() { watchdogPaused = true; }
 function resumeWatchdog() {
@@ -985,8 +1209,11 @@ async function waitForTestHold() {
   // Test hook (same family as RM_EXPORT_CRASH_AFTER): if set to a path,
   // sit here — in-flight + watchdog already paused — until that file
   // exists. Lets tests prove 409-on-double-POST and "no pings for >12s
-  // does not kill the process" without a 50k zip.
-  const p = process.env.RM_PANEL_EXPORT_HOLD;
+  // does not kill the process" without a 50k zip. Import uses the
+  // sibling RM_PANEL_IMPORT_HOLD so the two cannot starve each other.
+  const p = importInFlight
+    ? process.env.RM_PANEL_IMPORT_HOLD
+    : process.env.RM_PANEL_EXPORT_HOLD;
   if (!p) return;
   await new Promise((resolve) => {
     const t = setInterval(() => {
@@ -994,6 +1221,74 @@ async function waitForTestHold() {
         if (fs.existsSync(p)) { clearInterval(t); resolve(); }
       } catch { /* */ }
     }, 25);
+  });
+}
+
+function suggestImportSource() {
+  const dir = exp.defaultOutDir(STORE_PATH);
+  try {
+    const names = fs.readdirSync(dir);
+    let best = null, bestM = 0;
+    for (const n of names) {
+      if (!/^resonance-memories.*\.zip$/i.test(n)) continue;
+      const p = path.join(dir, n);
+      try {
+        const st = fs.statSync(p);
+        if (!st.isFile()) continue;
+        if (st.mtimeMs >= bestM) { bestM = st.mtimeMs; best = p; }
+      } catch { /* */ }
+    }
+    return best;
+  } catch { return null; }
+}
+
+function pickImportFile() {
+  return new Promise((resolve) => {
+    // Tests set NO_OPEN so a dialog cannot steal focus / hang the suite.
+    if (process.env.RESONANCE_MEMORY_NO_OPEN === "1") {
+      resolve({ ok: false, code: "no_dialog", error: "file dialog disabled" });
+      return;
+    }
+    const desktop = exp.defaultOutDir(STORE_PATH);
+    if (process.platform === "win32") {
+      const initial = String(desktop).replace(/'/g, "''");
+      const script =
+        "Add-Type -AssemblyName System.Windows.Forms; " +
+        "$d = New-Object System.Windows.Forms.OpenFileDialog; " +
+        "$d.Filter = 'Memory export (*.zip;*.jsonl)|*.zip;*.jsonl|All files (*.*)|*.*'; " +
+        "$d.Title = 'Import memories'; " +
+        "$d.InitialDirectory = '" + initial + "'; " +
+        "if ($d.ShowDialog() -eq 'OK') { [Console]::Out.Write($d.FileName) }";
+      execFile("powershell.exe", ["-NoProfile", "-STA", "-Command", script], {
+        timeout: 300000, windowsHide: true, maxBuffer: 1024 * 1024,
+      }, (err, stdout) => {
+        const p = String(stdout || "").trim();
+        if (p) resolve({ ok: true, path: p });
+        else resolve({
+          ok: false,
+          code: err ? "failed" : "cancelled",
+          error: err ? String(err && err.message || err) : "cancelled",
+        });
+      });
+      return;
+    }
+    if (process.platform === "darwin") {
+      execFile("osascript", ["-e", 'POSIX path of (choose file with prompt "Import memories")'], {
+        timeout: 300000,
+      }, (err, stdout) => {
+        const p = String(stdout || "").trim();
+        if (p) resolve({ ok: true, path: p });
+        else resolve({ ok: false, code: "cancelled", error: "cancelled" });
+      });
+      return;
+    }
+    execFile("zenity", ["--file-selection", "--title=Import memories", "--file-filter=*.zip *.jsonl"], {
+      timeout: 300000,
+    }, (err, stdout) => {
+      const p = String(stdout || "").trim();
+      if (p) resolve({ ok: true, path: p });
+      else resolve({ ok: false, code: "cancelled", error: "cancelled" });
+    });
   });
 }
 
@@ -1274,7 +1569,7 @@ const server = http.createServer((req, res) => {
   }
   if (req.method === "POST" && url === "/api/export") {
     body(req, () => {
-      if (exportInFlight) {
+      if (exportInFlight || importInFlight) {
         json(res, 409, { ok: false, code: "busy", error: "export already in progress" });
         return;
       }
@@ -1314,6 +1609,110 @@ const server = http.createServer((req, res) => {
         });
       }).finally(() => {
         exportInFlight = false;
+        resumeWatchdog();
+      });
+    });
+    return;
+  }
+  // RM-17: panel import. GET = dest snapshot + suggested Desktop zip
+  // (read-only; does not mint an empty .db). POST with apply:false is
+  // the CLI dry-run. POST with apply:true shells runImport() into THIS
+  // store. --with-edges is a body flag, default off. Not an MCP tool.
+  if (req.method === "GET" && (url === "/api/import" || url.startsWith("/api/import?"))) {
+    imp.probeDest(STORE_PATH).then((dest) => {
+      json(res, 200, {
+        destEmpty: !!dest.empty,
+        destCount: dest.count || 0,
+        destEdges: dest.edgeCount || 0,
+        destPath: dest.path || STORE_PATH,
+        destBackend: dest.backend || "jsonl",
+        suggestedSource: suggestImportSource(),
+        withEdgesDefault: false,
+        busy: !!(exportInFlight || importInFlight),
+        import_busy: !!importInFlight,
+        watchdog_paused: watchdogPaused,
+      });
+    }).catch((e) => {
+      json(res, 200, {
+        destEmpty: true, destCount: 0, destEdges: 0,
+        destPath: STORE_PATH, destBackend: "jsonl",
+        suggestedSource: suggestImportSource(),
+        withEdgesDefault: false,
+        busy: !!(exportInFlight || importInFlight),
+        import_busy: !!importInFlight,
+        watchdog_paused: watchdogPaused,
+        error: String(e && e.message || e),
+      });
+    });
+    return;
+  }
+  if (req.method === "POST" && url === "/api/import/pick") {
+    body(req, () => {
+      pickImportFile().then((r) => json(res, 200, r)).catch((e) => {
+        json(res, 200, { ok: false, code: "failed", error: String(e && e.message || e) });
+      });
+    });
+    return;
+  }
+  if (req.method === "POST" && url === "/api/import") {
+    body(req, (b) => {
+      let parsed = {};
+      try { parsed = JSON.parse(b) || {}; } catch { parsed = {}; }
+      const source = parsed && parsed.source;
+      if (!source || !String(source).trim()) {
+        json(res, 400, { ok: false, code: "IMPORT_NO_SOURCE", error: "missing source path" });
+        return;
+      }
+      const flags = {
+        source: String(source).trim(),
+        apply: !!parsed.apply,
+        merge: !!parsed.merge,
+        withEdges: !!parsed.withEdges,
+        replaceEdges: !!parsed.replaceEdges,
+        destPath: STORE_PATH,
+      };
+      if (!flags.apply) {
+        imp.runImport(flags).then((plan) => {
+          json(res, 200, Object.assign({
+            ok: !(plan.errors && plan.errors.length),
+            apply: false,
+          }, plan));
+        }).catch((e) => {
+          json(res, 200, {
+            ok: false,
+            apply: false,
+            code: e && e.code || "failed",
+            error: String(e && e.message || e),
+          });
+        });
+        return;
+      }
+      if (exportInFlight || importInFlight) {
+        json(res, 409, { ok: false, code: "busy", error: "import already in progress" });
+        return;
+      }
+      importInFlight = true;
+      pauseWatchdog();
+      const run = async () => {
+        await waitForTestHold();
+        await yieldToEventLoop();
+        return imp.runImport(flags, {
+          onAfterRecord: async (ctx) => {
+            if (ctx && ctx.n % YIELD_EVERY === 0) await yieldToEventLoop();
+          },
+        });
+      };
+      run().then((result) => {
+        json(res, 200, Object.assign({ ok: true }, result));
+      }).catch((e) => {
+        json(res, 200, {
+          ok: false,
+          apply: true,
+          code: e && e.code || "failed",
+          error: String(e && e.message || e),
+        });
+      }).finally(() => {
+        importInFlight = false;
         resumeWatchdog();
       });
     });
