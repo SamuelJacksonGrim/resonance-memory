@@ -8,6 +8,14 @@ stable; sophistication grows in the substrate, not in the API.
 
 ## [Unreleased]
 
+### Changed
+- **Weak-model system prompt rewritten + the copy button fixed.** The optional
+  `system-prompt.md` block is now tighter and priority-ordered — recall-before-you-answer
+  leads, save-what-lasts and keep-it-clean follow — so a small model that forgets to reach
+  for tools has one clear routine. The panel's "copy a ready-made system prompt" button now
+  copies **only the paste-ready block**, not the surrounding human-facing doc (it was
+  handing over the "paste the block below…" intro too).
+
 ### Added
 - **RM-11 release CI.** `.github/workflows/release.yml` is the first
   workflow in the repo and the macOS build path (this project has no

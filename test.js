@@ -3905,6 +3905,23 @@ test("panel page source ships W-02 Origin/CSRF lock (not a browser test)", () =>
   assert.ok(!/Access-Control-Allow-Origin/i.test(src), "no CORS — the panel is not a public API yet");
 });
 
+test("system-prompt.md: the copy button hands over only the paste-ready block", () => {
+  // Contract: the file's ``` fence extracts to a clean prompt — all four tools,
+  // recall-first, and NONE of the human-facing doc around it. Same regex the panel
+  // handler uses (pickPromptBlock). A weak model must never be fed "paste the block below".
+  const md = fs.readFileSync(path.join(__dirname, "system-prompt.md"), "utf8");
+  const m = md.match(/```[^\n]*\n([\s\S]*?)\n```/);
+  assert.ok(m, "system-prompt.md must carry the prompt in a fenced block");
+  const block = m[1].trim();
+  for (const verb of ["save_memory", "recall_memory", "edit_memory", "delete_memory"]) {
+    assert.ok(block.includes(verb), "block names " + verb);
+  }
+  assert.ok(/recall_memory FIRST|RECALL before you answer/i.test(block), "recall-first is the lead behavior for weak models");
+  assert.ok(!/#\s*Optional|paste the block|copy a ready-made|turn it off/i.test(block), "block excludes the human-facing doc around it");
+  const src = fs.readFileSync(path.join(__dirname, "panel.js"), "utf8");
+  assert.ok(src.includes("pickPromptBlock"), "the /api/system-prompt handler extracts the block, not the whole file");
+});
+
 test("export is not an MCP tool (four verbs stay four)", () => {
   const src = fs.readFileSync(path.join(__dirname, "server.js"), "utf8");
   assert.ok(/name: "save_memory"/.test(src));

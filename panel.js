@@ -89,6 +89,17 @@ const PAYPAL = "https://paypal.me/SamuelGrim91";
 let EMBEDDED = { demoSeed: "", systemPrompt: "" };
 try { EMBEDDED = require("./embedded-assets.js"); } catch { }
 
+// system-prompt.md is a human-facing doc: a short intro, the paste-ready block
+// inside a ``` fence, and an outro. The "copy" button must hand over ONLY the
+// fenced block — pasting the intro ("paste the block below…") into a model's
+// system prompt is instructions-about-instructions, not a prompt. Extract the
+// first fenced block; fall back to the whole text if the file has no fence.
+function pickPromptBlock(md) {
+  const s = String(md || "");
+  const m = s.match(/```[^\n]*\n([\s\S]*?)\n```/);
+  return (m ? m[1] : s).trim();
+}
+
 function readConfig() { try { return JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8")); } catch { return {}; } }
 function writeConfig(c) { fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true }); fs.writeFileSync(CONFIG_PATH, JSON.stringify(c, null, 2), "utf8"); }
 function fieldOn() { const c = readConfig(); return typeof c.field === "boolean" ? c.field : false; }
@@ -1443,8 +1454,9 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (req.method === "GET" && url === "/api/system-prompt") {
-    let text = "";
-    try { text = fs.readFileSync(path.join(baseDir(), "system-prompt.md"), "utf8"); } catch { text = EMBEDDED.systemPrompt || ""; }
+    let raw = "";
+    try { raw = fs.readFileSync(path.join(baseDir(), "system-prompt.md"), "utf8"); } catch { raw = EMBEDDED.systemPrompt || ""; }
+    const text = pickPromptBlock(raw); // paste-ready block only, never the surrounding doc
     res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ text })); return;
   }
   if (req.method === "GET" && url === "/api/embedder") {
