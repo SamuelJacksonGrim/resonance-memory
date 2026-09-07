@@ -25,6 +25,7 @@ config.json
 
 # S1 scale vectors: seed + generator are committed; 50k×768 floats are not.
 eval/substrate/.cache/
+eval/substrate/.cache-embedder-fair/
 eval/substrate/last-run.json
 
 # RM-07 spike: vendor binaries + scratch DBs. The JS and results.md ARE tracked.

@@ -24,7 +24,7 @@
  * stored signals. Slice C put this on the live recall path: EdgeStore is
  * the Hebbian source of truth (bonus / reinforce / save). Phase 0.1 persists
  * save-time semantic neighbors here (K=5, min cosine 0.25, Hebbian weight 0);
- * recall still computes the semantic kNN in field.js (minSim 0.55) and does
+ * recall still computes the semantic kNN in field.js (minSim 0.70) and does
  * not read the cached semantic signal yet. Phase 0.2 replaced the recall-epoch
  * clock: Hebbian decay is lazy wall-clock via effectiveHebbian (computed on
  * read, never stored). recall() no longer calls tick() — that is I6.
@@ -1272,7 +1272,14 @@ class EdgeStore {
 
   // Reinforce one recall event given the provenance of the returned ids.
   // Co-recall is the differentiator I6 preserves. Third arg is a request
-  // id (string|number) or `{ requestId, type, typeFn, halfLife }`.
+  // id (string|number) or `{ requestId, type, typeFn, halfLife, pairScale }`.
+  // pairScale(a, b) => number in [0, 1]: cosine-gated / entity-mismatch
+  // multiplier applied to α. Omitted = 1 (byte-identical to the old equal
+  // bump, so ledger-parity tests stay put). 0 skips the pair — a near-miss
+  // below field minSim, or a same-name different-entity pair, earns no
+  // Hebbian weight. Measured: equal bump saturates tanh (bonus ratio 1.00×);
+  // cosine-gated (α × how far doc-doc sits above the gate) is 6.18× weight
+  // on fire-together haystack, unrelated 0.028.
   // Returns false iff this request id was already applied (caller should
   // skip save()); true/undefined otherwise so a duck-typed mock that
   // returns nothing still triggers the existing save().
@@ -1280,12 +1287,17 @@ class EdgeStore {
     const o = normalizeMutationOpts(opts);
     if (!this.acceptRequest(o.requestId)) return false;
     const bumpOpts = { type: o.type, typeFn: o.typeFn, halfLife: o.halfLife };
+    const scale = typeof o.pairScale === "function" ? o.pairScale : () => 1;
     for (let i = 0; i < primaryIds.length; i++)
-      for (let j = i + 1; j < primaryIds.length; j++)
-        this._bump(primaryIds[i], primaryIds[j], this.alphaPP, bumpOpts);
+      for (let j = i + 1; j < primaryIds.length; j++) {
+        const s = scale(primaryIds[i], primaryIds[j]);
+        if (s > 0) this._bump(primaryIds[i], primaryIds[j], this.alphaPP * s, bumpOpts);
+      }
     for (const p of primaryIds)
-      for (const n of neighborhoodIds)
-        this._bump(p, n, this.alphaPN, bumpOpts);
+      for (const n of neighborhoodIds) {
+        const s = scale(p, n);
+        if (s > 0) this._bump(p, n, this.alphaPN * s, bumpOpts);
+      }
     // neighborhood <-> neighborhood: alpha 0, intentionally skipped
     return true;
   }

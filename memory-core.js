@@ -77,6 +77,9 @@ const {
 } = require("./record.js");
 const { acceptExtract, EXTRACT_TIMEOUT_MS } = require("./extract.js");
 const { makeEdge, setSemantic, semanticValid, hebbianDecayType, reactivateEdge } = require("./edges.js");
+const {
+  resolveEntities, logicalConflict, pairConflictFn,
+} = require("./entity.js");
 
 // Reciprocal-kNN edge construction (RM-00 field experiment, 2026-08-01). Directional
 // kNN let a one-sided "hub" node bleed into a seed's neighborhood as a false positive
@@ -94,8 +97,9 @@ const FIELD_MUTUAL = !["0", "false", "no"].includes(String(process.env.RESONANCE
 // 0.45 (stage 2) reaches the heights<->rooftop isolate (0.472). Env-overridable to A/B.
 const K_SEARCH = Number(process.env.RESONANCE_FIELD_KSEARCH) || 15;
 // 0.45 (stage 2) is the DEFAULT: it reaches the heights<->rooftop isolate (0.472) that
-// the 0.55 edge gate misses, and on the corpus it cost zero tangent bleed. The gate only
-// governs whether a TYPED constraint finds a bridge, so it cannot loosen ordinary recall.
+// the Related: minSim 0.70 gate misses, and on the corpus it cost zero tangent bleed.
+// The gate only governs whether a TYPED constraint finds a bridge, so it cannot
+// loosen ordinary recall. Independent of field minSim — do not unify them.
 const CONSTRAINT_GATE = process.env.RESONANCE_CONSTRAINT_GATE ? Number(process.env.RESONANCE_CONSTRAINT_GATE) : 0.45;
 
 /*
@@ -103,22 +107,50 @@ const CONSTRAINT_GATE = process.env.RESONANCE_CONSTRAINT_GATE ? Number(process.e
  * persisted on the EdgeStore as a derived cache; Hebbian weight starts at 0
  * (no seeded baseline — an unreinforced edge's learned signal is genuinely
  * zero). Recall does NOT read these edges yet: Related: still comes from
- * field.js at minSim 0.55. The two thresholds are deliberately different
+ * field.js at minSim 0.70. The two thresholds are deliberately different
  * (phase-0 Risk #2):
  *
- *   0.55 at RECALL  — a tight gate for what surfaces in Related:
+ *   0.70 at RECALL  — a tight gate for what surfaces in Related:
+ *                     (was 0.55; fire-together nomic plain: 0.55 leaked 11
+ *                     near-miss edges, 0.70 leaks 0, true-pair recall 0.93)
  *   0.25 at SAVE    — a looser net for what's worth persisting as structure
  *                     (Phase 0.4 SEMANTIC_PRUNE_GATE matches this: below it
  *                     an edge wouldn't even be created today, so it is the
- *                     prune floor. Do not raise prune to 0.55.)
+ *                     prune floor. Do not raise prune to 0.70.)
  *
- * Unifying them would either drop persistable structure (raising this to 0.55)
+ * Unifying them would either drop persistable structure (raising this to 0.70)
  * or flood Related: (lowering recall to 0.25). Do not silently collapse them.
  * The cost of the O(N) scan this implies is measured by eval/save-time-cost.js;
  * that sweep, not this comment, decides whether RM-07 is mandatory.
  */
 const SAVE_TIME_K = 5;
 const SAVE_TIME_MIN_COS = 0.25;
+
+/*
+ * Related: kNN floor. Live-config `field_minsim` (and embedder_tuning.field_minsim)
+ * wins over env RESONANCE_FIELD_MINSIM, which wins over this default. 0.70 is
+ * the measured nomic-plain gate (fair-run 2026-09-06). Constraint rescue stays
+ * on CONSTRAINT_GATE 0.45 — that path is independent, do not raise it here.
+ */
+const FIELD_MINSIM = 0.70;
+
+function readFieldMinSim(config) {
+  const env = envNumber("RESONANCE_FIELD_MINSIM", FIELD_MINSIM);
+  const c = config && typeof config === "object" ? config : {};
+  if (typeof c.field_minsim === "number" && Number.isFinite(c.field_minsim)) return c.field_minsim;
+  const t = c.embedder_tuning;
+  if (t && typeof t.field_minsim === "number" && Number.isFinite(t.field_minsim)) return t.field_minsim;
+  return env;
+}
+
+function readConstraintGate(config) {
+  const env = envNumber("RESONANCE_CONSTRAINT_GATE", CONSTRAINT_GATE);
+  const c = config && typeof config === "object" ? config : {};
+  if (typeof c.constraint_gate === "number" && Number.isFinite(c.constraint_gate)) return c.constraint_gate;
+  const t = c.embedder_tuning;
+  if (t && typeof t.constraint_gate === "number" && Number.isFinite(t.constraint_gate)) return t.constraint_gate;
+  return env;
+}
 
 /*
  * Cosine-banded dedup at save (RM-02.b). Thresholds are CONFIG, not
@@ -177,12 +209,46 @@ function defaultGetEdges(mems, L) {
   const list = mems || [];
   const byId = new Map(list.map((m) => [String(m.id), m]));
   return field.buildEdges(list, {
-    k: 2, minSim: 0.55,
-    bonus: L ? (a, b) => L.bonus(a, b, {
-      type: hebbianDecayType(byId.get(String(a)), byId.get(String(b))),
-    }) : () => 0,
+    k: 2, minSim: FIELD_MINSIM,
+    bonus: L ? nodeMaxBonus(L, list, (a, b) => hebbianDecayType(byId.get(String(a)), byId.get(String(b)))) : () => 0,
+    conflict: pairConflictFn(resolveEntities(list)),
     mutual: FIELD_MUTUAL,
   });
+}
+
+/*
+ * Neighborhood-normalized Hebbian readout (discovery only). tanh(stored)
+ * saturates: fire-together true 44 vs near-miss 29 both hit maxBonus
+ * (bonus ratio 1.00×). Dividing by the node's max incident weight puts
+ * the tanh argument in (0,1], recovering separation (fair-run scheme 1).
+ * Falls back to shipped tanh(w) when the EdgeStore has no incident() or
+ * the node has no positive weights — first recall, bonus 0, golden unmoved.
+ */
+function nodeMaxBonus(L, mems, typeFn) {
+  if (!L || typeof L.effectiveWeight !== "function") return () => 0;
+  const maxBonus = typeof L.maxBonus === "number" ? L.maxBonus : 0.3;
+  const ids = (mems || []).map((m) => String(m.id));
+  const maxW = new Map();
+  if (typeof L.incident === "function") {
+    for (const id of ids) {
+      let mx = 0;
+      try {
+        for (const e of L.incident(id) || []) {
+          const other = String(e.a) === id ? e.b : e.a;
+          const w = L.effectiveWeight(id, other, { type: typeFn(id, other) });
+          if (w > mx) mx = w;
+        }
+      } catch { /* I3: a broken sidecar must not kill Related: */ }
+      maxW.set(id, mx);
+    }
+  }
+  return (a, b) => {
+    const w = L.effectiveWeight(a, b, { type: typeFn(a, b) });
+    if (!(w > 0)) return 0;
+    const denom = Math.max(maxW.get(String(a)) || 0, maxW.get(String(b)) || 0);
+    if (denom > 0) return maxBonus * Math.tanh(w / denom);
+    return maxBonus * Math.tanh(w);
+  };
 }
 
 function asEdgeMap(edges) {
@@ -412,7 +478,7 @@ async function dedupExisting({ store, embed, apply = false, now, thresholds } = 
   const vectorless = all.filter((r) => isCurrent(r) && !hasVector(r));
   if (vectorless.length && typeof embed === "function") {
     try {
-      const vecs = await embed(vectorless.map((r) => r.text));
+      const vecs = await embed(vectorless.map((r) => r.text), { role: "document" });
       vectorless.forEach((r, i) => {
         const v = vecs[i];
         if (Array.isArray(v) && v.length) {
@@ -449,7 +515,7 @@ async function dedupExisting({ store, embed, apply = false, now, thresholds } = 
  * Persist the new record's top-K semantic neighbors into the EdgeStore.
  *
  * Deliberately NOT field.buildEdges: that path is recall-time (k=2, minSim
- * 0.55, mutual kNN, Hebbian bonus blended in). This is save-time structure
+ * 0.70, mutual kNN, Hebbian bonus blended in). This is save-time structure
  * (K=5, minCos 0.25, no bonus, not mutual). Recall still uses field.js;
  * wiring Related: to this table is a later, gated slice.
  *
@@ -472,10 +538,13 @@ function bindSaveTimeNeighbors(rec, mems, edgeStore, opts = {}) {
 
   const k = opts.k != null ? opts.k : SAVE_TIME_K;
   const minCos = opts.minCos != null ? opts.minCos : SAVE_TIME_MIN_COS;
+  const resolved = resolveEntities([rec, ...(mems || [])]);
+  const recSlot = resolved.get(String(rec.id));
   const scores = [];
   for (const m of mems || []) {
     if (String(m.id) === String(rec.id)) continue;
     if (!isVector(m.embedding)) continue;
+    if (logicalConflict(recSlot, resolved.get(String(m.id)))) continue;
     const cos = cosine(vec, m.embedding);
     if (cos >= minCos) scores.push({ m, cos });
   }
@@ -551,6 +620,8 @@ function createCore({
   warmTrace = () => false,
   warmEdgeCap = () => WARM_EDGE_CAP,
   dedupThresholds = () => readDedupThresholds(null),
+  fieldMinSim = () => readFieldMinSim(null),
+  constraintGate = () => readConstraintGate(null),
   extractEnabled = () => false,
   extractCapable,
   extract,
@@ -673,6 +744,22 @@ function createCore({
     return { hi: DEDUP_HI, lo: DEDUP_LO };
   }
 
+  function resolveMinSim() {
+    try {
+      const t = typeof fieldMinSim === "function" ? fieldMinSim() : fieldMinSim;
+      if (typeof t === "number" && Number.isFinite(t)) return t;
+    } catch { /* injected getter must never break recall */ }
+    return FIELD_MINSIM;
+  }
+
+  function resolveConstraintGate() {
+    try {
+      const t = typeof constraintGate === "function" ? constraintGate() : constraintGate;
+      if (typeof t === "number" && Number.isFinite(t)) return t;
+    } catch { /* injected getter must never break recall */ }
+    return CONSTRAINT_GATE;
+  }
+
   /*
    * Persist one already-extracted fact. The previous save() body, unchanged
    * except it no longer trims/guards — prepareWrite did that. One fact = one
@@ -691,7 +778,7 @@ function createCore({
     if (same) return confirmRestatement(same, now);
 
     let embedding = null;
-    try { embedding = (await embed([content]))[0]; } catch { embedding = null; }
+    try { embedding = (await embed([content], { role: "document" }))[0]; } catch { embedding = null; }
     const rec = normalize({
       id: store.nextId(), created: now, modified: now, text: content,
       embedding, valid_from: now, valid_to: null, last_confirmed: now,
@@ -827,13 +914,17 @@ function createCore({
     let ranked;               // the top-k the model actually sees (return radius)
     let seedPool = [];        // wider top-K_SEARCH ids: the field's constraint walk seeds
     try {
-      // Embed the query plus only the records missing a stored vector (legacy or a
-      // save-time endpoint outage). Steady state: nothing missing -> one embed call.
+      // Embed the query as a query and only the records missing a stored vector
+      // as documents. Split so server.js can apply embedder-specific roles
+      // (jina Query:/Document:, Qwen Instruct-query) without prefixing a
+      // mixed batch. Steady state: nothing missing -> one query embed.
       const vectorless = mems.filter((m) => !m.embedding);
-      const vecs = await embed([query, ...vectorless.map((m) => m.text)]);
-      const qv = vecs[0];
+      const qv = (await embed([query], { role: "query" }))[0];
       const fresh = new Map();
-      vectorless.forEach((m, i) => fresh.set(String(m.id), vecs[i + 1]));
+      if (vectorless.length) {
+        const docs = await embed(vectorless.map((m) => m.text), { role: "document" });
+        vectorless.forEach((m, i) => fresh.set(String(m.id), docs[i]));
+      }
 
       const scored = mems
         .map((m) => ({ m, s: cosine(qv, m.embedding || fresh.get(String(m.id))) }))
@@ -862,24 +953,44 @@ function createCore({
         const L = hebbianStore();
         if (L) {
           const byId = new Map(mems.map((m) => [String(m.id), m]));
-          // Discovery bonus uses the wall-clock-decayed weight (effectiveHebbian),
-          // never the stored one. Type picks the half-life (constraint ~30d /
-          // fact ~7d). Computed on read — no write (I6).
-          const bonus = (a, b) => L.bonus(a, b, {
-            type: hebbianDecayType(byId.get(String(a)), byId.get(String(b))),
+          const minSim = resolveMinSim();
+          // Entity ids + polarity: resolved over the current store so a
+          // sister-Naima fact and a coworker-Naima fact get different ids.
+          // The query is a virtual record so "my sister Naima" drops E2
+          // from Related: without touching primary cosine (I2).
+          const resolved = resolveEntities(mems);
+          const qResolved = resolveEntities([{ id: "__query__", text: query }, ...mems]);
+          const qSlot = qResolved.get("__query__");
+          const typeFn = (a, b) => hebbianDecayType(byId.get(String(a)), byId.get(String(b)));
+          // Neighborhood-normalized readout (not tanh of raw weight).
+          // Discovery only — primary rank is still pure cosine.
+          const bonus = nodeMaxBonus(L, mems, typeFn);
+          const edges = field.buildEdges(mems, {
+            k: 2, minSim, bonus, mutual: FIELD_MUTUAL,
+            conflict: pairConflictFn(resolved),
           });
-          const edges = field.buildEdges(mems, { k: 2, minSim: 0.55, bonus, mutual: FIELD_MUTUAL });
           // General neighborhood: forward one hop from the RETURNED seeds (unchanged).
           const rel = field.neighborhood(edges, ranked.map((m) => m.id), { hops: 1, max: 4 });
           // Constraint rescue: apex rules reachable from the WIDER seed pool. Restricted
           // to typed constraints so the expanded radius can't re-drag non-constraint hubs.
-          const cres = field.reachableConstraints(mems, seedPool, { gate: CONSTRAINT_GATE, k: 2, max: 4, exclude: ranked.map((m) => m.id) });
+          const cres = field.reachableConstraints(mems, seedPool, { gate: resolveConstraintGate(), k: 2, max: 4, exclude: ranked.map((m) => m.id) });
           // Merge (constraints first), drop anything already returned or duplicated.
+          // Query-conditioned entity filter applies to the neighborhood only,
+          // never to rescued constraints (a phobia/allergy has no person id)
+          // and never to the primary list (I2).
           const seen = new Set(ranked.map((m) => String(m.id)));
           const merged = [];
-          for (const e of [...cres, ...rel]) {
+          for (const e of cres) {
             const key = String(e.id);
             if (seen.has(key)) continue;
+            seen.add(key);
+            merged.push(e);
+          }
+          for (const e of rel) {
+            const key = String(e.id);
+            if (seen.has(key)) continue;
+            const rec = byId.get(key);
+            if (rec && logicalConflict(qSlot, resolved.get(key))) continue;
             seen.add(key);
             merged.push(e);
           }
@@ -890,16 +1001,28 @@ function createCore({
           // Writes the EdgeStore persist (JSON sidecar or the sqlite edges
           // table), never the memory rows (I5 / BUG-002).
           // Decay is NOT ticked here — I6: reading must not drive the decay clock.
-          // reinforceRecall is retained (the differentiator); tick() is gone.
-          // Materialize-on-mutation (0.3) happens inside _bump; typeFn picks
-          // the same half-life class bonus() used on this turn. requestId
-          // makes a retried MCP tools/call apply once; no id → apply (eval).
+          // pairScale: cosine-gated (α × how far doc-doc sits above minSim)
+          // and zero on entity/polarity mismatch. Equal bump saturates tanh;
+          // this is the measured lever (fair-run haystack, weight 6.18×).
           const applied = L.reinforceRecall(
             ranked.map((m) => m.id),
             merged.map((e) => e.id),
             {
               requestId,
-              typeFn: (a, b) => hebbianDecayType(byId.get(String(a)), byId.get(String(b))),
+              typeFn,
+              pairScale: (a, b) => {
+                if (logicalConflict(resolved.get(String(a)), resolved.get(String(b)))) return 0;
+                const ra = byId.get(String(a)), rb = byId.get(String(b));
+                if (!hasVector(ra) || !hasVector(rb)) return 1;
+                const cos = cosine(ra.embedding, rb.embedding);
+                // Constraint bridges are allowed down to CONSTRAINT_GATE
+                // (heights↔rooftop = 0.472). Ordinary pairs use field minSim
+                // so a 0.58 near-miss earns no Hebbian weight.
+                const gate = (ra.is_constraint || rb.is_constraint) ? resolveConstraintGate() : minSim;
+                if (cos < gate) return 0;
+                const span = 1 - gate;
+                return span > 0 ? (cos - gate) / span : 0;
+              },
             }
           );
           // Skip the sidecar rewrite on a duplicate request (no new bytes).
@@ -947,7 +1070,7 @@ function createCore({
     // re-embed, and every incident edge would falsely self-invalidate
     // (Phase 0 validity-by-comparison; BUG-008 class). Omit both fields.
     let embedding = null;
-    try { embedding = (await embed([content]))[0]; } catch { embedding = null; }
+    try { embedding = (await embed([content], { role: "document" }))[0]; } catch { embedding = null; }
     const embedded = Array.isArray(embedding) && embedding.length > 0;
     const now = new Date().toISOString();
     // An edit is a correction in place: the fact is current again as of now.
@@ -982,6 +1105,7 @@ function createCore({
 module.exports = {
   createCore, cosine, keywordScore, defaultGetEdges, asEdgeMap,
   bindSaveTimeNeighbors, SAVE_TIME_K, SAVE_TIME_MIN_COS,
+  FIELD_MINSIM, readFieldMinSim, readConstraintGate, nodeMaxBonus,
   DEDUP_HI, DEDUP_LO, readDedupThresholds,
   planDedupExisting, applyDedupExisting, dedupExisting,
   mergeBandPatches, restateSurvivorPatch,

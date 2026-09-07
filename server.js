@@ -46,8 +46,9 @@ const fs = require("fs");
 const path = require("path");
 const { hebbianDecayType, openEdgeStore } = require("./edges.js");
 const { openStore } = require("./store.js");
-const { createCore, defaultGetEdges, readDedupThresholds } = require("./memory-core.js");
+const { createCore, defaultGetEdges, readDedupThresholds, readFieldMinSim, readConstraintGate } = require("./memory-core.js");
 const extract = require("./extract.js");
+const { detectEmbedderFamily, formatEmbedInputs } = require("./embed-invoke.js");
 const { WarmField } = require("./warm.js");
 // Single source of truth for the version, so serverInfo can't drift from package.json.
 // esbuild inlines this JSON into the bundle, so it resolves in the SEA build too.
@@ -96,6 +97,19 @@ function dedupThresholds() {
     return readDedupThresholds(JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8")));
   } catch { /* no config yet -> env / defaults */ }
   return readDedupThresholds(null);
+}
+function liveConfig() {
+  try { return JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8")); } catch { return null; }
+}
+function fieldMinSim() {
+  return readFieldMinSim(liveConfig());
+}
+function constraintGate() {
+  return readConstraintGate(liveConfig());
+}
+function embedderFamily() {
+  const c = liveConfig();
+  return detectEmbedderFamily(EMBED_MODEL, c && c.embedder);
 }
 // RM-01.c Tier 2. Live-config `extract_llm` wins over env RESONANCE_EXTRACT_LLM,
 // default false. Read per save so the panel toggle needs no restart, same as
@@ -189,11 +203,17 @@ function warmEdgeCap() { return ENV_WARM_EDGE_CAP; }
 // ENV_WARM_RANK is read (so the MCP process ships the flag) and ignored until PR3.
 
 // --------------------------------------------------------------- embedding
-async function embed(texts) {
+// Role-aware: nomic stays raw (verified best); Qwen queries get Instruct;
+// jina gets Query:/Document:. Family is keyed off panel `config.embedder`
+// then EMBED_MODEL — LM Studio often ignores the request's model field
+// and serves whatever is loaded, so the panel selection is the honest key.
+async function embed(texts, opts) {
+  const role = opts && opts.role === "query" ? "query" : "document";
+  const input = formatEmbedInputs(texts, role, embedderFamily());
   const res = await fetch(EMBED_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model: EMBED_MODEL, input: texts }),
+    body: JSON.stringify({ model: EMBED_MODEL, input }),
     signal: AbortSignal.timeout(30000),
   });
   if (!res.ok) throw new Error("embed HTTP " + res.status);
@@ -217,7 +237,7 @@ async function bootStore() {
   // eval/pipeline.js wires the SAME core to a cached embedder, so there is exactly one
   // implementation of save/recall and the RM-00 golden guards that they never diverge.
   core = createCore({
-    store, embed, fieldEnabled, getEdgeStore, dedupThresholds,
+    store, embed, fieldEnabled, getEdgeStore, dedupThresholds, fieldMinSim, constraintGate,
     warmEnabled, getWarm, getEdges: defaultGetEdges,
     saveSeed: () => true,          // production: a just-saved fact is warm without a recall
     warmTrace, warmEdgeCap,

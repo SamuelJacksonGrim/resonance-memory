@@ -9,6 +9,24 @@ stable; sophistication grows in the substrate, not in the API.
 ## [Unreleased]
 
 ### Added
+- **Entity-id + polarity layer (`entity.js`).** Server-assigned (I4),
+  lexical: closed-class relation (family / work / friend, neighbor ∈ friend)
+  plus relation-anchored proper names. Store-wide resolve so "My sister
+  Naima teaches chemistry" and "I call my sister Naima every Sunday" share
+  one id (E1) while "My coworker Naima is a frontend engineer" is E2.
+  Same-name + conflicting relation drops the Related: edge and zeros
+  Hebbian `pairScale` — never reorders primary cosine (I2/I3). Polarity is
+  the same shape (`incompatible with X` vs `synergistic with X`). Measured
+  on fire-together + the fair-run probes: 11/11, over-split 0 on named true
+  pairs. B1 (sister Naima vs sister Layla) gets different ids but no
+  name-conflict flag — that's the named ceiling. See
+  `eval/substrate/entity-layer-results.md`.
+- **Per-embedder invocation (`embed-invoke.js`).** `server.js` no longer
+  POSTs raw text for every model. Nomic stays raw (verified best
+  document-document geometry). Qwen queries get the Instruct-query wrapper;
+  jina gets `Query:` / `Document:`. Family is keyed off the panel's
+  `config.embedder` then `EMBED_MODEL`, so selecting Qwen/jina is no longer
+  the broken plain geometry.
 - **RM-20 first-run empty-store nudge.** When the user store has zero current
   memories, the control panel shows a card: what to tell your AI, a
   "Copy a starter prompt" button, and a distinct "connected but nothing
@@ -25,6 +43,22 @@ stable; sophistication grows in the substrate, not in the API.
   refused, a dest that already has associations needs `--replace-edges`.
   That is the `0009` planted-sidecar refusal, not a missing feature.
   Not a fifth MCP verb. Panel button still open.
+
+### Changed
+- **Related: minSim 0.55 → 0.70** (nomic default). Fair-run: 0.55 leaked 11
+  near-miss edges; 0.70 keeps 14/15 true pairs (bookshelf m2↔m3 at 0.676 is
+  the cost), zero near-miss, zero unrelated. Live-config `field_minsim` /
+  env `RESONANCE_FIELD_MINSIM`. Constraint rescue stays at gate 0.45
+  (independent path — field-rescue still 3/3). **RM-00 golden held 27/31
+  case-for-case** on sqlite and jsonl; not re-accepted.
+- **Cosine-gated reinforce + neighborhood-normalized readout.**
+  `reinforceRecall` takes `pairScale`: α × how far doc-doc cosine sits
+  above the gate (entity mismatch → 0; constraint bridges use
+  `CONSTRAINT_GATE` so lemon↔diabetic still learns). Field bonus is
+  `tanh(w / nodeMax) * maxBonus` instead of saturated `tanh(w)`. EdgeStore
+  `bonus()` itself stays tanh so Ledger-parity tests hold.
+
+### Added
 - **RM-07 slice 5 — edges-in-db (one-file sovereignty).** EdgeStore keeps its
   API; persistence is now an adapter. SqliteStore shares the `DatabaseSync`
   connection so memories, access counts, and learned associations live in

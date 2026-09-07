@@ -1313,6 +1313,58 @@ move on the default flip would have been a STOP.
 
 ---
 
+## Entity layer + field minSim 0.70 + embedder invocation (2026-09-07)
+
+Follow-on from `eval/substrate/fire-together-embedder-fair-report.md`:
+the embedder is not the lever. This pass *ships* the measured ones.
+
+**What changed in the product**
+
+1. `entity.js` — server-assigned (I4) person ids + polarity. Closed-class
+   relation (family/work/friend) × relation-anchored name. Related: edge
+   drop + Hebbian `pairScale` zero on mismatch. Primary cosine untouched (I2).
+2. Related: minSim **0.55 → 0.70**. Constraint rescue stays at 0.45.
+3. Cosine-gated reinforce (`α × (cos − gate) / (1 − gate)`) and
+   neighborhood-normalized field bonus (`tanh(w / nodeMax)`). EdgeStore
+   `bonus()` stays tanh (Ledger parity).
+4. `embed-invoke.js` — nomic raw, Qwen Instruct-query, jina Query:/Document:.
+
+**Entity layer, measured** (`eval/substrate/entity-layer-measure.js`)
+
+| check | result |
+|---|---|
+| sister-Naima t3_m1/m2/m3 | one id (`e1`) — over-split guard held |
+| coworker-Naima t3_nm | `e2`, conflicts with all three true members |
+| fire-together true pairs sharing an id | 3/15 (exactly the three sister-Naima pairs; other themes have no person names) |
+| named true pairs split | **0** |
+| fire-together near-miss conflicts | 3/15 (exactly the three sister-Naima near-misses) |
+| probes A1–A4, Ap1–Ap2, B1, F1–F2, P1–P2 | **11/11** |
+| nomic-plain field kNN @ 0.70 | true 14/15, near-miss **0/15** (entity filter adds nothing on this set — Omar-class is not in the 5-theme members; it is in A2/A3 at cosine 0.88–0.95, which 0.70 cannot catch and the entity filter does) |
+
+**Golden verdict: HELD 27/31, not re-accepted.**
+
+`node eval/run.js` (sqlite) and `--store jsonl` are case-for-case identical
+to `golden.json`. Field-rescue / veg / heights still fail-off pass-on
+(constraint gate 0.45 is independent of minSim 0.70). `adv-height-homonym`
+field:on still fails (terrified-of-heights still bridges at 0.45 onto a
+bookshelf-height query). Raising minSim did not flip that TBR case and
+did not drop a rescue. No `--accept`.
+
+**Ceilings, named**
+
+- B1 (sister Naima chemist vs sister Layla chemist): different entity ids,
+  but no *name-conflict* flag, so Related: still follows geometry (~0.88).
+  The filter is name-keyed on purpose; a role-only penalty would also
+  drop two facts about one unnamed sister.
+- Polarity generalizes to closed-class predicates (incompatible vs
+  synergistic on a shared object). It does not invent a topic ontology.
+  Arbitrary antonyms still need NLI/cross-encoder, not a bigger embedder.
+- Primary-rank cofire on underspecified queries ("what do I drink?") is
+  I2. Entity/minSim clean Related: and starve Hebbian; they do not reorder
+  the cosine top-k.
+
+---
+
 ---
 
 ## What 0001 got wrong (and 01.b did not ship)

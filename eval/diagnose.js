@@ -36,7 +36,7 @@ const { embed } = require("./embed-cache.js");
 
 // Build a directed adjacency (forward = the shipped kNN edges) and its reverse.
 function adjacencies(mems) {
-  const edges = fieldMod.buildEdges(mems, { k: 2, minSim: 0.55 });   // exactly what ships
+  const edges = fieldMod.buildEdges(mems, { k: 2, minSim: 0.70 });   // exactly what ships
   const forward = new Map();
   const reverse = new Map();
   for (const [a, list] of edges) {

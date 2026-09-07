@@ -1,0 +1,817 @@
+{
+  "generated": "2026-09-07T03:57:25.320Z",
+  "assignments": {
+    "t1_m1": {
+      "role": "member",
+      "theme_id": "morning-drink",
+      "entity_ids": [],
+      "mentions": [],
+      "polarities": []
+    },
+    "t1_m2": {
+      "role": "member",
+      "theme_id": "morning-drink",
+      "entity_ids": [],
+      "mentions": [],
+      "polarities": []
+    },
+    "t1_m3": {
+      "role": "member",
+      "theme_id": "morning-drink",
+      "entity_ids": [],
+      "mentions": [],
+      "polarities": []
+    },
+    "t1_nm": {
+      "role": "near-miss",
+      "theme_id": "morning-drink",
+      "entity_ids": [],
+      "mentions": [],
+      "polarities": []
+    },
+    "t2_m1": {
+      "role": "member",
+      "theme_id": "climbing",
+      "entity_ids": [],
+      "mentions": [],
+      "polarities": []
+    },
+    "t2_m2": {
+      "role": "member",
+      "theme_id": "climbing",
+      "entity_ids": [],
+      "mentions": [],
+      "polarities": []
+    },
+    "t2_m3": {
+      "role": "member",
+      "theme_id": "climbing",
+      "entity_ids": [],
+      "mentions": [],
+      "polarities": []
+    },
+    "t2_nm": {
+      "role": "near-miss",
+      "theme_id": "climbing",
+      "entity_ids": [],
+      "mentions": [],
+      "polarities": []
+    },
+    "t3_m1": {
+      "role": "member",
+      "theme_id": "sister-naima",
+      "entity_ids": [
+        "e1"
+      ],
+      "mentions": [
+        {
+          "name": "naima",
+          "relation": "family"
+        }
+      ],
+      "polarities": []
+    },
+    "t3_m2": {
+      "role": "member",
+      "theme_id": "sister-naima",
+      "entity_ids": [
+        "e1"
+      ],
+      "mentions": [
+        {
+          "name": "naima",
+          "relation": "family"
+        }
+      ],
+      "polarities": []
+    },
+    "t3_m3": {
+      "role": "member",
+      "theme_id": "sister-naima",
+      "entity_ids": [
+        "e1"
+      ],
+      "mentions": [
+        {
+          "name": "naima",
+          "relation": "family"
+        }
+      ],
+      "polarities": []
+    },
+    "t3_nm": {
+      "role": "near-miss",
+      "theme_id": "sister-naima",
+      "entity_ids": [
+        "e2"
+      ],
+      "mentions": [
+        {
+          "name": "naima",
+          "relation": "work"
+        }
+      ],
+      "polarities": []
+    },
+    "t4_m1": {
+      "role": "member",
+      "theme_id": "bookshelf",
+      "entity_ids": [],
+      "mentions": [],
+      "polarities": []
+    },
+    "t4_m2": {
+      "role": "member",
+      "theme_id": "bookshelf",
+      "entity_ids": [],
+      "mentions": [],
+      "polarities": []
+    },
+    "t4_m3": {
+      "role": "member",
+      "theme_id": "bookshelf",
+      "entity_ids": [],
+      "mentions": [],
+      "polarities": []
+    },
+    "t4_nm": {
+      "role": "near-miss",
+      "theme_id": "bookshelf",
+      "entity_ids": [],
+      "mentions": [],
+      "polarities": []
+    },
+    "t5_m1": {
+      "role": "member",
+      "theme_id": "allergy",
+      "entity_ids": [],
+      "mentions": [],
+      "polarities": [
+        {
+          "object": "penicillin",
+          "sign": -1
+        },
+        {
+          "object": "amoxicillin",
+          "sign": -1
+        }
+      ]
+    },
+    "t5_m2": {
+      "role": "member",
+      "theme_id": "allergy",
+      "entity_ids": [],
+      "mentions": [],
+      "polarities": [
+        {
+          "object": "penicillin",
+          "sign": -1
+        },
+        {
+          "object": "penicillin",
+          "sign": -1
+        }
+      ]
+    },
+    "t5_m3": {
+      "role": "member",
+      "theme_id": "allergy",
+      "entity_ids": [],
+      "mentions": [],
+      "polarities": []
+    },
+    "t5_nm": {
+      "role": "near-miss",
+      "theme_id": "allergy",
+      "entity_ids": [],
+      "mentions": [],
+      "polarities": []
+    },
+    "d1": {
+      "role": "distractor",
+      "theme_id": null,
+      "entity_ids": [],
+      "mentions": [],
+      "polarities": []
+    },
+    "d2": {
+      "role": "distractor",
+      "theme_id": null,
+      "entity_ids": [],
+      "mentions": [],
+      "polarities": []
+    },
+    "d3": {
+      "role": "distractor",
+      "theme_id": null,
+      "entity_ids": [],
+      "mentions": [],
+      "polarities": []
+    },
+    "d4": {
+      "role": "distractor",
+      "theme_id": null,
+      "entity_ids": [],
+      "mentions": [],
+      "polarities": []
+    },
+    "d5": {
+      "role": "distractor",
+      "theme_id": null,
+      "entity_ids": [],
+      "mentions": [],
+      "polarities": []
+    }
+  },
+  "true_pairs": [
+    {
+      "a": "t1_m1",
+      "b": "t1_m2",
+      "kind": "true",
+      "share_entity": false,
+      "conflict": false,
+      "ids_a": [],
+      "ids_b": []
+    },
+    {
+      "a": "t1_m1",
+      "b": "t1_m3",
+      "kind": "true",
+      "share_entity": false,
+      "conflict": false,
+      "ids_a": [],
+      "ids_b": []
+    },
+    {
+      "a": "t1_m2",
+      "b": "t1_m3",
+      "kind": "true",
+      "share_entity": false,
+      "conflict": false,
+      "ids_a": [],
+      "ids_b": []
+    },
+    {
+      "a": "t2_m1",
+      "b": "t2_m2",
+      "kind": "true",
+      "share_entity": false,
+      "conflict": false,
+      "ids_a": [],
+      "ids_b": []
+    },
+    {
+      "a": "t2_m1",
+      "b": "t2_m3",
+      "kind": "true",
+      "share_entity": false,
+      "conflict": false,
+      "ids_a": [],
+      "ids_b": []
+    },
+    {
+      "a": "t2_m2",
+      "b": "t2_m3",
+      "kind": "true",
+      "share_entity": false,
+      "conflict": false,
+      "ids_a": [],
+      "ids_b": []
+    },
+    {
+      "a": "t3_m1",
+      "b": "t3_m2",
+      "kind": "true",
+      "share_entity": true,
+      "conflict": false,
+      "ids_a": [
+        "e1"
+      ],
+      "ids_b": [
+        "e1"
+      ]
+    },
+    {
+      "a": "t3_m1",
+      "b": "t3_m3",
+      "kind": "true",
+      "share_entity": true,
+      "conflict": false,
+      "ids_a": [
+        "e1"
+      ],
+      "ids_b": [
+        "e1"
+      ]
+    },
+    {
+      "a": "t3_m2",
+      "b": "t3_m3",
+      "kind": "true",
+      "share_entity": true,
+      "conflict": false,
+      "ids_a": [
+        "e1"
+      ],
+      "ids_b": [
+        "e1"
+      ]
+    },
+    {
+      "a": "t4_m1",
+      "b": "t4_m2",
+      "kind": "true",
+      "share_entity": false,
+      "conflict": false,
+      "ids_a": [],
+      "ids_b": []
+    },
+    {
+      "a": "t4_m1",
+      "b": "t4_m3",
+      "kind": "true",
+      "share_entity": false,
+      "conflict": false,
+      "ids_a": [],
+      "ids_b": []
+    },
+    {
+      "a": "t4_m2",
+      "b": "t4_m3",
+      "kind": "true",
+      "share_entity": false,
+      "conflict": false,
+      "ids_a": [],
+      "ids_b": []
+    },
+    {
+      "a": "t5_m1",
+      "b": "t5_m2",
+      "kind": "true",
+      "share_entity": false,
+      "conflict": false,
+      "ids_a": [],
+      "ids_b": []
+    },
+    {
+      "a": "t5_m1",
+      "b": "t5_m3",
+      "kind": "true",
+      "share_entity": false,
+      "conflict": false,
+      "ids_a": [],
+      "ids_b": []
+    },
+    {
+      "a": "t5_m2",
+      "b": "t5_m3",
+      "kind": "true",
+      "share_entity": false,
+      "conflict": false,
+      "ids_a": [],
+      "ids_b": []
+    }
+  ],
+  "near_miss_pairs": [
+    {
+      "a": "t1_m1",
+      "b": "t1_nm",
+      "kind": "near-miss",
+      "share_entity": false,
+      "conflict": false,
+      "ids_a": [],
+      "ids_b": []
+    },
+    {
+      "a": "t1_m2",
+      "b": "t1_nm",
+      "kind": "near-miss",
+      "share_entity": false,
+      "conflict": false,
+      "ids_a": [],
+      "ids_b": []
+    },
+    {
+      "a": "t1_m3",
+      "b": "t1_nm",
+      "kind": "near-miss",
+      "share_entity": false,
+      "conflict": false,
+      "ids_a": [],
+      "ids_b": []
+    },
+    {
+      "a": "t2_m1",
+      "b": "t2_nm",
+      "kind": "near-miss",
+      "share_entity": false,
+      "conflict": false,
+      "ids_a": [],
+      "ids_b": []
+    },
+    {
+      "a": "t2_m2",
+      "b": "t2_nm",
+      "kind": "near-miss",
+      "share_entity": false,
+      "conflict": false,
+      "ids_a": [],
+      "ids_b": []
+    },
+    {
+      "a": "t2_m3",
+      "b": "t2_nm",
+      "kind": "near-miss",
+      "share_entity": false,
+      "conflict": false,
+      "ids_a": [],
+      "ids_b": []
+    },
+    {
+      "a": "t3_m1",
+      "b": "t3_nm",
+      "kind": "near-miss",
+      "share_entity": false,
+      "conflict": true,
+      "ids_a": [
+        "e1"
+      ],
+      "ids_b": [
+        "e2"
+      ]
+    },
+    {
+      "a": "t3_m2",
+      "b": "t3_nm",
+      "kind": "near-miss",
+      "share_entity": false,
+      "conflict": true,
+      "ids_a": [
+        "e1"
+      ],
+      "ids_b": [
+        "e2"
+      ]
+    },
+    {
+      "a": "t3_m3",
+      "b": "t3_nm",
+      "kind": "near-miss",
+      "share_entity": false,
+      "conflict": true,
+      "ids_a": [
+        "e1"
+      ],
+      "ids_b": [
+        "e2"
+      ]
+    },
+    {
+      "a": "t4_m1",
+      "b": "t4_nm",
+      "kind": "near-miss",
+      "share_entity": false,
+      "conflict": false,
+      "ids_a": [],
+      "ids_b": []
+    },
+    {
+      "a": "t4_m2",
+      "b": "t4_nm",
+      "kind": "near-miss",
+      "share_entity": false,
+      "conflict": false,
+      "ids_a": [],
+      "ids_b": []
+    },
+    {
+      "a": "t4_m3",
+      "b": "t4_nm",
+      "kind": "near-miss",
+      "share_entity": false,
+      "conflict": false,
+      "ids_a": [],
+      "ids_b": []
+    },
+    {
+      "a": "t5_m1",
+      "b": "t5_nm",
+      "kind": "near-miss",
+      "share_entity": false,
+      "conflict": false,
+      "ids_a": [],
+      "ids_b": []
+    },
+    {
+      "a": "t5_m2",
+      "b": "t5_nm",
+      "kind": "near-miss",
+      "share_entity": false,
+      "conflict": false,
+      "ids_a": [],
+      "ids_b": []
+    },
+    {
+      "a": "t5_m3",
+      "b": "t5_nm",
+      "kind": "near-miss",
+      "share_entity": false,
+      "conflict": false,
+      "ids_a": [],
+      "ids_b": []
+    }
+  ],
+  "summary": {
+    "true_pairs": 15,
+    "true_share_entity": 3,
+    "true_named_but_split": 0,
+    "nm_pairs": 15,
+    "nm_conflict": 3,
+    "sister_nm": [
+      {
+        "a": "t3_m1",
+        "b": "t3_nm",
+        "kind": "near-miss",
+        "share_entity": false,
+        "conflict": true,
+        "ids_a": [
+          "e1"
+        ],
+        "ids_b": [
+          "e2"
+        ]
+      },
+      {
+        "a": "t3_m2",
+        "b": "t3_nm",
+        "kind": "near-miss",
+        "share_entity": false,
+        "conflict": true,
+        "ids_a": [
+          "e1"
+        ],
+        "ids_b": [
+          "e2"
+        ]
+      },
+      {
+        "a": "t3_m3",
+        "b": "t3_nm",
+        "kind": "near-miss",
+        "share_entity": false,
+        "conflict": true,
+        "ids_a": [
+          "e1"
+        ],
+        "ids_b": [
+          "e2"
+        ]
+      }
+    ],
+    "probes_ok": 11,
+    "probes_n": 11
+  },
+  "probes": [
+    {
+      "id": "A1",
+      "cls": "shared-name-conflict-relation",
+      "expect": "split",
+      "ok": true,
+      "conflict": true,
+      "share": false,
+      "ids_a": [
+        "e1"
+      ],
+      "ids_b": [
+        "e2"
+      ],
+      "mentions_a": [
+        {
+          "name": "naima",
+          "relation": "family"
+        }
+      ],
+      "mentions_b": [
+        {
+          "name": "naima",
+          "relation": "work"
+        }
+      ]
+    },
+    {
+      "id": "A2",
+      "cls": "shared-name-conflict-relation",
+      "expect": "split",
+      "ok": true,
+      "conflict": true,
+      "share": false,
+      "ids_a": [
+        "e1"
+      ],
+      "ids_b": [
+        "e2"
+      ],
+      "mentions_a": [
+        {
+          "name": "omar",
+          "relation": "family"
+        }
+      ],
+      "mentions_b": [
+        {
+          "name": "omar",
+          "relation": "friend"
+        }
+      ]
+    },
+    {
+      "id": "A3",
+      "cls": "shared-name-conflict-relation",
+      "expect": "split",
+      "ok": true,
+      "conflict": true,
+      "share": false,
+      "ids_a": [
+        "e1"
+      ],
+      "ids_b": [
+        "e2"
+      ],
+      "mentions_a": [
+        {
+          "name": "priya",
+          "relation": "family"
+        }
+      ],
+      "mentions_b": [
+        {
+          "name": "priya",
+          "relation": "work"
+        }
+      ]
+    },
+    {
+      "id": "A4",
+      "cls": "shared-name-conflict-relation",
+      "expect": "split",
+      "ok": true,
+      "conflict": true,
+      "share": false,
+      "ids_a": [
+        "e1"
+      ],
+      "ids_b": [
+        "e2"
+      ],
+      "mentions_a": [
+        {
+          "name": "naima",
+          "relation": "family"
+        }
+      ],
+      "mentions_b": [
+        {
+          "name": "naima",
+          "relation": "work"
+        }
+      ]
+    },
+    {
+      "id": "Ap1",
+      "cls": "shared-name-same-relation",
+      "expect": "merge",
+      "ok": true,
+      "conflict": false,
+      "share": true,
+      "ids_a": [
+        "e1"
+      ],
+      "ids_b": [
+        "e1"
+      ],
+      "mentions_a": [
+        {
+          "name": "naima",
+          "relation": "family"
+        }
+      ],
+      "mentions_b": [
+        {
+          "name": "naima",
+          "relation": "family"
+        }
+      ]
+    },
+    {
+      "id": "Ap2",
+      "cls": "shared-name-same-relation",
+      "expect": "merge",
+      "ok": true,
+      "conflict": false,
+      "share": true,
+      "ids_a": [
+        "e1"
+      ],
+      "ids_b": [
+        "e1"
+      ],
+      "mentions_a": [
+        {
+          "name": "omar",
+          "relation": "family"
+        }
+      ],
+      "mentions_b": [
+        {
+          "name": "omar",
+          "relation": "family"
+        }
+      ]
+    },
+    {
+      "id": "B1",
+      "cls": "same-relation-different-name",
+      "expect": "different-ids-no-name-conflict",
+      "ok": true,
+      "conflict": false,
+      "share": false,
+      "ids_a": [
+        "e1"
+      ],
+      "ids_b": [
+        "e2"
+      ],
+      "mentions_a": [
+        {
+          "name": "naima",
+          "relation": "family"
+        }
+      ],
+      "mentions_b": [
+        {
+          "name": "layla",
+          "relation": "family"
+        }
+      ]
+    },
+    {
+      "id": "F1",
+      "cls": "structure-only-no-name",
+      "expect": "no-entity-conflict",
+      "ok": true,
+      "conflict": false,
+      "share": false,
+      "ids_a": [],
+      "ids_b": [],
+      "mentions_a": [],
+      "mentions_b": []
+    },
+    {
+      "id": "F2",
+      "cls": "structure-only-same-person",
+      "expect": "no-entity-conflict",
+      "ok": true,
+      "conflict": false,
+      "share": false,
+      "ids_a": [],
+      "ids_b": [],
+      "mentions_a": [],
+      "mentions_b": []
+    },
+    {
+      "id": "P1",
+      "cls": "polarity",
+      "expect": "split",
+      "ok": true,
+      "conflict": true,
+      "share": false,
+      "ids_a": [],
+      "ids_b": [],
+      "mentions_a": [],
+      "mentions_b": []
+    },
+    {
+      "id": "P2",
+      "cls": "polarity-different-object",
+      "expect": "no-entity-conflict",
+      "ok": true,
+      "conflict": false,
+      "share": false,
+      "ids_a": [],
+      "ids_b": [],
+      "mentions_a": [],
+      "mentions_b": []
+    }
+  ],
+  "field_knn_nomic_plain_0_70": {
+    "cache": "C:\\Users\\spamw\\Desktop\\Resonance-memory-studio\\eval\\substrate\\.cache-embedder-fair\\nomic__plain__records.npy",
+    "raw_edges": 14,
+    "filtered_edges": 14,
+    "true_raw": 14,
+    "true_filtered": 14,
+    "nm_raw": 0,
+    "nm_filtered": 0,
+    "true_pairs": 15,
+    "nm_pairs": 15
+  }
+}
