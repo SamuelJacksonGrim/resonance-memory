@@ -195,14 +195,14 @@ Not substrate work; what makes it runnable by anyone. Scope + acceptance: `BACKL
 | `RM-02` | Near-duplicate detection + merge | ✅ 02.a+02.b+02.c (A/B + backfill: dup_rate 0.3182→0.0000, recall@5 held) |
 | `RM-07` | SQLite backend behind the Store seam (`node:sqlite` + BLOB/JS cosine; FTS5 later) | 🟡 slice 1+2a+2b+2c+3 shipped (selectable Store, `--migrate`, `--export` zip, panel export button, golden parity); default switch still open. [`proposed/0010`](proposed/0010-sqlite-backend.md) |
 | `RM-11` | Cross-platform builds + signing | ⬜ |
-| `RM-12` | SDKs against a documented local HTTP API | ⬜ |
+| `RM-12` | SDKs against a documented local HTTP API | ⬜ — W-02 Origin/CSRF lock shipped; SDKs + documented surface still open |
 | `RM-13` | Opt-in local-only telemetry + failure-report bundle | ⬜ |
 | `RM-15` | Longitudinal coherence soak test | ⬜ |
 | `RM-16` | Poisoning / injection defense | ⬜ **gates Phase 2.2 promotion** — threat sketch: [`0009`](proposed/0009-edge-threat-model.md) |
-| `RM-17` | Export / import / backup | 🟡 — zip export shipped as RM-07 slice 2b (`--export` / `--export-jsonl`); panel button 2c; `--import` CLI shipped (dry-run default, `--apply` restores, `--with-edges` opt-in); panel import still open |
+| `RM-17` | Export / import / backup | ✅ — zip export 2b + panel 2c; `--import` CLI (dry-run default, `--apply`, `--with-edges` opt-in); panel import button shipped (confirm modal, shells `runImport()`, with-edges default-off) |
 | `RM-18` | Encryption at rest (optional) | ⬜ |
 | `RM-19` | Recall explainability | ⬜ — near-free once 2.2 tracing exists |
-| `RM-20` | First-run quality | 🟡 — panel empty-store nudge + starter prompt shipped; panel import (RM-17) still open |
+| `RM-20` | First-run quality | 🟡 — panel empty-store nudge + starter prompt shipped; panel import button names the "zip from another machine" hole |
 | `RM-14` | Hosted / enterprise | ⛔ **deliberately deferred** — a separate product with a separate name |
 
 ---

@@ -52,7 +52,7 @@ Done. Your AI can save and recall memories on its own. Click **Show demo graph**
 - **Four abilities, that's the whole interface** — save, recall, edit, delete. It never gets more complicated than that; a small model can't misuse it.
 - **Completely private.** Everything — memories, meaning-fingerprints, the graph — lives in a file on your machine under your user folder. No servers, no telemetry, no account.
 - **It scales.** Everything sits in a fast local database (SQLite), so recall stays quick whether you've saved a hundred things or a hundred thousand. An older text-file store upgrades itself safely on first open, keeping a backup.
-- **Take your memory anywhere.** **Export my memories** in the app (or `--export`) writes a `.zip` you own — including a plain `memories.jsonl` any other tool can read. Import it back with `--import`. Your learned associations only travel when you explicitly ask them to.
+- **Take your memory anywhere.** **Export my memories** in the app (or `--export`) writes a `.zip` you own — including a plain `memories.jsonl` any other tool can read. **Import memories** brings it back on any machine (a button in the app, or `--import`). Your learned associations only travel when you explicitly ask them to.
 - **Choose your embedder.** Recall geometry depends on the model; the app lets you pick your embedder and applies its tuning. More options means no single model can lock you in.
 - **"Windows protected your PC"?** SmartScreen being cautious about an unsigned program (certs cost money). **More info → Run anyway.** The whole thing is open source — read every line.
 - **The associative field** has a switch in the app; the memory works either way.

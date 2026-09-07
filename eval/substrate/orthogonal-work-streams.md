@@ -6,7 +6,8 @@ working those-adjacent areas in another repo copy can pick from here
 without touching `entity.js`, `embed-invoke.js`, `field.js`, `edges.js`
 reinforce/bonus, or the live recall path in `memory-core.js`.
 
-Date: 2026-09-07.
+Date: 2026-09-07. W-02 Origin/CSRF lock and the RM-17 panel import
+button shipped on `w02-origin-lock` (stacked commits).
 
 ---
 
@@ -18,10 +19,11 @@ Date: 2026-09-07.
    for the SEA exe. Files: `install.js`, `uninstall.bat`, `build-exe.js`,
    `panel.js` connect routes. Does not touch recall.
 
-2. **Panel API hardening (W-02).** `127.0.0.1` only, but `/api/toggle`,
-   `/api/export`, `/api/embedder` have no Origin/CSRF check. Settle this
-   before the panel is treated as a stable API (`RM-12`). Files: `panel.js`
-   only, plus `docs/BUGS.md` W-02.
+2. **Panel API hardening (W-02).** ✅ shipped — Host must be loopback; Origin
+   (when present) must be this panel; mutating POSTs require a per-process
+   `X-Resonance-Token` baked into the page. No CORS. Residual: a local
+   process that reads the page can steal the token. `RM-12` SDKs still wait
+   on documenting the surface.
 
 3. **RM-03 contradiction expansion.** Cue-gated v1 is shipped. Open:
    negation-flip ("I don't eat meat anymore" without "now"), numeric/date

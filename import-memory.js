@@ -22,8 +22,7 @@
  * Export (RM-07 slice 2b) writes a zip you own. This reads it back onto
  * a new machine, or merges it into a store that already has memories.
  * Completes "portable, yours to carry." Not a fifth MCP verb. The panel
- * button (if present) shells runImport() — same engine, not a second
- * writer.
+ * button shells runImport() — same engine, not a second writer.
  *
  *   --import <zip-or-jsonl>                 dry-run (default; writes nothing)
  *   --import <zip-or-jsonl> --apply         restore into an EMPTY dest
@@ -513,7 +512,8 @@ async function maybeCrashAfter(n) {
   }
 }
 
-async function* mappedRecords(src, plan) {
+async function* mappedRecords(src, plan, opts) {
+  opts = opts || {};
   const remap = plan.remap;
   const skip = new Set();
   // Rebuild skip set from remap vs action: skip when remap target is dest
@@ -530,6 +530,11 @@ async function* mappedRecords(src, plan) {
     rewritePointers(rec, remap);
     n++;
     await maybeCrashAfter(n);
+    // Panel import (RM-17) yields here so a long sqlite ingest cannot
+    // starve /api/ping the way a 50k zip starved the 2c export watchdog.
+    if (typeof opts.onAfterRecord === "function") {
+      await opts.onAfterRecord({ n });
+    }
     yield rec;
   }
 }
@@ -657,7 +662,7 @@ async function applyImport(src, destProbe, flags, opts) {
     const added = await ingestIntoStore(
       store,
       destPath,
-      mappedRecords(src, plan),
+      mappedRecords(src, plan, opts),
       { replaceFile }
     );
     const edges = restoreEdges(store, destPath, src, plan, destProbe);

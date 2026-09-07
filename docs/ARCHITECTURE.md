@@ -103,7 +103,7 @@ The shipped binary is one file that dispatches on `process.argv[2]` (`entry.js`)
 | Invocation | Mode | Entry | What it is |
 |---|---|---|---|
 | `memory --mcp` | **MCP server** | `server.js` | The JSON-RPC 2.0 stdio loop an AI client talks to. The product's core. |
-| `memory` (double-click) | **Control panel** | `panel.js` | A local `127.0.0.1:9090` web UI: field toggle, Connect/Disconnect, the 3D association graph, one-click embedder setup, **Export my memories** (slice 2c; shells `--export`; not an MCP tool). |
+| `memory` (double-click) | **Control panel** | `panel.js` | A local `127.0.0.1:9090` web UI: field toggle, Connect/Disconnect, the 3D association graph, one-click embedder setup, **Export my memories** / **Import memories** (not MCP tools). |
 | `memory --install` / `--uninstall` | **Installer** | `install.js` | Wires the exe into LM Studio / Claude Desktop MCP config (or removes it). |
 | `memory --dedup-existing` [`--apply`] | **Backfill** | `dedup-existing.js` | RM-02.c: report (or apply) cosine-banded restatements/merges on a store written before 02.b. Dry-run default. Not a fifth verb. |
 | `memory --migrate` | **Migrator** | `migrate-sqlite.js` | RM-07 slice 2a: stream JSONL → sibling `.db`. Opt-in. Not a fifth verb. Not auto-run on startup. |
@@ -154,13 +154,13 @@ same record the panel renders, the installer targets, `--dedup-existing` scans,
 | `migrate-sqlite.js` | RM-07 slice 2a streaming JSONL→SQLite migrator (10-step protocol). Opt-in `--migrate`; `openStore()` calls the same function on first open (slice 4). `.bak` is a recovery snapshot, not the sovereignty export. | `store`, `store-sqlite`, `record` |
 | `zip.js` | Zero-dep ZIP64 writer (slice 2b). `createDeflateRaw` + `zlib.crc32` + `.zip.tmp` rename. ZIP64 on every archive. | stdlib (`zlib`) |
 | `export-memory.js` | RM-07 slice 2b sovereignty export. `--export` zip bundle; `--export-jsonl` raw primitive. Read-only. The 2c panel button shells `runExport()` / `previewExport()`. Not an MCP tool. | `zip`, `store`, `record`, `edges` |
-| `import-memory.js` | RM-17 sovereignty import. `--import` dry-run default; `--apply` restores (or `--merge`s). Direct store write, not `save()`. `--with-edges` opt-in for Hebbian (`0009` planted-sidecar refusal). Not an MCP tool. | `zip`, `store`, `record`, `edges` |
+| `import-memory.js` | RM-17 sovereignty import. `--import` dry-run default; `--apply` restores (or `--merge`s). Direct store write, not `save()`. `--with-edges` opt-in for Hebbian (`0009` planted-sidecar refusal). The panel button shells `runImport()`. Not an MCP tool. | `zip`, `store`, `record`, `edges` |
 | `entity.js` | Server-assigned person-entity ids + polarity (I4). Closed-class relation × relation-anchored names; store-wide resolve. Feeds Related: `conflict` and Hebbian `pairScale` only — never primary cosine (I2/I3). | stdlib only |
 | `embed-invoke.js` | Per-embedder input formatting. Nomic raw; Qwen Instruct-query; jina `Query:`/`Document:`. Keyed off panel `config.embedder` then `EMBED_MODEL`. | stdlib only |
 | `field.js` | Associative layer (Phase 2a): a kNN semantic graph over stored vectors, neighborhood expansion, and constraint rescue. No new embedding calls, no LLM extraction. Related: minSim default 0.70; `conflict` callback drops entity/polarity mismatches. | stdlib only |
 | `ledger.js` | Retired Hebbian sidecar (Phase 2b). Off the live path as of Slice C; kept so tests can compare EdgeStore bonuses against the shipped epoch-decay math. | `record` |
 | `edges.js` | Unified persistent edge store (Phase 0 / `RM-21`): one undirected record, two independent signals (`semantic` derived cache validated by version comparison, `hebbian` source of truth), typed provenance, one-way `.assoc.json` → `.edges.json` migration (`kind: "resonance-edges"`). **On the live recall path** — Hebbian bonus (via `effectiveHebbian`)/reinforce/save. Decay is lazy wall-clock (I6); `tick()` is retired. A reinforcing mutation materializes `effectiveHebbian` before applying α (0.3). MCP request-ID idempotency: a 256-entry LRU of processed JSON-RPC ids. **RM-07 slice 5:** persistence adapter — SqliteStore shares the `.db` (`processed_ids` + weight UPDATE are one txn); JsonlStore keeps the sidecar. `effectiveHebbian` is never stored. Soft prune (0.4 / I8): `pruneSweep()` marks `pruned_at` only when *both* unreinforced and semantically weak (`SEMANTIC_PRUNE_GATE` 0.25); hard drop is `vacuum()`, explicit. Reactivation is in-place on save/edit/reinforce of an endpoint. `field.js` still builds the semantic kNN at recall. | `record` |
-| `panel.js` | The `127.0.0.1` control panel (largest file): field toggle, LLM-extraction toggle (surfaced when a capable model is detected), Connect/Disconnect, embedder-tuning selector (`/api/embedder`), the 3D association-graph view, demo graph, first-run empty-store nudge (RM-20), **Export my memories** (slice 2c: confirm modal, POST `/api/export` shells `export-memory.js`, heartbeat pause + yield so a long zip cannot starve `/api/ping`), heartbeat auto-shutdown. Not an MCP tool. | `install`, `field`, `engine`, `edges`, `record`, `extract`, `export-memory`, `entity`, `memory-core`, `embedded-assets` |
+| `panel.js` | The `127.0.0.1` control panel (largest file): field toggle, LLM-extraction toggle (surfaced when a capable model is detected), Connect/Disconnect, embedder-tuning selector (`/api/embedder`), the 3D association-graph view, demo graph, first-run empty-store nudge (RM-20), **Export my memories** (slice 2c: confirm modal, POST `/api/export` shells `export-memory.js`, heartbeat pause + yield so a long zip cannot starve `/api/ping`), **Import memories** (RM-17: confirm modal, POST `/api/import` shells `runImport()`, `--with-edges` checkbox default-off, heartbeat pause + yield), heartbeat auto-shutdown. **W-02:** Host must be loopback; Origin (when present) must be this panel; mutating POSTs require a per-process `X-Resonance-Token` baked into the page. No CORS. Not an MCP tool. | `install`, `field`, `engine`, `edges`, `record`, `extract`, `export-memory`, `import-memory`, `entity`, `memory-core`, `embedded-assets` |
 | `install.js` | Detect + wire into LM Studio / Claude Desktop MCP config. Preserves other configured servers, leaves a `.bak`. | stdlib only |
 | `engine.js` | One-click embedder setup for the panel: drives LM Studio's bundled `lms` CLI to start the server, download the Nomic embedder, load it, and verify the endpoint answers. Pure convenience — the MCP server never needs it. | stdlib + `fetch` |
 | `inspect_sidecar.js` | Dependency-free telemetry for the Hebbian ledger. | stdlib |
@@ -549,9 +549,13 @@ The panel's HTTP surface (`127.0.0.1` only): `GET /`, `GET /api/state` (includes
 `extract_llm` / `extract_capable` / `extract_model`), `GET /api/graph`,
 `GET /api/clients`, `GET /api/engine`, `GET /api/system-prompt`, `POST /api/toggle`
 (`field` and/or `extract_llm`; extract-on is refused if no capable model),
-`POST /api/connect|disconnect`, `POST /api/engine/setup`, `POST /api/ping` (heartbeat). This is
-not yet a documented stable API (`RM-12`), and has no CSRF/`Origin` check today (watch-item
-`W-02`) — worth settling before it becomes a public surface.
+`POST /api/connect|disconnect`, `POST /api/engine/setup`, `POST /api/ping` (heartbeat),
+`GET`/`POST /api/export` (slice 2c), `GET`/`POST /api/import` (RM-17; POST
+`apply:false` is the dry-run, `apply:true` writes; `withEdges` default-off). This is not yet a documented stable API (`RM-12`).
+**W-02 (shipped):** Host must be loopback; Origin, when present, must be this panel
+(`http://127.0.0.1:<port>` / `localhost`); mutating POSTs require a per-process
+`X-Resonance-Token` baked into the page. No CORS. Residual: a local process that
+reads the page can steal the token.
 
 ---
 
