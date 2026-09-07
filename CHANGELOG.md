@@ -9,6 +9,22 @@ stable; sophistication grows in the substrate, not in the API.
 ## [Unreleased]
 
 ### Added
+- **RM-20 first-run empty-store nudge.** When the user store has zero current
+  memories, the control panel shows a card: what to tell your AI, a
+  "Copy a starter prompt" button, and a distinct "connected but nothing
+  saved yet" title if an MCP client is already hooked up. README "Get
+  started" names the same first action. Not an MCP tool.
+- **RM-17 import — the sovereignty return trip.** `--import <zip-or-jsonl>`
+  (dry-run default, `--apply` writes) restores an export onto a new machine
+  or `--merge`s into a store that already has memories. Direct store write —
+  does **not** go through `save()`, so ids, embeddings, timestamps,
+  `superseded_by`, and deleted rows survive, and a machine without an
+  embedder can still load a copy. Streaming (the S1 834 MB wall). Hebbian
+  restore is **opt-in** (`--with-edges`) and only from a zip whose
+  `manifest.format` is `resonance-memory-export`: a raw `.edges.json` is
+  refused, a dest that already has associations needs `--replace-edges`.
+  That is the `0009` planted-sidecar refusal, not a missing feature.
+  Not a fifth MCP verb. Panel button still open.
 - **RM-07 slice 5 — edges-in-db (one-file sovereignty).** EdgeStore keeps its
   API; persistence is now an adapter. SqliteStore shares the `DatabaseSync`
   connection so memories, access counts, and learned associations live in

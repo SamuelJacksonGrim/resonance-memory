@@ -199,10 +199,10 @@ Not substrate work; what makes it runnable by anyone. Scope + acceptance: `BACKL
 | `RM-13` | Opt-in local-only telemetry + failure-report bundle | ⬜ |
 | `RM-15` | Longitudinal coherence soak test | ⬜ |
 | `RM-16` | Poisoning / injection defense | ⬜ **gates Phase 2.2 promotion** — threat sketch: [`0009`](proposed/0009-edge-threat-model.md) |
-| `RM-17` | Export / import / backup | 🟡 — zip export shipped as RM-07 slice 2b (`--export` / `--export-jsonl`); panel button shipped as 2c; import still open |
+| `RM-17` | Export / import / backup | 🟡 — zip export shipped as RM-07 slice 2b (`--export` / `--export-jsonl`); panel button 2c; `--import` CLI shipped (dry-run default, `--apply` restores, `--with-edges` opt-in); panel import still open |
 | `RM-18` | Encryption at rest (optional) | ⬜ |
 | `RM-19` | Recall explainability | ⬜ — near-free once 2.2 tracing exists |
-| `RM-20` | First-run quality | ⬜ |
+| `RM-20` | First-run quality | 🟡 — panel empty-store nudge + starter prompt shipped; panel import (RM-17) still open |
 | `RM-14` | Hosted / enterprise | ⛔ **deliberately deferred** — a separate product with a separate name |
 
 ---

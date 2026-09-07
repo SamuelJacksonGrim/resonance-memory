@@ -201,7 +201,7 @@ Three claims we can defend, and should lead with:
    can read without our exe** is the anti-hoarding claim, and it is a CLI + panel
    path on purpose (four verbs stay four — a model that can dump the store is an
    exfil path). We do not sanitize the export. The panel button shipped as
-   slice 2c; import is RM-17.
+   slice 2c; `--import` CLI is RM-17 (panel import still open).
 
 Three claims we must **not** make until earned (updated August 2026):
 - ❌ "Beats Mem0 on LOCOMO" — still don't enter the number war (§4). `RM-00` has landed, so we

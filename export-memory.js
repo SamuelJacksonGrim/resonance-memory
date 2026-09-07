@@ -270,7 +270,11 @@ function buildReadme() {
     "How to use this on another device",
     "---------------------------------",
     "Keep the zip. Hand memories.jsonl to anything that reads JSONL.",
-    "Resonance Memory's own import lands in a later release (RM-17).",
+    "To load it back into Resonance Memory:",
+    "  resonance-memory --import this.zip            (dry-run; writes nothing)",
+    "  resonance-memory --import this.zip --apply    (restore into an empty store)",
+    "  Add --merge if the destination already has memories.",
+    "  Add --with-edges to restore learned associations (opt-in on purpose).",
     "",
   ].join("\n");
 }
