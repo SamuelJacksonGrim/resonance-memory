@@ -26,7 +26,7 @@ an opaque `id`.
 | `zip.js` | Zero-dep ZIP64 writer (slice 2b). `createDeflateRaw` + `zlib.crc32` + stream to `.zip.tmp` + rename. ZIP64 on every archive. |
 | `export-memory.js` | Slice 2b CLI + the engine the 2c panel button shells. `--export` writes the zip bundle; `--export-jsonl` is the raw primitive. Read-only. Not an MCP tool. |
 | `import-memory.js` | RM-17 CLI + the engine the panel import button shells. `--import` dry-run default; `--apply` restores. Direct store write (not `save()`). `--with-edges` opt-in for Hebbian. Not an MCP tool. |
-| `build-exe.js` | Embed runtime assets → esbuild → Node SEA blob → postject → flip PE subsystem to GUI → stage `dist/`. |
+| `build-exe.js` | Embed runtime assets → esbuild → Node SEA blob → postject → OS finish (Windows PE flip / macOS ad-hoc codesign / chmod) → stage `dist/`. `--target win\|linux\|macos`; refuses to cross-compile. |
 | `embedded-assets.js` | **Generated** each build (gitignored): `demo-seed.jsonl` + `system-prompt.md` baked in as strings so the shipped exe is one self-contained file. |
 | `inspect_sidecar.js` | Dependency-free telemetry for the Hebbian ledger. |
 | `build-demo-seed.js` | Regenerates `demo-seed.jsonl` (synthetic, pre-embedded) via the embedder. |
@@ -98,17 +98,29 @@ an opaque `id`.
 
 ## Build
 
+Per-OS instructions, Gatekeeper/SmartScreen, and the exact Mac steps:
+[`docs/BUILDING.md`](docs/BUILDING.md).
+
 ```
-node build-exe.js
+node build-exe.js                  # this machine
+node build-exe.js --target linux   # refuse unless this process is Linux
 ```
 
-Produces a **single self-contained** `resonance-memory.exe` (Windows; ~89 MB, no Node needed):
-the demo seed and system prompt are baked in, so `dist/` is just the exe — nothing loose to
-ship, unzip, or place beside it. The source files stay the editable truth; only the *output* is
-one file. Edit anything, re-run `node build-exe.js`, get a new exe. The build flips the exe's PE
-subsystem console→GUI so a double-click opens the panel with no console window; MCP mode is
-unaffected because the client pipes stdio. The macOS binary must be built on a Mac (SEA is
-per-platform).
+Produces a **single self-contained** binary in `dist/` (~90 MB, no Node needed on the
+user's machine): `resonance-memory.exe` (Windows), `resonance-memory-linux-<arch>`,
+or `resonance-memory-macos-<arch>`. The demo seed and system prompt are baked in, so
+`dist/` is the binary plus a short `README.txt` — nothing loose to place beside it.
+The source files stay the editable truth; only the *output* is one file. Edit
+anything, re-run `node build-exe.js`, get a new binary.
+
+SEA injects into **this** process's `node` binary, so a Linux binary is built on
+Linux (WSL counts) and a macOS binary on a Mac. `--target` is a safety check, not
+a cross-compiler. The Windows PE-subsystem flip (console→GUI, no console window
+on double-click) runs only when building Windows on Windows; MCP mode is
+unaffected because the client pipes stdio. macOS gets a free ad-hoc
+`codesign --sign -` after postject (required for the kernel to exec; **not**
+Developer ID / notarization). Binaries ship unsigned; see BUILDING.md for the
+honest OS-warning path. Node ≥ 22.5 (`node:sqlite`).
 
 ## Design invariants (do not violate)
 

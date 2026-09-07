@@ -30,8 +30,9 @@ roadmap, and per-repo backlog live in the companion repo
   load-bearing (it keeps the exe small, the build simple, and the test suite instant).
   Build-time tools (`esbuild`, `postject`) are invoked via `npx --yes`, not installed.
 - **CommonJS** (`"type": "commonjs"`), not ESM.
-- Runs on Windows, macOS, and Linux. The shipped exe is per-platform (SEA is per-platform;
-  the macOS binary must be built on a Mac).
+- Runs on Windows, macOS, and Linux. The shipped binary is per-platform (SEA is per-platform;
+  the macOS binary must be built on a Mac — a `macos-latest` CI runner counts, and is the
+  shipping path since this project has no Mac hardware). See `docs/BUILDING.md`.
 
 ## Repository layout
 
@@ -64,7 +65,7 @@ roadmap, and per-repo backlog live in the companion repo
 
 | File | Role |
 |---|---|
-| `build-exe.js` | The build. Embeds runtime assets → esbuild bundle → Node SEA blob → postject inject → (Windows) flip PE subsystem console→GUI → stage `dist/`. |
+| `build-exe.js` | The build. Embeds runtime assets → esbuild bundle → Node SEA blob → postject inject → OS finish (Windows PE flip / macOS ad-hoc codesign / chmod +x) → stage `dist/`. `--target win\|linux\|macos`; refuses to cross-compile. |
 | `build-demo-seed.js` | Regenerates `demo-seed.jsonl` (synthetic, pre-embedded) via the embedder. |
 | `demo-seed.jsonl` | The synthetic demo graph (a fictional game dev's notes). **Tracked** and shipped — it's the first-launch showcase. 100% synthetic; never real user data. |
 | `system-prompt.md` | Optional copy-in system prompt for weaker models that forget to call tools. Baked into the exe. |
@@ -90,7 +91,7 @@ roadmap, and per-repo backlog live in the companion repo
 npm test          # run the full test suite (node test.js) — fast, dependency-free
 npm run mcp       # run the MCP server on stdio (node server.js)
 npm run panel     # open the control panel locally (node panel.js)
-npm run build     # build the single-file executable (node build-exe.js)
+npm run build     # build the single-file executable for this OS (node build-exe.js)
 npm run seed      # regenerate demo-seed.jsonl (needs a live embedder)
 npm run inspect   # Hebbian ledger telemetry
 npm run dedup-existing            # RM-02.c backfill dry-run (mutates nothing)

@@ -3362,6 +3362,147 @@ test("emitWarmTrace is callable and does not throw (hot path is `if (warmTrace()
   assert.ok(writes.some((s) => /"activation"/.test(s)), "activation is its own field");
 });
 
+// ------------------------------------------------ RM-11 cross-platform SEA (helpers only; no 90MB inject)
+section("RM-11 cross-platform SEA build helpers");
+
+const buildExe = require("./build-exe.js");
+
+test("require(build-exe.js) does not launch the SEA pipeline", () => {
+  // The failure signature: top-level work at load time used to start esbuild
+  // the moment test.js required the file. main() must stay behind require.main.
+  assert.strictEqual(typeof buildExe.main, "function");
+  assert.strictEqual(typeof buildExe.flipPeSubsystem, "function");
+});
+
+test("artifact names: Windows keeps .exe; Linux/macOS carry OS + arch", () => {
+  assert.strictEqual(buildExe.artifactName("win", "x64"), "resonance-memory.exe");
+  assert.strictEqual(buildExe.artifactName("win", "arm64"), "resonance-memory.exe");
+  assert.strictEqual(buildExe.artifactName("linux", "x64"), "resonance-memory-linux-x64");
+  assert.strictEqual(buildExe.artifactName("linux", "x86_64"), "resonance-memory-linux-x64");
+  assert.strictEqual(buildExe.artifactName("linux", "arm64"), "resonance-memory-linux-arm64");
+  assert.strictEqual(buildExe.artifactName("macos", "arm64"), "resonance-memory-macos-arm64");
+  assert.strictEqual(buildExe.artifactName("macos", "x64"), "resonance-memory-macos-x64");
+  assert.strictEqual(buildExe.artifactName("macos", "aarch64"), "resonance-memory-macos-arm64");
+});
+
+test("--target aliases: win32/windows, darwin/mac/osx", () => {
+  assert.strictEqual(buildExe.parseArgs(["--target", "linux"]).target, "linux");
+  assert.strictEqual(buildExe.parseArgs(["--target=macos"]).target, "macos");
+  assert.strictEqual(buildExe.parseArgs(["--target", "win32"]).target, "win");
+  assert.strictEqual(buildExe.parseArgs(["--target", "windows"]).target, "win");
+  assert.strictEqual(buildExe.parseArgs(["--target", "darwin"]).target, "macos");
+  assert.strictEqual(buildExe.parseArgs(["--target", "mac"]).target, "macos");
+  assert.strictEqual(buildExe.parseArgs(["--target", "osx"]).target, "macos");
+  assert.strictEqual(buildExe.parseArgs([]).target, null);
+  assert.ok(buildExe.parseArgs(["--help"]).help);
+  assert.ok(buildExe.parseArgs(["--print-plan"]).printPlan);
+});
+
+test("unknown --target and unknown flags fail closed", () => {
+  assert.throws(() => buildExe.parseArgs(["--target", "freebsd"]), /unknown --target/);
+  assert.throws(() => buildExe.parseArgs(["--target"]), /needs a value/);
+  assert.throws(() => buildExe.parseArgs(["--nope"]), /unknown argument/);
+});
+
+test("failure: --target for another OS is a cross-compile refusal, not a silent Windows binary", () => {
+  assert.doesNotThrow(() => buildExe.assertCanBuild("linux", "linux"));
+  assert.doesNotThrow(() => buildExe.assertCanBuild("win", "win32"));
+  assert.doesNotThrow(() => buildExe.assertCanBuild("macos", "darwin"));
+  assert.throws(() => buildExe.assertCanBuild("linux", "win32"), /cannot cross-compile/);
+  assert.throws(() => buildExe.assertCanBuild("macos", "linux"), /cannot cross-compile/);
+  assert.throws(() => buildExe.assertCanBuild("win", "darwin"), /cannot cross-compile/);
+});
+
+test("postject: macho segment only on macOS (Linux/Windows must not pass it)", () => {
+  const blob = "sea-prep.blob";
+  const linux = buildExe.postjectArgs("out", blob, buildExe.TARGETS.linux);
+  const win = buildExe.postjectArgs("out.exe", blob, buildExe.TARGETS.win);
+  const mac = buildExe.postjectArgs("out", blob, buildExe.TARGETS.macos);
+  assert.ok(!linux.includes("--macho-segment-name"), "Linux ELF has no Mach-O segment");
+  assert.ok(!win.includes("--macho-segment-name"), "PE has no Mach-O segment");
+  assert.ok(mac.includes("--macho-segment-name") && mac.includes("NODE_SEA"));
+  assert.ok(linux.includes(buildExe.FUSE));
+});
+
+test("failure: PE flip is a no-op on ELF (must not corrupt a Linux binary)", () => {
+  const elf = Buffer.concat([Buffer.from([0x7f, 0x45, 0x4c, 0x46]), Buffer.alloc(200, 1)]);
+  const before = Buffer.from(elf);
+  const r = buildExe.flipPeSubsystem(elf);
+  assert.strictEqual(r.flipped, false);
+  assert.strictEqual(r.reason, "not-pe");
+  assert.ok(elf.equals(before), "ELF bytes must be byte-identical after a refused flip");
+});
+
+test("PE flip: console(3) -> GUI(2) on a fake PE; already-GUI is a no-op", () => {
+  function fakePe(subsystem) {
+    const peOff = 64;
+    const buf = Buffer.alloc(peOff + 94, 0);
+    buf[0] = 0x4d; buf[1] = 0x5a;
+    buf.writeUInt32LE(peOff, 0x3c);
+    buf.write("PE\0\0", peOff, "ascii");
+    buf.writeUInt16LE(subsystem, peOff + 92);
+    return buf;
+  }
+  const consolePe = fakePe(3);
+  const flipped = buildExe.flipPeSubsystem(consolePe);
+  assert.strictEqual(flipped.flipped, true);
+  assert.strictEqual(consolePe.readUInt16LE(64 + 92), 2);
+
+  const guiPe = fakePe(2);
+  const again = buildExe.flipPeSubsystem(guiPe);
+  assert.strictEqual(again.flipped, false);
+  assert.strictEqual(again.reason, "subsystem-2");
+  assert.strictEqual(guiPe.readUInt16LE(64 + 92), 2);
+});
+
+test("PE flip: truncated / missing PE signature refuses without throwing", () => {
+  assert.strictEqual(buildExe.flipPeSubsystem(Buffer.alloc(8)).reason, "too-small");
+  const mzOnly = Buffer.alloc(128, 0);
+  mzOnly[0] = 0x4d; mzOnly[1] = 0x5a;
+  mzOnly.writeUInt32LE(2000, 0x3c); // e_lfanew past EOF
+  assert.strictEqual(buildExe.flipPeSubsystem(mzOnly).reason, "truncated");
+});
+
+test("Node floor: 22.5 is the SqliteStore line; 22.4 and 18 fail", () => {
+  assert.ok(buildExe.nodeMeetsFloor("22.5.0"));
+  assert.ok(buildExe.nodeMeetsFloor("v22.23.1"));
+  assert.ok(buildExe.nodeMeetsFloor("24.18.0"));
+  assert.ok(buildExe.nodeMeetsFloor("v23.0.0"));
+  assert.ok(!buildExe.nodeMeetsFloor("22.4.1"));
+  assert.ok(!buildExe.nodeMeetsFloor("18.20.0"));
+  assert.ok(!buildExe.nodeMeetsFloor("v16.20.2"));
+});
+
+test("sea-config.json uses relative paths (no Windows drive letters, no backslashes)", () => {
+  const cfg = JSON.parse(fs.readFileSync(path.join(__dirname, "sea-config.json"), "utf8"));
+  assert.ok(cfg.main && cfg.output, "SEA config must name main + output");
+  for (const p of [cfg.main, cfg.output]) {
+    assert.ok(!/^[A-Za-z]:/.test(p), p + " looks like a Windows absolute path");
+    assert.ok(!p.includes("\\"), p + " uses backslashes — would break a POSIX SEA build");
+  }
+});
+
+test("dist README names the just-built artifact and does not claim signing", () => {
+  const text = buildExe.distReadmeText({
+    spec: buildExe.TARGETS.linux,
+    artifact: "resonance-memory-linux-x64",
+    nodeVersion: "v22.23.1",
+    arch: "x64",
+    files: ["resonance-memory.exe", "resonance-memory-linux-x64"],
+  });
+  assert.ok(text.includes("resonance-memory-linux-x64    <-- just built"));
+  assert.ok(text.includes("resonance-memory.exe"));
+  assert.ok(/unsigned|SmartScreen|Gatekeeper|chmod \+x/i.test(text));
+  assert.ok(!/notariz/i.test(text) || /future item/i.test(text));
+});
+
+test("hostTargetId maps process.platform to --target ids", () => {
+  assert.strictEqual(buildExe.hostTargetId("win32"), "win");
+  assert.strictEqual(buildExe.hostTargetId("linux"), "linux");
+  assert.strictEqual(buildExe.hostTargetId("darwin"), "macos");
+  assert.strictEqual(buildExe.hostTargetId("freebsd"), null);
+});
+
 // ------------------------------------------------ RM-07 slice 2b export / zip
 section("RM-07 slice 2b — zip writer + sovereignty export (read-only)");
 
