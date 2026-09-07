@@ -24,6 +24,9 @@ node eval/substrate/migrate-proof.js
      # RM-07 slice 2a: 50k JSONL → SQLite lossless proof (stream vs readFileSync wall)
 node eval/substrate/export-proof.js
      # RM-07 slice 2b: 50k sovereignty zip (opens, ZIP64 at 70k, jsonl round-trip)
+node eval/substrate/entity-layer-measure.js
+     # entity-id split/merge + polarity probes (uses eval/corpora/fire-together-corpus.json, text-only);
+     # nomic-plain field kNN @ 0.70 if the gitignored fair-run cache is present
 ```
 
 First run live-embeds against LM Studio (`:1234`, `text-embedding-nomic-embed-text-v1.5`),

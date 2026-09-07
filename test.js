@@ -864,6 +864,8 @@ test("conformance: add/get/current/active/updateMany/vacuum match JsonlStore", (
 section("associative field: reciprocal kNN (RM-00)");
 
 const { buildEdges, reachableConstraints } = require("./field.js");
+const entity = require("./entity.js");
+const invoke = require("./embed-invoke.js");
 
 // Three points on a circle so the nearest-neighbor graph is deliberately one-sided:
 //   A(0deg) - B(20deg) - C(35deg).  Gaps: A-B=20, B-C=15, A-C=35.
@@ -875,6 +877,122 @@ const ring = [
   { id: "B", text: "B", embedding: [Math.cos(rad(20)), Math.sin(rad(20))] },
   { id: "C", text: "C", embedding: [Math.cos(rad(35)), Math.sin(rad(35))] },
 ];
+
+section("entity ids / polarity (server-assigned, I4)");
+
+test("sister-Naima chemist and Sunday-call share one entity (over-split guard)", () => {
+  const recs = [
+    { id: "t3_m1", text: "My sister Naima teaches chemistry at the local high school" },
+    { id: "t3_m2", text: "Naima is my sister and she works as a high school chemistry teacher" },
+    { id: "t3_m3", text: "I call my sister Naima every Sunday evening to catch up" },
+    { id: "t3_nm", text: "My coworker Naima is a frontend engineer on the infrastructure team" },
+  ];
+  const r = entity.resolveEntities(recs);
+  const e1 = r.get("t3_m1").entity_ids;
+  const e2 = r.get("t3_m2").entity_ids;
+  const e3 = r.get("t3_m3").entity_ids;
+  const nm = r.get("t3_nm").entity_ids;
+  assert.ok(e1.length && e2.length && e3.length, "true members resolved");
+  assert.strictEqual(e1[0], e2[0], "chemist restatement is the same person");
+  assert.strictEqual(e1[0], e3[0], "Sunday call binds to sister-Naima, not a new id");
+  assert.ok(nm.length, "coworker resolved");
+  assert.notStrictEqual(nm[0], e1[0], "coworker-Naima is a different entity");
+  assert.strictEqual(entity.logicalConflict(r.get("t3_m1"), r.get("t3_nm")), true);
+  assert.strictEqual(entity.logicalConflict(r.get("t3_m1"), r.get("t3_m3")), false);
+  assert.strictEqual(entity.logicalConflict(r.get("t3_m3"), r.get("t3_nm")), true);
+});
+
+test("brother-Omar vs neighbor-Omar split; same-person restatement does not", () => {
+  const recs = [
+    { id: "A2a", text: "My brother Omar is a dentist in Portland" },
+    { id: "A2b", text: "My neighbor Omar is a dentist in Portland" },
+    { id: "Ap2", text: "Omar, my brother, runs a dental practice in Portland" },
+    { id: "A3a", text: "My wife Priya is a painter who shows at the downtown gallery" },
+    { id: "A3b", text: "My colleague Priya is a painter who shows at the downtown gallery" },
+  ];
+  const r = entity.resolveEntities(recs);
+  assert.notStrictEqual(r.get("A2a").entity_ids[0], r.get("A2b").entity_ids[0], "Omar split");
+  assert.strictEqual(r.get("A2a").entity_ids[0], r.get("Ap2").entity_ids[0], "Omar restatement merged");
+  assert.ok(entity.logicalConflict(r.get("A2a"), r.get("A2b")));
+  assert.ok(!entity.logicalConflict(r.get("A2a"), r.get("Ap2")));
+  assert.ok(entity.logicalConflict(r.get("A3a"), r.get("A3b")), "Priya wife vs colleague");
+});
+
+test("different names, same role: Naima vs Layla are different entities", () => {
+  const recs = [
+    { id: "B1a", text: "My sister Naima teaches chemistry at the local high school" },
+    { id: "B1b", text: "My sister Layla teaches chemistry at the local high school" },
+  ];
+  const r = entity.resolveEntities(recs);
+  assert.notStrictEqual(r.get("B1a").entity_ids[0], r.get("B1b").entity_ids[0]);
+  // No shared name → not an entity-mismatch (that's the B1 ceiling: geometry
+  // still sees paraphrases; the field filter is name-keyed, not role-keyed).
+  assert.strictEqual(entity.logicalConflict(r.get("B1a"), r.get("B1b")), false);
+});
+
+test("polarity clash on the same object; different objects do not clash", () => {
+  const recs = [
+    { id: "p1", text: "Ibuprofen is incompatible with this blood thinner" },
+    { id: "p2", text: "Ibuprofen is synergistic with this blood thinner" },
+    { id: "p3", text: "I have a severe allergic reaction to penicillin and amoxicillin" },
+    { id: "p4", text: "I take daily vitamin D and zinc supplements with breakfast" },
+  ];
+  const r = entity.resolveEntities(recs);
+  assert.ok(entity.logicalConflict(r.get("p1"), r.get("p2")), "incompatible vs synergistic");
+  assert.ok(!entity.logicalConflict(r.get("p3"), r.get("p4")), "penicillin vs vitamins: different objects");
+});
+
+test("query 'my sister Naima' conflicts with coworker, not with Sunday-call", () => {
+  const recs = [
+    { id: "q", text: "tell me about my sister Naima" },
+    { id: "sis", text: "My sister Naima teaches chemistry at the local high school" },
+    { id: "call", text: "I call my sister Naima every Sunday evening to catch up" },
+    { id: "job", text: "My coworker Naima is a frontend engineer on the infrastructure team" },
+  ];
+  const r = entity.resolveEntities(recs);
+  assert.ok(!entity.logicalConflict(r.get("q"), r.get("sis")));
+  assert.ok(!entity.logicalConflict(r.get("q"), r.get("call")));
+  assert.ok(entity.logicalConflict(r.get("q"), r.get("job")));
+});
+
+test("buildEdges drops a high-cosine entity-mismatch (Omar class)", () => {
+  // Cosine 1.0, well above 0.70. Without the conflict callback this is an edge.
+  const recs = [
+    { id: "a", text: "My brother Omar is a dentist in Portland", embedding: [1, 0] },
+    { id: "b", text: "My neighbor Omar is a dentist in Portland", embedding: [1, 0] },
+  ];
+  const raw = buildEdges(recs, { k: 2, minSim: 0.70 });
+  assert.ok((raw.get("a") || []).some((e) => e.id === "b"), "geometry alone would link them");
+  const filtered = buildEdges(recs, {
+    k: 2, minSim: 0.70,
+    conflict: entity.pairConflictFn(entity.resolveEntities(recs)),
+  });
+  assert.strictEqual((filtered.get("a") || []).length, 0, "entity mismatch drops the edge");
+});
+
+section("embedder invocation (per-model prefixes)");
+
+test("nomic stays raw for query and document", () => {
+  assert.strictEqual(invoke.detectEmbedderFamily("text-embedding-nomic-embed-text-v1.5", null), "nomic");
+  assert.strictEqual(invoke.formatEmbedInput("hello", "query", "nomic"), "hello");
+  assert.strictEqual(invoke.formatEmbedInput("hello", "document", "nomic"), "hello");
+});
+
+test("Qwen wraps queries, leaves documents raw", () => {
+  assert.strictEqual(invoke.detectEmbedderFamily("Qwen/Qwen3-Embedding-0.6B", null), "qwen");
+  assert.ok(invoke.formatEmbedInput("hello", "query", "qwen").startsWith("Instruct:"));
+  assert.ok(invoke.formatEmbedInput("hello", "query", "qwen").endsWith("hello"));
+  assert.strictEqual(invoke.formatEmbedInput("hello", "document", "qwen"), "hello");
+});
+
+test("jina applies Query:/Document: roles; panel key wins over model id", () => {
+  assert.strictEqual(invoke.detectEmbedderFamily("anything", "jina-embeddings-v5"), "jina");
+  assert.strictEqual(invoke.formatEmbedInput("hello", "query", "jina"), "Query: hello");
+  assert.strictEqual(invoke.formatEmbedInput("hello", "document", "jina"), "Document: hello");
+  // A nomic env model with a jina panel selection is still jina — LM Studio
+  // serves whatever is loaded and ignores the request's model field.
+  assert.strictEqual(invoke.detectEmbedderFamily("text-embedding-nomic-embed-text-v1.5", "jina-embeddings-v5"), "jina");
+});
 
 test("directional kNN gives A a one-sided edge to B", () => {
   const e = buildEdges(ring, { k: 1, minSim: 0.5 });
@@ -3047,7 +3165,7 @@ const {
 } = require("./warm.js");
 const {
   createCore, defaultGetEdges, cosine: coreCosine,
-  bindSaveTimeNeighbors, SAVE_TIME_K, SAVE_TIME_MIN_COS,
+  bindSaveTimeNeighbors, SAVE_TIME_K, SAVE_TIME_MIN_COS, FIELD_MINSIM,
   DEDUP_HI, DEDUP_LO, readDedupThresholds,
   dedupExisting,
 } = require("./memory-core.js");
@@ -3410,6 +3528,14 @@ test("panel page source ships first-run empty-store copy (RM-20)", () => {
   assert.ok(src.includes("Copy a starter prompt"), "seed-prompt button");
   assert.ok(src.includes("Connected, but nothing saved yet"), "connected-but-empty hint");
   assert.ok(/remember that/i.test(src), "tells the user the phrase that triggers a save");
+});
+
+test("panel page source ships embedder selector + /api/embedder (not a browser test)", () => {
+  const src = fs.readFileSync(path.join(__dirname, "panel.js"), "utf8");
+  assert.ok(src.includes('id="embedderSel"'), "embedder dropdown");
+  assert.ok(src.includes('id="embedderRow"'), "embedder row");
+  assert.ok(src.includes('"/api/embedder"'), "GET/POST embedder route");
+  assert.ok(src.includes("EMBEDDER_PRESETS"), "per-model tuning presets");
 });
 
 test("panel page source ships the export button + confirm modal (not a browser test)", () => {
@@ -6221,6 +6347,40 @@ async function asyncTests() {
     assert.ok(/\n\nRelated:/.test(onOut), "field-on is allowed to append Related:");
   });
 
+  await atest("entity mismatch at cosine 0.88 is dropped from Related:; same-person pair is kept", async () => {
+    const SIS = "My sister Naima teaches chemistry at the local high school";
+    const CALL = "I call my sister Naima every Sunday evening to catch up";
+    const JOB = "My coworker Naima is a frontend engineer on the infrastructure team";
+    const OTHER = "The quarterly planning meeting is on Tuesday";
+    const Q = "tell me about my sister Naima";
+    const atCos = (c) => [c, Math.sqrt(1 - c * c), 0];
+    const vecs = {
+      [SIS]: [1, 0, 0],
+      [CALL]: atCos(0.80),
+      [JOB]: atCos(0.88),
+      [OTHER]: [0, 0, 1],
+      [Q]: [1, 0, 0],
+    };
+    const embed = async (texts) => texts.map((t) => vecs[t] || [0, 1, 0]);
+    const store = new JsonlStore(tmp("ent-field.jsonl"));
+    const core = createCore({
+      store, embed,
+      fieldEnabled: () => true,
+      getEdgeStore: () => new EdgeStore(tmp("ent-field.edges.json"), { now: () => T0 }),
+      dedupThresholds: () => ({ hi: 2, lo: 2 }),
+    });
+    await core.save(SIS);
+    await core.save(CALL);
+    await core.save(JOB);
+    await core.save(OTHER);
+    const out = await core.recall(Q, 1);
+    assert.ok(out.includes("sister Naima") && out.includes("chemistry"), "primary is sister-Naima");
+    assert.ok(/Sunday/.test(out), "same-person Sunday-call surfaces in Related:");
+    assert.ok(!/coworker/.test(out) && !/engineer/.test(out),
+      "coworker-Naima must not be Related: despite cosine 0.88");
+    assert.strictEqual(primaryBlock(out).includes("coworker"), false, "I2: we did not reorder primary to drop coworker; k=1 just didn't rank it first");
+  });
+
   await atest("I3: corrupt .edges.json still returns cosine; recall does not throw", async () => {
     const seeded = liveField("c-i3.jsonl", false);
     await seeded.core.save(DIABETIC);
@@ -6430,10 +6590,11 @@ async function asyncTests() {
     return { store, core, edgesPath, edges: () => getEdgeStore() };
   }
 
-  await atest("SAVE_TIME constants match the spec (K=5, minCos=0.25, distinct from recall 0.55)", async () => {
+  await atest("SAVE_TIME constants match the spec (K=5, minCos=0.25, distinct from recall 0.70)", async () => {
     assert.strictEqual(SAVE_TIME_K, 5, "start K ≈ 5");
     assert.strictEqual(SAVE_TIME_MIN_COS, 0.25, "save-time bind ~0.25");
-    assert.ok(SAVE_TIME_MIN_COS < 0.55, "must stay looser than field.js recall minSim 0.55 (Risk #2)");
+    assert.strictEqual(FIELD_MINSIM, 0.70, "Related: gate is the measured 0.70");
+    assert.ok(SAVE_TIME_MIN_COS < FIELD_MINSIM, "must stay looser than field.js recall minSim (Risk #2)");
   });
 
   await atest("save binds top-K neighbors above ~0.25; extras and below-threshold are dropped", async () => {
@@ -6633,10 +6794,10 @@ async function asyncTests() {
     assert.strictEqual(semanticValid(after, recA.embedding_version, recB.embedding_version), true);
   });
 
-  await atest("Related: still comes from field.js at 0.55, not from persisted 0.25 edges", async () => {
+  await atest("Related: still comes from field.js at 0.70, not from persisted 0.25 edges", async () => {
     // Guard against accidentally wiring recall to the save-time table this
     // slice. A pair at cos 0.30 is persisted (0.25 net) but must NOT surface
-    // in Related: (0.55 gate). A third orthogonal memory makes
+    // in Related: (0.70 gate). A third orthogonal memory makes
     // mems.length > ranked.length so the field block even runs.
     const vecs = {
       "alpha lives here": [1, 0, 0],
@@ -6653,7 +6814,7 @@ async function asyncTests() {
     const out = await core.recall("alpha", 1);
     assert.ok(/alpha lives here/.test(out));
     assert.strictEqual(out.includes("barely related"), false,
-      "cos 0.30 save-time edge must not leak into Related: (recall still uses field.js 0.55)");
+      "cos 0.30 save-time edge must not leak into Related: (recall still uses field.js 0.70)");
   });
 
   await atest("save-time bind does not write the JSONL store (I5)", async () => {

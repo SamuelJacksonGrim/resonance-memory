@@ -42,13 +42,20 @@ function cosine(a, b) {
  * Build kNN association edges.
  *   records: [{ id, text, embedding }]  (embedding may be null -> node has no edges)
  *   opts.k: neighbors per node (default 3)
- *   opts.minSim: floor to drop weak/generic links (default 0.55). This is the
- *               RECALL gate for what surfaces in Related:. Save-time persist uses
- *               a looser 0.25 (SAVE_TIME_MIN_COS in memory-core.js) — two jobs,
+ *   opts.minSim: floor to drop weak/generic links (default 0.70). This is the
+ *               RECALL gate for what surfaces in Related:. Tuned on fire-together
+ *               (nomic plain): 0.55 kept 30/30 true pairs but leaked 11 near-miss
+ *               edges; 0.70 keeps 28/30 true (bookshelf m2↔m3 at 0.676 is the
+ *               cost), zero near-miss, zero unrelated. Save-time persist uses a
+ *               looser 0.25 (SAVE_TIME_MIN_COS in memory-core.js) — two jobs,
  *               two numbers, do not unify them (phase-0 Risk #2).
  *   opts.bonus: (idA, idB) => number, a bounded Hebbian bonus added to cosine
  *               before gating/ranking (default: none). Lets a learned association
  *               lift a weak-cosine edge over the gate without erasing semantics.
+ *   opts.conflict: (recA, recB) => bool. True → do not emit the edge. Server-
+ *               assigned entity/polarity mismatch (entity.js) lives here so a
+ *               0.88 Omar-dentist pair cannot surface as Related:. Discovery
+ *               only — never reorders primary cosine (I2/I3).
  *   opts.mutual: keep an edge a->b only if a is ALSO in b's top-k (reciprocal kNN).
  *               Default false = the original directional kNN. Directional edges are
  *               asymmetric: a generic "hub" node that shares a token with many others
@@ -67,8 +74,9 @@ function hasEmb(r) {
 
 function buildEdges(records, opts = {}) {
   const k = opts.k || 3;
-  const minSim = opts.minSim != null ? opts.minSim : 0.55;
+  const minSim = opts.minSim != null ? opts.minSim : 0.70;
   const bonus = opts.bonus || (() => 0);
+  const conflict = typeof opts.conflict === "function" ? opts.conflict : () => false;
   const withVec = records.filter(hasEmb);
 
   // Pass 1: each node's gated top-k candidates (the directional kNN).
@@ -77,6 +85,7 @@ function buildEdges(records, opts = {}) {
     const sims = [];
     for (const b of withVec) {
       if (a.id === b.id) continue;
+      if (conflict(a, b)) continue;
       const s = cosine(a.embedding, b.embedding) + bonus(a.id, b.id);
       if (s >= minSim) sims.push({ id: b.id, sim: s });
     }
@@ -143,8 +152,9 @@ function neighborhood(edges, seedIds, opts = {}) {
  *              NOTE: this is the RETURNED set (top return_k), NOT the seed pool. A
  *              constraint that ranked into the wider pool but fell outside the returned
  *              top-k is precisely a rescue target (vegetarian, rank 10 with return_k=5).
- *   opts.gate: min cosine for a constraint<->seed association (0.55 default; 0.45 in
- *              stage 2 to reach sub-gate isolates like heights<->rooftop = 0.472)
+ *   opts.gate: min cosine for a constraint<->seed association (0.55 default here;
+ *              memory-core ships 0.45 so heights<->rooftop = 0.472 still rescues).
+ *              Independent of Related: minSim (0.70) — do not unify them.
  *   opts.k:    neighbors examined per constraint (default 2, matches buildEdges)
  *   opts.max:  cap on rescued constraints
  * Returns [{ id, sim, via }] for unreturned constraints, best first.

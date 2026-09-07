@@ -47,6 +47,8 @@ const engine = require("./engine.js");
 const { openEdgeStore } = require("./edges.js");
 const { normalize, isCurrent, isVector } = require("./record.js");
 const { openStore } = require("./store.js");
+const { readFieldMinSim } = require("./memory-core.js");
+const { pairConflictFn, resolveEntities } = require("./entity.js");
 const extract = require("./extract.js");
 const exp = require("./export-memory.js");
 
@@ -75,6 +77,35 @@ function readConfig() { try { return JSON.parse(fs.readFileSync(CONFIG_PATH, "ut
 function writeConfig(c) { fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true }); fs.writeFileSync(CONFIG_PATH, JSON.stringify(c, null, 2), "utf8"); }
 function fieldOn() { const c = readConfig(); return typeof c.field === "boolean" ? c.field : false; }
 function extractOn() { return extract.readExtractEnabled(readConfig()); }
+
+// --- Per-embedder tuning presets ---------------------------------------
+// Recall geometry is embedder-specific: the cosine thresholds (dedup bands,
+// field minSim, constraint gate, save-bind) are calibrated to ONE model's
+// distribution, and a value tuned for nomic is wrong for jina or qwen. So
+// each supported embedder carries its own preset.
+//
+// Calibration: eval/substrate/fire-together-embedder-fair-report.md (2026-09-06).
+// nomic numbers are the shipped duplicates-tuned values, re-confirmed, except
+// field_minsim 0.55 → 0.70 (measured: 0 near-miss Related: edges, true-pair
+// recall 0.93). Qwen/jina from each model's own duplicates.jsonl + fire-together
+// pairwise. server.js now applies embedder-specific invocation (nomic raw,
+// Qwen Instruct-query, jina Query:/Document:) keyed off config.embedder, so
+// a jina/Qwen selection is no longer the broken plain geometry. Anti-lock-in
+// by design: many options, each independently usable.
+const NOMIC_TUNING = { dedup_hi: 0.95, dedup_lo: 0.88, field_minsim: 0.70, constraint_gate: 0.45, save_bind: 0.25 };
+const QWEN_TUNING  = { dedup_hi: 0.95, dedup_lo: 0.89, field_minsim: 0.65, constraint_gate: 0.55, save_bind: 0.26 };
+const JINA_TUNING  = { dedup_hi: 0.98, dedup_lo: 0.84, field_minsim: 0.55, constraint_gate: 0.40, save_bind: 0.15 };
+const EMBEDDER_PRESETS = [
+  { key: "nomic-embed-text",   label: "Nomic embed v1.5",         license: "Apache-2.0",                dim: 768,  calibrated: true,  tuning: NOMIC_TUNING },
+  { key: "qwen3-embedding",    label: "Qwen3-Embedding 0.6B",     license: "Apache-2.0",                dim: 1024, calibrated: true,  tuning: QWEN_TUNING },
+  { key: "embeddinggemma",     label: "EmbeddingGemma 300M",      license: "Gemma license",             dim: 768,  calibrated: false, tuning: NOMIC_TUNING },
+  { key: "jina-embeddings-v5", label: "Jina embeddings v5 (nano)", license: "CC-BY-NC · personal use", dim: 768,  calibrated: true,  tuning: JINA_TUNING },
+];
+function matchPreset(modelId) {
+  if (!modelId) return null;
+  const m = String(modelId).toLowerCase();
+  return EMBEDDER_PRESETS.find((p) => m.includes(p.key)) || null;
+}
 const EMBED_URL = process.env.EMBED_ENDPOINT || "http://localhost:1234/v1/embeddings";
 
 function parseJsonl(text) {
@@ -130,7 +161,11 @@ async function graphData(demo) {
   try {
     const byId = new Map(recs.map((r) => [String(r.id), r]));
     const bonus = edges ? (a, b) => edges.bonus(a, b) : () => 0;
-    const m = field.buildEdges(recs, { k: 3, minSim: 0.55, bonus });
+    const minSim = readFieldMinSim(readConfig());
+    const m = field.buildEdges(recs, {
+      k: 3, minSim, bonus,
+      conflict: pairConflictFn(resolveEntities(recs)),
+    });
     const seen = new Map();
     for (const [a, list] of m) {
       for (const e of list) {
@@ -281,6 +316,14 @@ const PAGE = `<!doctype html>
       <button id="engineBtn" style="display:none"></button>
     </div>
 
+    <div class="row" id="embedderRow" style="margin-top:10px">
+      <div>
+        <div class="label">Embedder tuning <span id="embedderPill" class="pill off">&hellip;</span></div>
+        <div class="hint" id="embedderHint">Recall geometry depends on which embedder you run. Pick your model and Resonance applies its tuning. More options means no single model can lock you in.</div>
+      </div>
+      <select id="embedderSel" style="max-width:200px"></select>
+    </div>
+
     <div class="row">
       <div>
         <div class="label">Associative field</div>
@@ -419,7 +462,40 @@ const PAGE = `<!doctype html>
     if(s.store){ var sp = document.getElementById('storePath'); if(sp) sp.textContent = s.store; }
     firstRunMemories = typeof s.memories === 'number' ? s.memories : null;
     renderFirstRun();
+    loadEmbedder();
   }
+
+  var embedderSel = document.getElementById('embedderSel');
+  var embedderPill = document.getElementById('embedderPill');
+  function renderEmbedderPill(p){
+    if(!p){ embedderPill.textContent = '?'; embedderPill.className = 'pill off'; return; }
+    embedderPill.textContent = p.calibrated ? 'tuned' : 'default tuning';
+    embedderPill.className = 'pill ' + (p.calibrated ? 'on' : 'warn');
+  }
+  async function loadEmbedder(){
+    try {
+      var e = await (await fetch('/api/embedder')).json();
+      var avail = e.available || [];
+      embedderSel.innerHTML = '';
+      e.presets.forEach(function(p){
+        var here = avail.some(function(id){ return String(id).toLowerCase().indexOf(p.key) >= 0; });
+        var o = document.createElement('option');
+        o.value = p.key;
+        o.textContent = p.label + ' · ' + p.license
+          + (p.calibrated ? '' : ' · pending calibration')
+          + (here ? '' : ' · not loaded');
+        if(p.key === e.selected) o.selected = true;
+        embedderSel.appendChild(o);
+      });
+      renderEmbedderPill(e.presets.find(function(p){ return p.key === e.selected; }));
+    } catch(err){ renderEmbedderPill(null); }
+  }
+  embedderSel.addEventListener('change', async function(){
+    try {
+      var r = await (await fetch('/api/embedder', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ embedder: embedderSel.value }) })).json();
+      renderEmbedderPill({ calibrated: r.calibrated });
+    } catch(err){}
+  });
 
   var seedBtn = document.getElementById('seedBtn'), seedMsg = document.getElementById('seedMsg');
   if(seedBtn){
@@ -953,6 +1029,51 @@ const server = http.createServer((req, res) => {
     let text = "";
     try { text = fs.readFileSync(path.join(baseDir(), "system-prompt.md"), "utf8"); } catch { text = EMBEDDED.systemPrompt || ""; }
     res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ text })); return;
+  }
+  if (req.method === "GET" && url === "/api/embedder") {
+    const c = readConfig();
+    const envModel = process.env.EMBED_MODEL || "";
+    const auto = matchPreset(envModel);
+    const selected = c.embedder || (auto && auto.key) || "nomic-embed-text";
+    const respond = (available) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ presets: EMBEDDER_PRESETS, selected, available, embed_model: envModel }));
+    };
+    Promise.resolve()
+      .then(() => fetch(extract.modelsUrl(EMBED_URL)))
+      .then((r) => r.json())
+      .then((j) => respond(((j && j.data) || []).map((m) => m.id)))
+      .catch(() => respond([]));
+    return;
+  }
+  if (req.method === "POST" && url === "/api/embedder") {
+    body(req, (b) => {
+      let parsed = {};
+      try { parsed = JSON.parse(b) || {}; } catch { parsed = {}; }
+      const preset = EMBEDDER_PRESETS.find((p) => p.key === parsed.embedder);
+      const c = readConfig();
+      if (preset) {
+        c.embedder = preset.key;
+        // dedup_hi / dedup_lo are read live by the server today; write them now.
+        c.dedup_hi = preset.tuning.dedup_hi;
+        c.dedup_lo = preset.tuning.dedup_lo;
+        // field_minsim is read live by the server (readFieldMinSim). Also
+        // stamp the top-level key so a config without embedder_tuning still
+        // picks up the preset gate.
+        c.embedder_tuning = preset.tuning;
+        c.field_minsim = preset.tuning.field_minsim;
+        c.constraint_gate = preset.tuning.constraint_gate;
+        writeConfig(c);
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        ok: !!preset,
+        selected: preset ? preset.key : (c.embedder || null),
+        applied: preset ? preset.tuning : null,
+        calibrated: preset ? preset.calibrated : false,
+      }));
+    });
+    return;
   }
   if (req.method === "GET" && url.startsWith("/api/graph")) {
     const demo = /[?&]demo=1/.test(url);

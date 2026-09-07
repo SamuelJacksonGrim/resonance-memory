@@ -144,8 +144,8 @@ same record the panel renders, the installer targets, `--dedup-existing` scans,
 | File | Role | Depends on |
 |---|---|---|
 | `entry.js` | Mode dispatch on `argv`. | server / panel / install / dedup-existing / migrate / export-memory / import-memory |
-| `server.js` | MCP server. Declares the four tool schemas + descriptions, wires the *environment* (network embedder, live field toggle, live extract toggle, lazy EdgeStore) into the shared core, runs the stdio JSON-RPC loop, vacuums soft-deletes and `pruneSweep`s faded+weak edges at startup. Reads the version from `package.json` so `serverInfo` can't drift. Outbound `sampling/createMessage` is the Tier 2 path when the client advertised sampling. | `memory-core`, `store`, `edges`, `extract`, `package.json` |
-| `memory-core.js` | **The four cognitive verbs, as one implementation.** `createCore({ store, embed, fieldEnabled, getEdgeStore, dedupThresholds, extractEnabled, extract })` → `{ save, recall, edit, remove }`. Also `dedupExisting` / `planDedupExisting` (RM-02.c) so `--dedup-existing` cannot fork the 02.b bands. Everything environment-specific is *injected*. This is the code both `server.js` and `eval/pipeline.js` run — the RM-00 golden is the proof they never diverge. | `field`, `record`, `extract` |
+| `server.js` | MCP server. Declares the four tool schemas + descriptions, wires the *environment* (network embedder, live field toggle, live extract toggle, lazy EdgeStore) into the shared core, runs the stdio JSON-RPC loop, vacuums soft-deletes and `pruneSweep`s faded+weak edges at startup. Reads the version from `package.json` so `serverInfo` can't drift. Outbound `sampling/createMessage` is the Tier 2 path when the client advertised sampling. Per-embedder input formatting via `embed-invoke.js`. | `memory-core`, `store`, `edges`, `extract`, `embed-invoke`, `package.json` |
+| `memory-core.js` | **The four cognitive verbs, as one implementation.** `createCore({ store, embed, fieldEnabled, getEdgeStore, dedupThresholds, fieldMinSim, extractEnabled, extract })` → `{ save, recall, edit, remove }`. Also `dedupExisting` / `planDedupExisting` (RM-02.c) so `--dedup-existing` cannot fork the 02.b bands. Everything environment-specific is *injected*. This is the code both `server.js` and `eval/pipeline.js` run — the RM-00 golden is the proof they never diverge. | `field`, `record`, `extract`, `entity` |
 | `extract.js` | RM-01.c Tier 2: opt-in LLM extraction (prompt, parser, sanity gate, `/v1/chat/completions`, MCP sampling, capability detect). Off by default. `save()` is the only caller. | stdlib + `fetch` |
 | `dedup-existing.js` | RM-02.c CLI. Dry-run default; `--apply` is one durable rewrite. Thin wrapper over `dedupExisting()` — no second decision. | `memory-core`, `store` |
 | `record.js` | The shared record schema (`normalize()`), durable atomic writes (`writeFileDurable()`), the access sidecar (`AccessLog`), and the lexical heuristics (constraint typing, historical-query detection, supersession cues, cosine-banded `detectNearDuplicate`). Owned here so server and panel agree on a record byte-for-byte. | stdlib only |
@@ -155,10 +155,12 @@ same record the panel renders, the installer targets, `--dedup-existing` scans,
 | `zip.js` | Zero-dep ZIP64 writer (slice 2b). `createDeflateRaw` + `zlib.crc32` + `.zip.tmp` rename. ZIP64 on every archive. | stdlib (`zlib`) |
 | `export-memory.js` | RM-07 slice 2b sovereignty export. `--export` zip bundle; `--export-jsonl` raw primitive. Read-only. The 2c panel button shells `runExport()` / `previewExport()`. Not an MCP tool. | `zip`, `store`, `record`, `edges` |
 | `import-memory.js` | RM-17 sovereignty import. `--import` dry-run default; `--apply` restores (or `--merge`s). Direct store write, not `save()`. `--with-edges` opt-in for Hebbian (`0009` planted-sidecar refusal). Not an MCP tool. | `zip`, `store`, `record`, `edges` |
-| `field.js` | Associative layer (Phase 2a): a kNN semantic graph over stored vectors, neighborhood expansion, and constraint rescue. No new embedding calls, no LLM extraction. | stdlib only |
+| `entity.js` | Server-assigned person-entity ids + polarity (I4). Closed-class relation × relation-anchored names; store-wide resolve. Feeds Related: `conflict` and Hebbian `pairScale` only — never primary cosine (I2/I3). | stdlib only |
+| `embed-invoke.js` | Per-embedder input formatting. Nomic raw; Qwen Instruct-query; jina `Query:`/`Document:`. Keyed off panel `config.embedder` then `EMBED_MODEL`. | stdlib only |
+| `field.js` | Associative layer (Phase 2a): a kNN semantic graph over stored vectors, neighborhood expansion, and constraint rescue. No new embedding calls, no LLM extraction. Related: minSim default 0.70; `conflict` callback drops entity/polarity mismatches. | stdlib only |
 | `ledger.js` | Retired Hebbian sidecar (Phase 2b). Off the live path as of Slice C; kept so tests can compare EdgeStore bonuses against the shipped epoch-decay math. | `record` |
 | `edges.js` | Unified persistent edge store (Phase 0 / `RM-21`): one undirected record, two independent signals (`semantic` derived cache validated by version comparison, `hebbian` source of truth), typed provenance, one-way `.assoc.json` → `.edges.json` migration (`kind: "resonance-edges"`). **On the live recall path** — Hebbian bonus (via `effectiveHebbian`)/reinforce/save. Decay is lazy wall-clock (I6); `tick()` is retired. A reinforcing mutation materializes `effectiveHebbian` before applying α (0.3). MCP request-ID idempotency: a 256-entry LRU of processed JSON-RPC ids. **RM-07 slice 5:** persistence adapter — SqliteStore shares the `.db` (`processed_ids` + weight UPDATE are one txn); JsonlStore keeps the sidecar. `effectiveHebbian` is never stored. Soft prune (0.4 / I8): `pruneSweep()` marks `pruned_at` only when *both* unreinforced and semantically weak (`SEMANTIC_PRUNE_GATE` 0.25); hard drop is `vacuum()`, explicit. Reactivation is in-place on save/edit/reinforce of an endpoint. `field.js` still builds the semantic kNN at recall. | `record` |
-| `panel.js` | The `127.0.0.1` control panel (largest file): field toggle, LLM-extraction toggle (surfaced when a capable model is detected), Connect/Disconnect, the 3D association-graph view, demo graph, first-run empty-store nudge (RM-20), **Export my memories** (slice 2c: confirm modal, POST `/api/export` shells `export-memory.js`, heartbeat pause + yield so a long zip cannot starve `/api/ping`), heartbeat auto-shutdown. Not an MCP tool. | `install`, `field`, `engine`, `edges`, `record`, `extract`, `export-memory`, `embedded-assets` |
+| `panel.js` | The `127.0.0.1` control panel (largest file): field toggle, LLM-extraction toggle (surfaced when a capable model is detected), Connect/Disconnect, embedder-tuning selector (`/api/embedder`), the 3D association-graph view, demo graph, first-run empty-store nudge (RM-20), **Export my memories** (slice 2c: confirm modal, POST `/api/export` shells `export-memory.js`, heartbeat pause + yield so a long zip cannot starve `/api/ping`), heartbeat auto-shutdown. Not an MCP tool. | `install`, `field`, `engine`, `edges`, `record`, `extract`, `export-memory`, `entity`, `memory-core`, `embedded-assets` |
 | `install.js` | Detect + wire into LM Studio / Claude Desktop MCP config. Preserves other configured servers, leaves a `.bak`. | stdlib only |
 | `engine.js` | One-click embedder setup for the panel: drives LM Studio's bundled `lms` CLI to start the server, download the Nomic embedder, load it, and verify the endpoint answers. Pure convenience — the MCP server never needs it. | stdlib + `fetch` |
 | `inspect_sidecar.js` | Dependency-free telemetry for the Hebbian ledger. | stdlib |
@@ -393,9 +395,9 @@ similarity floor (~0.45) that made a global threshold connect everything. Three 
 
 "Fire together, wire together." One persistent sidecar (`<store>.edges.json`) holding both
 signals. Phase 0.1 persists save-time semantic neighbors here (K=5, min cosine 0.25,
-Hebbian weight 0); **recall still rebuilds semantic kNN in `field.js`** (minSim 0.55) and
+Hebbian weight 0); **recall still rebuilds semantic kNN in `field.js`** (minSim 0.70) and
 does not read the cached semantic signal yet. The two cosine thresholds are deliberate
-(Risk #2): recall's 0.55 is what the model *sees*, save's 0.25 is what is *worth writing*.
+(Risk #2): recall's 0.70 is what the model *sees*, save's 0.25 is what is *worth writing*.
 The learned Hebbian weight lives on the edge record and is the source of truth. Safety
 properties, preserved byte-for-byte from the retired `Ledger`:
 
@@ -533,7 +535,8 @@ All environment variables, read at startup:
 | `RESONANCE_MEMORY_FIELD` | off | default field state when no config file exists |
 | `RESONANCE_FIELD_MUTUAL` | on | reciprocal-kNN topology (`0` → directional) |
 | `RESONANCE_FIELD_KSEARCH` | 15 | internal search radius for constraint rescue |
-| `RESONANCE_CONSTRAINT_GATE` | 0.45 | min cosine for a constraint↔seed bridge |
+| `RESONANCE_FIELD_MINSIM` | 0.70 | Related: kNN floor (live-config `field_minsim` wins) |
+| `RESONANCE_CONSTRAINT_GATE` | 0.45 | min cosine for a constraint↔seed bridge (live-config `constraint_gate` wins) |
 | `RESONANCE_MEMORY_PANEL_PORT` | 9090 | control-panel port (127.0.0.1 only) |
 | `RESONANCE_EXTRACT_LLM` | off | default Tier 2 state when no config file exists |
 | `RESONANCE_EXTRACT_MODEL` | auto (first non-embed) | preferred chat model id for Tier 2 |

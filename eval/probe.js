@@ -60,8 +60,8 @@ async function main() {
       (i === 4 ? "   --- top-5 cut ---" : ""));
   });
 
-  const edges = fieldMod.buildEdges(mems, { k: 2, minSim: 0.55 });
-  console.log("\nSTATIC kNN EDGES (k=2, minSim=0.55):");
+  const edges = fieldMod.buildEdges(mems, { k: 2, minSim: 0.70 });
+  console.log("\nSTATIC kNN EDGES (k=2, minSim=0.70):");
   let any = false;
   for (const [id, es] of edges) {
     if (!es.length) continue;
@@ -69,7 +69,7 @@ async function main() {
     console.log("  [" + id + "] " + byId.get(String(id)).text.slice(0, 44));
     for (const e of es) console.log("        -> " + e.sim.toFixed(3) + "  [" + e.id + "] " + byId.get(String(e.id)).text.slice(0, 44));
   }
-  if (!any) console.log("  (none clear the 0.55 gate)");
+  if (!any) console.log("  (none clear the 0.70 gate)");
 
   const top5 = ranked.slice(0, 5).map((r) => r.id);
   const nb = fieldMod.neighborhood(edges, top5, { hops: 1, max: 4 });
