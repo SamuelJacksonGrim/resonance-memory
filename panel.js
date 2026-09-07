@@ -756,7 +756,15 @@ const PAGE = `<!doctype html>
     if (p.withEdges) bits.push('Associations: restore ' + (p.edgesWillRestore || 0) + ' of ' + (p.edgesInSource || 0) + '.');
     else bits.push('Associations: not restoring (box above is off on purpose).');
     (p.warnings || []).forEach(function(w){ bits.push('Warning: ' + w); });
-    (p.errors || []).forEach(function(e){ bits.push('Cannot import: ' + (e.message || e.code || e)); });
+    (p.errors || []).forEach(function(e){
+      // Speak the panel's language, not the CLI's: the non-empty-dest guard
+      // points at the checkbox below, not at a --merge flag.
+      if (e && e.code === 'IMPORT_DEST_NONEMPTY') {
+        bits.push('This store already has memories \\u2014 tick \\u201cMerge\\u201d below to add these to them (nothing existing is removed).');
+      } else {
+        bits.push('Cannot import: ' + (e.message || e.code || e));
+      }
+    });
     return bits.join(' ');
   }
   function importFlags(){
@@ -772,9 +780,12 @@ const PAGE = `<!doctype html>
     var destCount = importDestMeta && importDestMeta.destCount || 0;
     var destEdges = importDestMeta && importDestMeta.destEdges || 0;
     importMergeRow.hidden = destCount <= 0;
-    if (destCount > 0 && importMerge && !importMerge.dataset.touched) {
-      importMerge.checked = true;
-    }
+    // Merge is an explicit opt-in, NOT a default (product call 2026-09-07):
+    // blending an imported set into a store that already has memories is the
+    // one destructive-feeling path, so it asks first — the checkbox starts
+    // unchecked and the dry-run's IMPORT_DEST_NONEMPTY error keeps Import
+    // disabled until the user ticks it. This mirrors the CLI, which refuses
+    // without --merge. The safe common case (empty store) never shows the row.
     importReplaceRow.hidden = !(importWithEdges && importWithEdges.checked && destEdges > 0);
   }
   async function loadImportPlan(){
