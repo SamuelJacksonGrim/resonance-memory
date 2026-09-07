@@ -24,6 +24,9 @@
  *     (writes the shared config.json the MCP server reads live),
  *   - connects/disconnects the server from LM Studio / Claude Desktop,
  *   - draws the association graph (your memories, or a synthetic demo),
+ *   - first-run empty-store nudge (RM-20): when the user store has zero
+ *     current memories, offer a starter prompt and a "connected but never
+ *     saved" hint. Not an MCP tool.
  *   - exports YOUR store as a zip (RM-07 slice 2c; shells export-memory.js, never
  *     demo-seed.jsonl; not an MCP tool — a model that can dump the store is an
  *     exfil path), and
@@ -230,6 +233,11 @@ const PAGE = `<!doctype html>
   .toast code { font-family: ui-monospace, Consolas, monospace; font-size: 12px;
     background: rgba(0,0,0,.06); padding: 1px 5px; border-radius: 5px; word-break: break-all; }
   .busy-note { color: #8a5a00; font-size: 12.5px; margin-top: 6px; }
+  .firstrun { margin: 0 0 14px; padding: 12px 14px; border-radius: 12px;
+    background: #fff8e8; border: 1px solid rgba(180,130,20,.25); }
+  .firstrun .label { margin-bottom: 4px; }
+  .firstrun .hint { margin: 0 0 8px; color: #5b4a20; }
+  .firstrun button { margin-top: 2px; }
   @media (prefers-color-scheme: dark) {
     body { background: #16181c; color: #e6e8eb; }
     .card { background: #1f2227; border-color: rgba(255,255,255,.07); box-shadow: 0 12px 40px rgba(0,0,0,.4); }
@@ -247,6 +255,8 @@ const PAGE = `<!doctype html>
     .modal-card .dest { background: #171a1e; }
     .toast { color: #6ee7b7; }
     .toast code { background: rgba(255,255,255,.08); }
+    .firstrun { background: #3a2f12; border-color: rgba(240,198,116,.25); }
+    .firstrun .hint { color: #f0c674; }
   }
 </style></head>
 <body>
@@ -255,6 +265,13 @@ const PAGE = `<!doctype html>
     <p class="sub">A local memory for your AI. Nothing leaves this machine.</p>
 
     <div id="clients" class="clients sec"></div>
+
+    <div id="firstRun" class="firstrun" hidden>
+      <div class="label" id="firstRunTitle">Nothing saved yet</div>
+      <div class="hint" id="firstRunHint">Your AI has a memory, but the store is empty. In your next chat, tell it a few things worth keeping &mdash; who you are, a rule it should follow, the project you&rsquo;re in &mdash; then say <b>remember that</b>.</div>
+      <button type="button" id="seedBtn">Copy a starter prompt</button>
+      <span id="seedMsg" class="hint" style="margin-left:8px"></span>
+    </div>
 
     <div class="row" id="engineRow" style="margin-bottom:10px">
       <div>
@@ -367,11 +384,54 @@ const PAGE = `<!doctype html>
     }
   }
 
+  var firstRunMemories = null;
+  var firstRunConnected = false;
+  var SEED_PROMPT = 'Please remember these things about me, then check your memory so I know they stuck:\\n' +
+    '- My name is \\u2026\\n' +
+    '- I live in \\u2026\\n' +
+    '- I prefer \\u2026\\n' +
+    '- A rule you should always follow: \\u2026\\n' +
+    '- What I\\u2019m working on right now: \\u2026';
+
+  function renderFirstRun(){
+    var box = document.getElementById('firstRun');
+    var title = document.getElementById('firstRunTitle');
+    var hint = document.getElementById('firstRunHint');
+    if(!box) return;
+    if(firstRunMemories === 0){
+      box.hidden = false;
+      if(firstRunConnected){
+        title.textContent = 'Connected, but nothing saved yet';
+        hint.innerHTML = 'You\\u2019re hooked up, and the store is still empty. In your next chat, tell your AI who you are and a rule it should follow, then say <b>remember that</b>. Smaller models sometimes need the nudge.';
+      } else {
+        title.textContent = 'Nothing saved yet';
+        hint.innerHTML = 'Your AI has a memory, but the store is empty. Connect an app above, then in your next chat tell it a few things worth keeping &mdash; who you are, a rule it should follow, the project you&rsquo;re in &mdash; and say <b>remember that</b>.';
+      }
+    } else {
+      box.hidden = true;
+    }
+  }
+
   async function loadState(){
     var s = await (await fetch('/api/state')).json();
     tog.checked = s.field;
     renderExtract(s);
     if(s.store){ var sp = document.getElementById('storePath'); if(sp) sp.textContent = s.store; }
+    firstRunMemories = typeof s.memories === 'number' ? s.memories : null;
+    renderFirstRun();
+  }
+
+  var seedBtn = document.getElementById('seedBtn'), seedMsg = document.getElementById('seedMsg');
+  if(seedBtn){
+    seedBtn.addEventListener('click', async function(){
+      try {
+        await navigator.clipboard.writeText(SEED_PROMPT);
+        seedMsg.textContent = 'copied \\u2014 paste it into your next chat';
+      } catch(e){
+        seedMsg.textContent = 'copy failed \\u2014 select the starter text in README instead';
+      }
+      setTimeout(function(){ seedMsg.textContent=''; }, 4000);
+    });
   }
 
   var spBtn = document.getElementById('spBtn'), spMsg = document.getElementById('spMsg');
@@ -511,6 +571,8 @@ const PAGE = `<!doctype html>
         : (c.present ? '<button class="primary" data-id="'+c.id+'" data-act="connect">Connect</button>' : '');
       return '<div class="client"><div><div class="cname">'+c.name+'</div>'+status+'</div>'+btn+'</div>';
     }).join('') + '<div class="hint" style="margin-bottom:4px">After connecting, restart that app once so it loads your memory.</div>';
+    firstRunConnected = list.some(function(c){ return c.installed; });
+    renderFirstRun();
     el.querySelectorAll('button').forEach(function(b){
       b.addEventListener('click', async function(){
         b.disabled = true; b.textContent = '\\u2026';

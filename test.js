@@ -3404,6 +3404,14 @@ test("uniqueZipPath({ create:false }) does not mkdir (panel preview must not wri
   assert.ok(p.endsWith(".zip"));
 });
 
+test("panel page source ships first-run empty-store copy (RM-20)", () => {
+  const src = fs.readFileSync(path.join(__dirname, "panel.js"), "utf8");
+  assert.ok(src.includes("Nothing saved yet"), "empty-store title");
+  assert.ok(src.includes("Copy a starter prompt"), "seed-prompt button");
+  assert.ok(src.includes("Connected, but nothing saved yet"), "connected-but-empty hint");
+  assert.ok(/remember that/i.test(src), "tells the user the phrase that triggers a save");
+});
+
 test("panel page source ships the export button + confirm modal (not a browser test)", () => {
   // The actual click/modal is a browser UI — no browser tooling here.
   // This only asserts the page we serve contains the settled 2c copy.

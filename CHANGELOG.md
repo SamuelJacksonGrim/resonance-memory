@@ -9,6 +9,11 @@ stable; sophistication grows in the substrate, not in the API.
 ## [Unreleased]
 
 ### Added
+- **RM-20 first-run empty-store nudge.** When the user store has zero current
+  memories, the control panel shows a card: what to tell your AI, a
+  "Copy a starter prompt" button, and a distinct "connected but nothing
+  saved yet" title if an MCP client is already hooked up. README "Get
+  started" names the same first action. Not an MCP tool.
 - **RM-17 import — the sovereignty return trip.** `--import <zip-or-jsonl>`
   (dry-run default, `--apply` writes) restores an export onto a new machine
   or `--merge`s into a store that already has memories. Direct store write —

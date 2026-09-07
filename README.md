@@ -61,6 +61,10 @@ Then:
 
 Done. Your AI can now save and recall memories on its own.
 
+The first thing worth doing: tell it a few facts you want kept — who you are, a
+rule it should follow, the project you're in — and say **"remember that."** The
+control panel shows a starter prompt when the store is still empty.
+
 Want to see what it does *before* connecting anything? Click **Show demo graph** on that page —
 it draws a little constellation of example memories so you can watch how related ideas cluster
 together and link up. Drag it to turn it around.

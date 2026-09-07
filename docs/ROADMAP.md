@@ -202,7 +202,7 @@ Not substrate work; what makes it runnable by anyone. Scope + acceptance: `BACKL
 | `RM-17` | Export / import / backup | 🟡 — zip export shipped as RM-07 slice 2b (`--export` / `--export-jsonl`); panel button 2c; `--import` CLI shipped (dry-run default, `--apply` restores, `--with-edges` opt-in); panel import still open |
 | `RM-18` | Encryption at rest (optional) | ⬜ |
 | `RM-19` | Recall explainability | ⬜ — near-free once 2.2 tracing exists |
-| `RM-20` | First-run quality | ⬜ |
+| `RM-20` | First-run quality | 🟡 — panel empty-store nudge + starter prompt shipped; panel import (RM-17) still open |
 | `RM-14` | Hosted / enterprise | ⛔ **deliberately deferred** — a separate product with a separate name |
 
 ---
