@@ -53,10 +53,13 @@ button shipped on `w02-origin-lock` (stacked commits).
    honesty in the UI. Do not add dual-write JSONL. Files: `store-sqlite.js`
    `checkpoint()`, `panel.js`, `docs/ARCHITECTURE.md`.
 
-7. **PII/secret guard expansion.** Tier 1 is API keys / cards / PEM /
-   GitHub tokens. Remaining: more key shapes, passphrase-ish lines,
-   "this looks like a password" without eating `4821` / `1500mg`. Files:
-   `record.js` `guardSecrets` / `SECRET_PATTERNS`, `eval/corpora/messy.jsonl`.
+7. **PII/secret guard expansion.** ✅ Done. Tier 1 refuses 2026 issued
+   shapes (`github_pat_`, real `ghp_`, `sk-proj-`/`sk-ant-`, Slack `xapp-`,
+   Stripe `sk_live_`/`rk_live_`, Google `AIza…`, HuggingFace `hf_`, Groq
+   `gsk_`, AWS `ASIA`, OpenSSH PEM, JWT, `passphrase:` / high-entropy
+   `api_key=`) without eating `4821` / `1500mg` / "the secret is browning
+   the butter". Files: `record.js` `guardSecrets` / `SECRET_PATTERNS`,
+   `eval/corpora/messy.jsonl`, `test.js` canaries.
 
 8. **SEA / release automation.** Per-platform build, version bump
    (`package.json` is the source of the version string), CHANGELOG

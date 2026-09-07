@@ -29,6 +29,19 @@ stable; sophistication grows in the substrate, not in the API.
   the opposite of the release workflow, which must not cancel a
   publish). Checks UI: `CI / gate`. A red step fails the job
   (`process.exit(1)` from both commands; no `continue-on-error`).
+- **Tier 1 secret/PII guard covers 2026 issued shapes.** `guardSecrets` in
+  `record.js` still refuses, never redacts (a fact mixed with a secret is
+  store-nothing). New prefixes are the credentials people actually paste:
+  GitHub `github_pat_` and real `ghp_` (underscore — 01.b only had the
+  hyphen fake), Slack `xapp-` (bot `xoxb-` already matched), Stripe
+  `sk_live_`/`rk_live_`/`sk_test_` (not publishable `pk_live_`), Google
+  `AIza…`, HuggingFace `hf_`, Groq `gsk_`, AWS STS `ASIA`, OpenSSH
+  private keys (PEM already covered), JWTs (`eyJ….….…`), `passphrase:`
+  and high-entropy `api_key=` assignments. `sk-proj-` / `sk-ant-` ride
+  the existing `sk-` prefix. Match prefix+length+charset, not English:
+  "the secret is browning the butter", "my password manager is Bitwarden",
+  `4821`, `1500mg`, and `API_KEY=nomic-embed-text-v1.5` still store.
+  True-positives in `eval/corpora/messy.jsonl`; prose canaries in `test.js`.
 - **RM-11 release CI.** `.github/workflows/release.yml` is the
   native-build / macOS path (this project has no
   Mac hardware). A `v*` tag runs the local gate (`node test.js` +

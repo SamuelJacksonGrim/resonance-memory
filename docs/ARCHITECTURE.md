@@ -204,11 +204,20 @@ argument is always the smallest possible thing (`content`, `query`, or `id`).
    Clean facts are byte-identical. Implemented in `record.js` (`normalizeText` /
    `splitFacts` / `prepareWrite`) — not `normalize()`, which is the record schema.
    Extra embeds from a legitimate split are in-scope; the rest is string ops.
-2. **Tier 1 secret/PII guard (RM-01.b, always on).** Refuse API-key / password / 13–16
-   digit card / AWS key / PEM / GitHub-token shapes. Store nothing; return
+2. **Tier 1 secret/PII guard (RM-01.b, always on; prefixes widened for 2026
+   issued shapes).** Refuse known credential *shapes*: API-key prefixes
+   (`sk-`/`sk-proj-`/`sk-ant-`, `AIza…`, `sk_live_`/`rk_live_`, `gsk_`, `hf_`,
+   Slack `xox*`/`xapp-`), `password:`/`passphrase:`/`api_key=` assignments,
+   13–16 digit cards, AWS `AKIA`/`ASIA`, PEM / OpenSSH private keys, GitHub
+   `ghp_`/`github_pat_` (underscore is what GitHub issues; the 01.b `ghp-`
+   hyphen fake still refuses), JWTs (`eyJ….….…`). Store nothing; return
    `Not saved — that looks like … Secrets don't belong in memory.` Refusal, not
    redaction: a payload mixing a fact with a secret is store-nothing. Digit traps
-   (`4821`, `1500mg`) do not match `\b[0-9]{13,16}\b`.
+   (`4821`, `1500mg`) do not match `\b[0-9]{13,16}\b`. Prose that *mentions*
+   secrets ("the secret is browning the butter", "my password manager is
+   Bitwarden") does not match — the guard keys off prefix+length+charset, not
+   the English word. Stripe publishable `pk_live_` is client-side by design
+   and is not refused.
 3. **Tier 2 optional LLM extraction (RM-01.c, off by default).** One ADD-only
    call against the already-normalized, already-guarded text. Off by default is
    a deliberate identity choice: RM does the work; a weak local model can extract

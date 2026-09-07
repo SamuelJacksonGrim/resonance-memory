@@ -92,7 +92,13 @@ off by default, and never blocks the save.
       `make sure you` / `remember to remind me`; conservative no-split on the honey trap).
 - [x] **Tier 1 (always on):** secret/PII guard — refuse to store anything matching
       API-key/password/card shapes; return a clear refusal string. Refusal not
-      redaction; `\b[0-9]{13,16}\b` does not eat `4821` / `1500mg`.
+      redaction; `\b[0-9]{13,16}\b` does not eat `4821` / `1500mg`. Prefixes
+      widened past 01.b for 2026 issued shapes (`github_pat_`, real `ghp_`,
+      `sk-proj-`/`sk-ant-`, Slack `xapp-`, Stripe `sk_live_`/`rk_live_`, Google
+      `AIza…`, HuggingFace `hf_`, Groq `gsk_`, AWS `ASIA`, OpenSSH PEM, JWT,
+      `passphrase:` / high-entropy `api_key=`). Match the token, not the
+      English — "the secret is browning the butter" still stores. Stripe
+      publishable `pk_live_` is not refused.
 - [x] **`extraction_recall`** registry (anti-cheat for vacuous precision). A/B in
       [`eval/RESULTS.md`](../eval/RESULTS.md) RM-01.b: precision 0.2609 → **1.0000**,
       recall@5 held at **1.0000**, pii_refusal_rate 0 → **1.0000**.

@@ -125,10 +125,16 @@ new golden case: `EVAL_REFRESH=1 npm run eval -- --store jsonl`. For a measureme
    remind me", "make sure you", "don't forget to", "be sure to"), then split on `; ` /
    ` and also ` only when both halves stand alone (over-split is worse than no-split —
    "…and also with honey" stays one fact). Clean facts pass through byte-identical.
-   **Tier 1** (always on): refuse secret/PII shapes (API keys, passwords, 13–16-digit
-   cards, AWS keys, PEM blocks, GitHub tokens) — store nothing, return a clear refusal.
-   Refusal, not redaction: a fact mixed with a secret is store-nothing. Digit traps
-   (`4821`, `1500mg`) do not trip the card pattern. **Tier 2 (opt-in, off by default):**
+   **Tier 1** (always on): refuse secret/PII shapes — API keys (OpenAI `sk-` /
+   `sk-proj-`, Anthropic `sk-ant-`, Google `AIza…`, Stripe `sk_live_`/`rk_live_`,
+   Groq `gsk_`, HuggingFace `hf_`, Slack `xox*`/`xapp-`), passwords/passphrases
+   assigned with `:`/`=`, 13–16-digit cards, AWS `AKIA`/`ASIA`, PEM / OpenSSH
+   private keys, GitHub `ghp_`/`github_pat_`, JWTs (`eyJ….….…`). Store nothing,
+   return a clear refusal. Refusal, not redaction: a fact mixed with a secret
+   is store-nothing. Match the token shape, not the English — digit traps
+   (`4821`, `1500mg`) and prose ("the secret is browning the butter", "my
+   password manager is Bitwarden") do not trip. Stripe publishable `pk_live_`
+   is not a secret and is not refused. **Tier 2 (opt-in, off by default):**
    a single-pass ADD-only extraction call on the already-normalized, already-guarded
    text. Off by default is a deliberate identity choice: RM does the work; a weak local
    model can extract *worse* than Tier 0/1, so this is a conditional bonus the user has

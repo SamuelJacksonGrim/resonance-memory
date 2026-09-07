@@ -399,13 +399,53 @@ function splitFacts(text) {
  * memory and tanks recall@5, which this corpus treats as worse than a
  * stored secret. Both failure directions are scored (over-refusal vs
  * under-refusal).
+ *
+ * Prefix + length + charset, not English. "the secret is browning the
+ * butter" / "my password manager is Bitwarden" must store; a
+ * `github_pat_` / `sk_live_` / `AIza…` paste must not. Assignment
+ * keywords still require `:` or `=` — never `is` — because `secret is`
+ * is how people talk about recipes. A false positive is silent data
+ * loss (refuse-not-redact drops the whole write).
+ *
+ * Hyphen form (`sk-`, `ghp-`, `xoxb-`) is the 01.b shape (and the
+ * original tests). Underscore form is what GitHub / Stripe actually
+ * issue. Both stay. `sk-proj-` / `sk-ant-` / `sk-or-` ride the `sk-`
+ * prefix; body ≥16 so `sk-learn` (5) is not an API key.
  */
 const SECRET_PATTERNS = [
-  { re: /\b(sk|pk|ghp|gho|xox[baprs])-[A-Za-z0-9_-]{16,}\b/, what: "an API key" },
-  { re: /\bAKIA[0-9A-Z]{16}\b/, what: "an AWS key" },
+  { re: /\b(sk|pk|ghp|gho|xox[baprs]|xapp)-[A-Za-z0-9_-]{16,}\b/, what: "an API key" },
+  // GitHub's issued shape uses underscores: classic `ghp_` + 36 alphanum
+  // (no extra `_` — so a branch named `ghp_experimentation_branch` stores),
+  // OAuth `gho_`, app `ghu_`/`ghs_`/`ghr_`. Fine-grained `github_pat_` is
+  // a unique prefix and does contain an inner `_`; 36-char floor matches
+  // the issued body (22 + `_` + 59). The hyphen pattern above never sees these.
+  { re: /\bgithub_pat_[A-Za-z0-9_]{36,}\b/, what: "a GitHub token" },
+  { re: /\bgh[pousr]_[A-Za-z0-9]{36,}\b/, what: "a GitHub token" },
+  // Stripe secret / restricted (live or test) and org keys. Publishable
+  // `pk_live_` is designed to sit in client code — not a secret, not refused.
+  { re: /\b(?:[sr]k_(?:live|test)|sk_org)_[A-Za-z0-9]{20,}\b/, what: "an API key" },
+  // Google API keys are `AIza` + 35. Case-sensitive so a name "Aiza" is fine.
+  { re: /\bAIza[0-9A-Za-z_-]{35}\b/, what: "an API key" },
+  // HuggingFace user tokens (`hf_` + ~37). Case-sensitive so HF_HOME
+  // (the cache-dir env var this audience actually sets) is not a token.
+  { re: /\bhf_[A-Za-z0-9]{20,}\b/, what: "an API key" },
+  // Groq. Same audience as HF: people paste these into local-LLM setup.
+  { re: /\bgsk_[A-Za-z0-9]{20,}\b/, what: "an API key" },
+  // AWS access key id: AKIA long-term, ASIA STS temporary. Same 20-char
+  // issued shape. "ASIA" the continent is not followed by 16 alphanumerics.
+  { re: /\bA[KS]IA[0-9A-Z]{16}\b/, what: "an AWS key" },
   { re: /\b[0-9]{13,16}\b/, what: "what looks like a card number" },
+  // PEM and OpenSSH (`BEGIN OPENSSH PRIVATE KEY` — [A-Z ]* eats OPENSSH ).
+  // PUBLIC KEY / ssh-ed25519 one-liners are not secrets and must store.
   { re: /-----BEGIN [A-Z ]*PRIVATE KEY-----/, what: "a private key" },
-  { re: /\b(password|passwd|secret|token)\s*[:=]\s*\S{6,}/i, what: "a credential" },
+  // JWT: three base64url segments, header starts with eyJ (`{"`). Short
+  // floors so a tiny payload still trips; English "JWT library" does not.
+  { re: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{10,}\b/, what: "a token" },
+  // Assignment form only (`:` / `=`). `passphrase` is the same shape as
+  // `password:`; `api_key=` needs a long alphanumeric run so
+  // `API_KEY=nomic-embed-text-v1.5` (dots / hyphens) still stores.
+  { re: /\b(password|passwd|passphrase|secret|token)\s*[:=]\s*\S{6,}/i, what: "a credential" },
+  { re: /\b(?:api[_-]?key|access[_-]?token)\s*[:=]\s*[A-Za-z0-9]{24,}\b/i, what: "a credential" },
 ];
 
 function guardSecrets(text) {
