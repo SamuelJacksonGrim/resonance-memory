@@ -66,6 +66,9 @@ roadmap, and per-repo backlog live in the companion repo
 | File | Role |
 |---|---|
 | `build-exe.js` | The build. Embeds runtime assets → esbuild bundle → Node SEA blob → postject inject → OS finish (Windows PE flip / macOS ad-hoc codesign / chmod +x) → stage `dist/`. `--target win\|linux\|macos`; refuses to cross-compile. |
+| `ci/smoke-exe.js` | RM-11 CI smoke: spawn a SEA binary `--mcp`, feed initialize + `tools/list`, assert `serverInfo.name` and exactly the four verbs, timeout-kill. A hang must not ship. |
+| `ci/release-meta.js` | RM-11 CI: tag vs `package.json`, runner arch/Node-floor asserts, `SHA256SUMS`, Release notes. |
+| `.github/workflows/release.yml` | RM-11 release matrix. `v*` tag (or `workflow_dispatch`): gate → native build on windows/ubuntu/macos-latest → smoke → GitHub Release. The macOS binary is made here; this project has no Mac hardware. |
 | `build-demo-seed.js` | Regenerates `demo-seed.jsonl` (synthetic, pre-embedded) via the embedder. |
 | `demo-seed.jsonl` | The synthetic demo graph (a fictional game dev's notes). **Tracked** and shipped — it's the first-launch showcase. 100% synthetic; never real user data. |
 | `system-prompt.md` | Optional copy-in system prompt for weaker models that forget to call tools. Baked into the exe. |

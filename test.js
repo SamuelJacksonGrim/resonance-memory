@@ -3503,6 +3503,188 @@ test("hostTargetId maps process.platform to --target ids", () => {
   assert.strictEqual(buildExe.hostTargetId("freebsd"), null);
 });
 
+// ------------------------------------------------ RM-11 release CI (helpers; no 90MB inject)
+section("RM-11 release CI helpers");
+
+const smokeExe = require("./ci/smoke-exe.js");
+const releaseMeta = require("./ci/release-meta.js");
+
+test("require(ci/smoke-exe.js) does not spawn a server", () => {
+  assert.strictEqual(typeof smokeExe.smoke, "function");
+  assert.strictEqual(typeof smokeExe.assertSmoke, "function");
+  assert.deepStrictEqual(smokeExe.EXPECTED_TOOLS.slice().sort(), [
+    "delete_memory", "edit_memory", "recall_memory", "save_memory",
+  ]);
+});
+
+test("assertSmoke: initialize name + exactly the four verbs", () => {
+  const init = {
+    jsonrpc: "2.0", id: 1, result: {
+      serverInfo: { name: "resonance-memory", version: "0.2.0" },
+    },
+  };
+  const list = {
+    jsonrpc: "2.0", id: 2, result: {
+      tools: [
+        { name: "save_memory" }, { name: "recall_memory" },
+        { name: "edit_memory" }, { name: "delete_memory" },
+      ],
+    },
+  };
+  const ok = smokeExe.assertSmoke([init, list], { expectedVersion: "0.2.0" });
+  assert.strictEqual(ok.serverInfo.name, "resonance-memory");
+  assert.strictEqual(ok.tools.length, 4);
+});
+
+test("failure: missing initialize, wrong name, fifth verb, missing verb", () => {
+  const listFour = {
+    jsonrpc: "2.0", id: 2, result: {
+      tools: [
+        { name: "save_memory" }, { name: "recall_memory" },
+        { name: "edit_memory" }, { name: "delete_memory" },
+      ],
+    },
+  };
+  assert.throws(() => smokeExe.assertSmoke([listFour]), /no initialize/);
+  assert.throws(() => smokeExe.assertSmoke([
+    { jsonrpc: "2.0", id: 1, result: { serverInfo: { name: "not-rm" } } },
+    listFour,
+  ]), /serverInfo\.name/);
+  const five = JSON.parse(JSON.stringify(listFour));
+  five.result.tools.push({ name: "search_memory" });
+  assert.throws(() => smokeExe.assertSmoke([
+    { jsonrpc: "2.0", id: 1, result: { serverInfo: { name: "resonance-memory" } } },
+    five,
+  ]), /four verbs/);
+  const three = JSON.parse(JSON.stringify(listFour));
+  three.result.tools = three.result.tools.filter((t) => t.name !== "delete_memory");
+  assert.throws(() => smokeExe.assertSmoke([
+    { jsonrpc: "2.0", id: 1, result: { serverInfo: { name: "resonance-memory" } } },
+    three,
+  ]), /four verbs/);
+});
+
+test("parseJsonRpcLines: \\n and \\r\\n; ignores a partial last line", () => {
+  const a = JSON.stringify({ jsonrpc: "2.0", id: 1, result: { ok: true } });
+  const b = JSON.stringify({ jsonrpc: "2.0", id: 2, result: { ok: true } });
+  const msgs = smokeExe.parseJsonRpcLines(a + "\r\n" + b + "\n{\"jsonrpc\":");
+  assert.strictEqual(msgs.length, 2);
+  assert.strictEqual(msgs[0].id, 1);
+  assert.strictEqual(msgs[1].id, 2);
+});
+
+test("tag policy: v0.2.0 and v0.2.0-rc1 match package 0.2.0; dirty version fails", () => {
+  const rel = releaseMeta.assertTagMatchesPackage("v0.2.0", "0.2.0");
+  assert.strictEqual(rel.prerelease, false);
+  assert.strictEqual(rel.core, "0.2.0");
+  const rc = releaseMeta.assertTagMatchesPackage("v0.2.0-rc1", "0.2.0");
+  assert.strictEqual(rc.prerelease, true);
+  assert.strictEqual(rc.prereleaseId, "rc1");
+  const dotted = releaseMeta.assertTagMatchesPackage("v0.2.0-rc.1", "0.2.0");
+  assert.strictEqual(dotted.prerelease, true);
+  assert.throws(() => releaseMeta.assertTagMatchesPackage("v0.3.0", "0.2.0"), /package.json is 0.2.0/);
+  assert.throws(() => releaseMeta.assertTagMatchesPackage("0.2.0", "0.2.0"), /must start with v/);
+  assert.throws(() => releaseMeta.assertTagMatchesPackage("v0.2", "0.2.0"), /not v<semver>/);
+  assert.throws(() => releaseMeta.assertTagMatchesPackage("v0.2.0-rc1", "0.2.0-rc2"), /must match exactly/);
+  const exactPre = releaseMeta.assertTagMatchesPackage("v0.2.0-rc1", "0.2.0-rc1");
+  assert.strictEqual(exactPre.prerelease, true);
+  assert.strictEqual(exactPre.version, "0.2.0-rc1");
+});
+
+test("check-tag stdout is GITHUB_OUTPUT (version= / prerelease=)", () => {
+  const io = releaseMeta.checkTagToGithubOutput("v0.2.0-rc1", "0.2.0");
+  assert.ok(io.stdout.indexOf("version=0.2.0\n") >= 0);
+  assert.ok(io.stdout.indexOf("prerelease=true\n") >= 0);
+  const stable = releaseMeta.checkTagToGithubOutput("v0.2.0", "0.2.0");
+  assert.ok(stable.stdout.indexOf("prerelease=false\n") >= 0);
+});
+
+test("assertRunner: Node floor + arch mismatch fails loud", () => {
+  const ok = releaseMeta.assertRunner({
+    nodeVersion: "v24.8.0", arch: "arm64", platform: "darwin", expectArch: "arm64",
+  });
+  assert.strictEqual(ok.arch, "arm64");
+  assert.throws(() => releaseMeta.assertRunner({
+    nodeVersion: "v18.20.0", arch: "x64", expectArch: "x64",
+  }), /22\.5/);
+  assert.throws(() => releaseMeta.assertRunner({
+    nodeVersion: "v24.8.0", arch: "x64", platform: "darwin", expectArch: "arm64",
+  }), /runner arch is x64/);
+});
+
+test("sha256sums: GNU two-space format; refuses a partial set", () => {
+  const dir = tmp("sums-" + Math.random().toString(36).slice(2));
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "a.bin"), "aaa");
+  fs.writeFileSync(path.join(dir, "b.bin"), "bbb");
+  const out = path.join(dir, "SHA256SUMS");
+  const text = releaseMeta.writeSha256Sums({ dir, out, expect: ["a.bin", "b.bin"] });
+  assert.strictEqual(fs.readFileSync(out, "utf8"), text);
+  assert.ok(/^[0-9a-f]{64}  a\.bin$/m.test(text));
+  assert.ok(/^[0-9a-f]{64}  b\.bin$/m.test(text));
+  assert.ok(!text.includes("\r"));
+  assert.throws(() => releaseMeta.writeSha256Sums({
+    dir, out: path.join(dir, "nope"), expect: ["a.bin", "missing.bin"],
+  }), /missing missing\.bin/);
+});
+
+test("release notes: unsigned + Gatekeeper/SmartScreen; rc banner on prerelease", () => {
+  const stable = releaseMeta.releaseNotes({ tag: "v0.2.0", pkgVersion: "0.2.0" });
+  assert.ok(stable.includes("resonance-memory.exe"));
+  assert.ok(stable.includes("resonance-memory-linux-x64"));
+  assert.ok(stable.includes("resonance-memory-macos-arm64"));
+  assert.ok(/SmartScreen/i.test(stable));
+  assert.ok(/Gatekeeper/i.test(stable));
+  assert.ok(/unsigned/i.test(stable));
+  assert.ok(stable.includes("docs/BUILDING.md"));
+  assert.ok(!/notariz/i.test(stable) || /future/i.test(stable));
+  const rc = releaseMeta.releaseNotes({ tag: "v0.2.0-rc1", pkgVersion: "0.2.0" });
+  assert.ok(/pre-release/i.test(rc));
+  assert.ok(rc.includes("v0.2.0-rc1"));
+});
+
+test("release assets match build-exe.js names (win exe, linux x64, macos arm64)", () => {
+  assert.deepStrictEqual(releaseMeta.RELEASE_ASSETS, [
+    buildExe.artifactName("win", "x64"),
+    buildExe.artifactName("linux", "x64"),
+    buildExe.artifactName("macos", "arm64"),
+  ]);
+});
+
+test("workflow YAML: SHA-pinned actions, three native runners, gate before release", () => {
+  const ymlPath = path.join(__dirname, ".github", "workflows", "release.yml");
+  assert.ok(fs.existsSync(ymlPath), "first workflow must live at .github/workflows/release.yml");
+  const yml = fs.readFileSync(ymlPath, "utf8");
+  assert.ok(yml.indexOf("v[0-9]*") >= 0, "tag glob should be v[0-9]* (not a bare v* that matches 'validation')");
+  assert.ok(yml.indexOf("workflow_dispatch:") >= 0);
+  assert.ok(yml.indexOf("windows-latest") >= 0);
+  assert.ok(yml.indexOf("ubuntu-latest") >= 0);
+  assert.ok(yml.indexOf("macos-latest") >= 0);
+  assert.ok(yml.indexOf("node-version: \"24\"") >= 0 || yml.indexOf("node-version: '24'") >= 0);
+  assert.ok(yml.indexOf("node test.js") >= 0);
+  assert.ok(yml.indexOf("node eval/run.js") >= 0);
+  assert.ok(yml.indexOf("ci/smoke-exe.js") >= 0);
+  assert.ok(yml.indexOf("build-exe.js --target") >= 0);
+  assert.ok(yml.indexOf("contents: write") >= 0);
+  assert.ok(yml.indexOf("SHA256SUMS") >= 0);
+  assert.ok(yml.indexOf("resonance-memory.exe") >= 0);
+  assert.ok(yml.indexOf("resonance-memory-linux-x64") >= 0);
+  assert.ok(yml.indexOf("resonance-memory-macos-arm64") >= 0);
+  assert.ok(yml.indexOf("expect_arch: arm64") >= 0);
+  // Intel Mac is a documented non-goal this slice (Node SEA skips x64).
+  assert.ok(!/macos-13/.test(yml), "macos-13 (Intel) must not sneak into the matrix");
+  const uses = [];
+  for (const line of yml.split(/\r?\n/)) {
+    const m = line.match(/uses:\s*(\S+)/);
+    if (m) uses.push(m[1]);
+  }
+  assert.ok(uses.length >= 4, "expected checkout/setup-node/upload/download at minimum");
+  for (const u of uses) {
+    assert.ok(/@[0-9a-f]{40}$/.test(u), u + " is not pinned to a full-length SHA");
+  }
+  assert.ok(!uses.some((u) => /softprops|action-gh-release/.test(u)), "use gh CLI, not a third-party release action");
+});
+
 // ------------------------------------------------ RM-07 slice 2b export / zip
 section("RM-07 slice 2b — zip writer + sovereignty export (read-only)");
 
@@ -7755,6 +7937,57 @@ async function asyncTests() {
       "self-heal is the version mismatch on next read, not an invalidation event");
     assert.ok(fs.existsSync(edgesPath), "Writes? yes (reactivation is the one edit write)");
   });
+
+  // ---------------------------------------------- RM-11 CI smoke (live --mcp)
+  section("RM-11 CI smoke (live --mcp + hang guard)");
+
+  await atest("failure: a silent child is killed by the smoke timeout (must not hang CI)", async () => {
+    const start = Date.now();
+    let hungTimer = null;
+    let err = null;
+    try {
+      await Promise.race([
+        smokeExe.smoke(process.execPath, {
+          args: ["-e", "setInterval(function(){}, 1000)"],
+          timeoutMs: 400,
+        }),
+        new Promise((_, rej) => {
+          hungTimer = setTimeout(() => rej(new Error("smoke() itself hung past 2s")), 2000);
+        }),
+      ]);
+    } catch (e) { err = e; }
+    if (hungTimer) clearTimeout(hungTimer);
+    assert.ok(err, "a child that never speaks JSON-RPC must fail the smoke");
+    assert.ok(/timeout/i.test(err.message), err.message);
+    assert.ok(Date.now() - start < 2500, "hang-guard took " + (Date.now() - start) + "ms");
+  });
+
+  await atest("failure: missing binary fails closed", async () => {
+    let err = null;
+    try {
+      await smokeExe.smoke(path.join(tmpRoot, "no-such-binary-" + Date.now()));
+    } catch (e) { err = e; }
+    assert.ok(err);
+    assert.ok(/not found/i.test(err.message), err.message);
+  });
+
+  if (!sqliteAvailable()) {
+    await atest("smoke against entry.js --mcp SKIPPED (node:sqlite not in this Node)", async () => {
+      assert.ok(true);
+    });
+  } else {
+    await atest("smoke: node entry.js --mcp returns serverInfo + exactly four verbs", async () => {
+      const result = await smokeExe.smoke(process.execPath, {
+        args: [path.join(__dirname, "entry.js"), "--mcp"],
+        timeoutMs: 15000,
+        expectedVersion: require("./package.json").version,
+      });
+      assert.strictEqual(result.serverInfo.name, "resonance-memory");
+      assert.strictEqual(result.serverInfo.version, require("./package.json").version);
+      const names = result.tools.map((t) => t.name).sort();
+      assert.deepStrictEqual(names, smokeExe.EXPECTED_TOOLS.slice().sort());
+    });
+  }
 }
 
 // ------------------------------------------------------------------- report

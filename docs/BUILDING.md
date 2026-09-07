@@ -99,14 +99,55 @@ and `chmod +x`. Node is only needed to *build*.
 
 ---
 
+## GitHub Actions release matrix (how a stranger gets a binary)
+
+Pushing a `v*` tag (for example `v0.2.0`, or `v0.2.0-rc1` to prove the
+pipeline) runs [`.github/workflows/release.yml`](../.github/workflows/release.yml):
+
+1. **Gate** on `ubuntu-latest` (Node 24): `node test.js` and
+   `node eval/run.js`. A red tree cannot cut a Release. The tag's core
+   version must match `package.json` (the release-tag source);
+   `v0.2.0-rc1` is a prerelease of `0.2.0` and does **not** require
+   bumping the version string.
+2. **Native build** on `windows-latest`, `ubuntu-latest`, and
+   `macos-latest`. Each job runs `node build-exe.js --target …` on a
+   real machine of that OS (SEA cannot cross-compile) and asserts
+   `process.arch` so a runner-image flip cannot silently ship the
+   wrong artifact.
+3. **Smoke** each binary *on that runner*: `ci/smoke-exe.js` feeds
+   `--mcp` an `initialize` + `tools/list` over stdin, asserts
+   `serverInfo.name = "resonance-memory"` and exactly the four verbs,
+   then kills the child. The MCP server does not exit on stdin EOF —
+   a pipe-and-wait would hang — so the helper's timeout is
+   load-bearing. A failed smoke fails the job; a red binary never
+   reaches a Release.
+4. **Release** (tag pushes only; `workflow_dispatch` builds and
+   uploads artifacts but does not publish): attach
+   `resonance-memory.exe`, `resonance-memory-linux-x64`,
+   `resonance-memory-macos-arm64`, and `SHA256SUMS`. An rc tag
+   (`v0.2.0-rc1`) is marked prerelease so it cannot become "Latest".
+
+macOS is **arm64-only** in the matrix. Node's own SEA CI tests arm64
+and skips x64; we are not going to ship the under-tested Intel build
+until there is demand *and* Node says it works. `macos-latest` is
+Apple Silicon; the job fails loud if `process.arch` is not `arm64`.
+
+The binaries are **unsigned**. CI cannot fix Gatekeeper or SmartScreen;
+it ships the honest unsigned binary plus this document. Signing /
+notarization is the rest of `RM-11`.
+
+Manual `workflow_dispatch` on a branch is the "build without tagging"
+escape hatch — artifacts sit on the Actions run, no Release is created.
+
+---
+
 ## macOS — built by CI, not by hand
 
 Node SEA cannot produce a Mach-O binary from Windows or WSL, and this
 project has no Mac hardware. **The shippable macOS binary comes from
 GitHub Actions** — a `macos-latest` runner (a real Mac, free for public
 repos) runs exactly the recipe below and attaches the result to the
-Release. That workflow is the rest of `RM-11` (the release-matrix slice,
-next). Nobody needs to own a Mac.
+Release. Nobody needs to own a Mac.
 
 The steps below are that same recipe, for any contributor who *does*
 have a Mac and wants to build locally. Node's own SEA CI tests **macOS
@@ -171,12 +212,11 @@ arm64** and currently skips x64; prefer Apple Silicon.
 
    Then `chmod +x` and run as above.
 
-What this slice cannot verify without a Mac: that postject + ad-hoc
-codesign actually produces a binary the kernel will exec, and that the
-Gatekeeper click-path matches current macOS copy. The script path is
-the Node SEA documented recipe; the CI `macos-latest` build + smoke
-(the release-matrix slice) is the proof, and step 4 is that same smoke
-for anyone building on their own Mac.
+What a local Mac build cannot replace: the CI `macos-latest` job is
+the ship path. Step 4 here is the same smoke `ci/smoke-exe.js` runs
+on the runner (initialize + `tools/list`, four verbs). The Gatekeeper
+click-path for a *downloaded* copy is documented above; it is not
+something CI can click through for the downloader.
 
 ---
 
@@ -221,7 +261,9 @@ the store between machines.
 
 - **macOS x64:** Node documents that SEA CI tests arm64 and skips x64.
   We still emit `resonance-memory-macos-x64` if you build on Intel, and
-  we print a warning. Prefer Apple Silicon until Node says otherwise.
+  we print a warning. The GitHub Actions matrix ships **arm64 only**
+  (`macos-latest` + an arch assert). Prefer Apple Silicon until Node
+  says otherwise *and* there is demand.
 - **Alpine / musl:** Node SEA is tested on the Linux distros Node
   itself supports, **except Alpine**. A glibc binary will not run on
   musl. Build on the same libc the user has, or tell them.

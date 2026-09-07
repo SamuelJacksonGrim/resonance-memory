@@ -415,7 +415,13 @@ Letta's sharpest idea, worth borrowing in shape: consolidate while idle, not on 
 ## Phase 4 — Reach
 
 ### `RM-11` — Cross-platform + signing · **M** · `todo`
-- [ ] macOS + Linux SEA builds (SEA is per-platform; macOS must build on a Mac).
+- [x] macOS + Linux SEA builds (SEA is per-platform; macOS must build on a Mac).
+      Parametrized `build-exe.js` (PR #33) + GitHub Actions release matrix
+      (`.github/workflows/release.yml`): `windows-latest` / `ubuntu-latest` /
+      `macos-latest` each build natively, smoke `--mcp` on that runner, and
+      attach all three plus `SHA256SUMS` to a GitHub Release. macOS is
+      arm64-only until Node SEA tests x64. Tag `v*` (rc tags are
+      prereleases of `package.json`'s version). Unsigned on purpose.
 - [ ] Code signing / notarization to kill the SmartScreen + Gatekeeper warnings (a real
       adoption tax on an unsigned binary).
 - [ ] Fix the noted default-path wart: data lands in `~/.lmstudio/…` even for Claude-only users.
