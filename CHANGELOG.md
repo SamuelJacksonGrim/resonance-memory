@@ -9,6 +9,14 @@ stable; sophistication grows in the substrate, not in the API.
 ## [Unreleased]
 
 ### Added
+- **W-02 panel Origin/CSRF lock.** The control panel still binds `127.0.0.1`
+  only. Host must be loopback (DNS rebinding arrives as `Host: evil.example`).
+  Origin, when present, must be this panel. Mutating POSTs require a
+  per-process `X-Resonance-Token` baked into the page — a form from another
+  origin cannot set a custom header. No `Access-Control-Allow-Origin`.
+  Residual: a local process that GETs the page can steal the token (same
+  class as binding 127.0.0.1). Settles the ship-gate before `RM-12`
+  documents the HTTP surface as a stable API. Not a fifth MCP verb.
 - **Entity-id + polarity layer (`entity.js`).** Server-assigned (I4),
   lexical: closed-class relation (family / work / friend, neighbor ∈ friend)
   plus relation-anchored proper names. Store-wide resolve so "My sister

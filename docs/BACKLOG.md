@@ -421,9 +421,15 @@ Letta's sharpest idea, worth borrowing in shape: consolidate while idle, not on 
 - [ ] Fix the noted default-path wart: data lands in `~/.lmstudio/…` even for Claude-only users.
 
 ### `RM-12` — SDKs and a documented local API · **L** · `todo`
+- [x] Bind-address + CSRF/`Origin` lock (**W-02**, shipped before documenting the
+      surface): panel binds `127.0.0.1`; Host must be loopback; Origin (when
+      present) must be this panel; mutating POSTs require a per-process
+      `X-Resonance-Token` baked into the page. Residual: a local process that
+      reads the page can steal the token (same class as binding 127.0.0.1).
+      No `Access-Control-Allow-Origin`.
 - [ ] Version and document the panel's HTTP surface as a stable local API.
-- [ ] Thin Python + TypeScript clients. No auth needed (127.0.0.1 only) — but bind-address and
-      CORS must be verified locked down before this ships.
+- [ ] Thin Python + TypeScript clients. No auth needed (127.0.0.1 only) — the
+      W-02 lock is the ship-gate; clients still wait on the documented surface.
 
 ### `RM-13` — Failure-mode capture (opt-in, local) · **M** · `todo`
 > The counter to the one moat we can't code past: incumbents see the long tail of real abuse.

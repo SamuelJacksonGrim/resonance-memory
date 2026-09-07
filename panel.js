@@ -29,7 +29,13 @@
  *     saved" hint. Not an MCP tool.
  *   - exports YOUR store as a zip (RM-07 slice 2c; shells export-memory.js, never
  *     demo-seed.jsonl; not an MCP tool — a model that can dump the store is an
- *     exfil path), and
+ *     exfil path),
+ *   - W-02: Host must be loopback, Origin (when present) must be this panel,
+ *     mutating POSTs require a per-process token baked into the page. Settles
+ *     the CSRF / DNS-rebinding ship-gate before RM-12 documents the HTTP
+ *     surface. Residual: a local process that reads the page can steal the
+ *     token — same class as "any process on this machine can talk to 127.0.0.1".
+ *     No CORS. Not a fifth MCP verb, and
  *   - shuts itself down shortly after you close the page (heartbeat), so nothing lingers.
  *     Export pauses that watchdog and yields the event loop so a 30–60s zip of
  *     50k members cannot starve /api/ping and process.exit(0) a truncated tmp.
@@ -40,6 +46,7 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const { exec, execFile } = require("child_process");
 const install = require("./install.js");
 const field = require("./field.js");
@@ -65,6 +72,11 @@ const CONFIG_PATH = process.env.RESONANCE_MEMORY_CONFIG ||
   path.join(path.dirname(STORE_PATH), "resonance-memory.config.json");
 const DEMO_PATH = path.join(baseDir(), "demo-seed.jsonl");
 const PORT = Number(process.env.RESONANCE_MEMORY_PANEL_PORT || 9090);
+// W-02: per-process CSRF token. Injected into the page; required on every
+// mutating POST as X-Resonance-Token. A form from another origin cannot set
+// a custom header. Tests may pin RM_PANEL_TOKEN; production is random.
+const PANEL_TOKEN = process.env.RM_PANEL_TOKEN || crypto.randomBytes(16).toString("hex");
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
 const KOFI = "https://ko-fi.com/thearchitectofresonance";
 const PAYPAL = "https://paypal.me/SamuelGrim91";
 
@@ -399,6 +411,20 @@ const PAGE = `<!doctype html>
     </div>
   </div>
 <script>
+  var RM_PANEL_TOKEN = ${JSON.stringify(PANEL_TOKEN)};
+  (function(){
+    var nativeFetch = window.fetch.bind(window);
+    window.fetch = function(url, opts){
+      opts = opts || {};
+      var h = opts.headers;
+      if (h && typeof Headers !== 'undefined' && h instanceof Headers) {
+        if (!h.has('X-Resonance-Token')) h.set('X-Resonance-Token', RM_PANEL_TOKEN);
+      } else {
+        opts.headers = Object.assign({'X-Resonance-Token': RM_PANEL_TOKEN}, h || {});
+      }
+      return nativeFetch(url, opts);
+    };
+  })();
   var tog = document.getElementById('tog');
   var extractTog = document.getElementById('extractTog');
   var extractHint = document.getElementById('extractHint');
@@ -994,7 +1020,92 @@ function json(res, code, obj) {
 
 function body(req, cb) { let b = ""; req.on("data", (d) => (b += d)); req.on("end", () => cb(b)); }
 
+function parseHostHeader(hostHeader) {
+  const raw = String(hostHeader || "").trim();
+  if (!raw) return { host: "", port: "" };
+  if (raw.startsWith("[")) {
+    const end = raw.indexOf("]");
+    return {
+      host: end >= 0 ? raw.slice(1, end) : raw,
+      port: end >= 0 && raw[end + 1] === ":" ? raw.slice(end + 2) : "",
+    };
+  }
+  const i = raw.lastIndexOf(":");
+  if (i >= 0 && raw.indexOf(":") === i) {
+    return { host: raw.slice(0, i), port: raw.slice(i + 1) };
+  }
+  return { host: raw, port: "" };
+}
+
+function panelOrigins() {
+  const p = String(PORT);
+  return new Set([
+    "http://127.0.0.1:" + p,
+    "http://localhost:" + p,
+    "http://[::1]:" + p,
+  ]);
+}
+
+function originAllowed(originHeader) {
+  if (originHeader == null || originHeader === "") return null;
+  const origin = String(originHeader).trim();
+  if (!origin || origin.toLowerCase() === "null") return false;
+  return panelOrigins().has(origin);
+}
+
+function hostAllowed(hostHeader) {
+  const parsed = parseHostHeader(hostHeader);
+  if (!LOOPBACK_HOSTS.has(String(parsed.host).toLowerCase())) return false;
+  if (parsed.port && String(parsed.port) !== String(PORT)) return false;
+  return true;
+}
+
+function tokenAllowed(req) {
+  const sent = req.headers["x-resonance-token"];
+  return !!sent && sent === PANEL_TOKEN;
+}
+
+function isMutating(method) {
+  const m = String(method || "GET").toUpperCase();
+  return m !== "GET" && m !== "HEAD";
+}
+
+/*
+ * W-02 ship-gate. Three cheap checks, in order:
+ *   1. Host is loopback (DNS rebinding arrives as Host: evil.example).
+ *   2. If Origin is present, it is this panel (CSRF from a web page).
+ *   3. Mutating methods need the per-process token (forms cannot set it).
+ * Residual: a local process that GETs the page can steal the token and
+ * drive the API — same class as binding 127.0.0.1 at all. No CORS.
+ */
+function allowPanelRequest(req, res) {
+  if (!hostAllowed(req.headers.host)) {
+    json(res, 403, {
+      ok: false, code: "forbidden_host",
+      error: "panel binds 127.0.0.1 only",
+    });
+    return false;
+  }
+  const origin = originAllowed(req.headers.origin);
+  if (origin === false) {
+    json(res, 403, {
+      ok: false, code: "forbidden_origin",
+      error: "cross-origin panel requests are refused",
+    });
+    return false;
+  }
+  if (isMutating(req.method) && !tokenAllowed(req)) {
+    json(res, 403, {
+      ok: false, code: "forbidden_csrf",
+      error: "missing or invalid panel token",
+    });
+    return false;
+  }
+  return true;
+}
+
 const server = http.createServer((req, res) => {
+  if (!allowPanelRequest(req, res)) return;
   const url = req.url || "/";
   if (req.method === "GET" && (url === "/" || url.startsWith("/?"))) {
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }); res.end(PAGE); return;

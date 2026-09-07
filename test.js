@@ -3551,6 +3551,17 @@ test("panel page source ships the export button + confirm modal (not a browser t
   assert.ok(/not an MCP tool/i.test(src), "exfil path stays off the four verbs");
 });
 
+test("panel page source ships W-02 Origin/CSRF lock (not a browser test)", () => {
+  const src = fs.readFileSync(path.join(__dirname, "panel.js"), "utf8");
+  assert.ok(src.includes("allowPanelRequest"), "request gate is in the panel server");
+  assert.ok(src.includes("X-Resonance-Token"), "per-process token header");
+  assert.ok(src.includes("RM_PANEL_TOKEN"), "token is baked into the page");
+  assert.ok(src.includes("forbidden_origin"), "cross-origin is a named refusal");
+  assert.ok(src.includes("forbidden_host"), "DNS-rebinding Host is a named refusal");
+  assert.ok(src.includes("forbidden_csrf"), "missing token is a named refusal");
+  assert.ok(!/Access-Control-Allow-Origin/i.test(src), "no CORS — the panel is not a public API yet");
+});
+
 test("export is not an MCP tool (four verbs stay four)", () => {
   const src = fs.readFileSync(path.join(__dirname, "server.js"), "utf8");
   assert.ok(/name: "save_memory"/.test(src));
@@ -4439,6 +4450,19 @@ async function asyncTests() {
       });
     }
 
+    async function readPanelToken(url) {
+      const html = await (await fetch(url + "/")).text();
+      const m = html.match(/RM_PANEL_TOKEN = "([a-f0-9]+)"/);
+      assert.ok(m, "per-process token is in the page (W-02)");
+      return m[1];
+    }
+    function panelPostHeaders(token, extra) {
+      return Object.assign({
+        "Content-Type": "application/json",
+        "X-Resonance-Token": token,
+      }, extra || {});
+    }
+
     await atest("previewExport: empty store, count 0, dest on Desktop, no write", async () => {
       const home = tmp("preview-home");
       fs.mkdirSync(path.join(home, "Desktop"), { recursive: true });
@@ -4491,8 +4515,9 @@ async function asyncTests() {
         assert.strictEqual(prev.count.total, 0);
         assert.strictEqual(prev.storePath, panel.store);
         assert.ok(prev.destPath.indexOf(panel.desktop) === 0, prev.destPath);
+        const token = await readPanelToken(panel.url);
         const posted = await fetch(panel.url + "/api/export", {
-          method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+          method: "POST", headers: panelPostHeaders(token), body: "{}",
         });
         const body = await posted.json();
         assert.strictEqual(posted.status, 200, JSON.stringify(body));
@@ -4527,8 +4552,9 @@ async function asyncTests() {
       const before = fs.readFileSync(store);
       const panel = await startPanelChild({ home, store });
       try {
+        const token = await readPanelToken(panel.url);
         const posted = await fetch(panel.url + "/api/export", {
-          method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+          method: "POST", headers: panelPostHeaders(token), body: "{}",
         });
         const body = await posted.json();
         assert.strictEqual(body.ok, true);
@@ -4549,9 +4575,10 @@ async function asyncTests() {
       try { if (fs.existsSync(hold)) fs.unlinkSync(hold); } catch { /* */ }
       const panel = await startPanelChild({ hold, watchdogMs: 400 });
       try {
-        await fetch(panel.url + "/api/ping", { method: "POST" });
+        const token = await readPanelToken(panel.url);
+        await fetch(panel.url + "/api/ping", { method: "POST", headers: panelPostHeaders(token) });
         const first = fetch(panel.url + "/api/export", {
-          method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+          method: "POST", headers: panelPostHeaders(token), body: "{}",
         });
         const t0 = Date.now();
         let preview = null;
@@ -4563,12 +4590,12 @@ async function asyncTests() {
         assert.ok(preview && preview.busy, "in-flight is server-observable");
         assert.ok(preview.watchdog_paused, "watchdog paused for the duration");
         const dup = await fetch(panel.url + "/api/export", {
-          method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+          method: "POST", headers: panelPostHeaders(token), body: "{}",
         });
         assert.strictEqual(dup.status, 409);
         const dupBody = await dup.json();
         assert.strictEqual(dupBody.code, "busy");
-        const ping = await fetch(panel.url + "/api/ping", { method: "POST" });
+        const ping = await fetch(panel.url + "/api/ping", { method: "POST", headers: panelPostHeaders(token) });
         assert.strictEqual(ping.status, 200, "yield/pause: ping is answered in-flight");
         // connectedOnce is set; if pause were missing the 400ms watchdog
         // would have killed the process. Wait well past that, no pings.
@@ -4611,8 +4638,9 @@ async function asyncTests() {
           const prev = await (await fetch(panel.url + "/api/export")).json();
           assert.strictEqual(prev.backend, "sqlite");
           assert.ok(prev.count.total >= 1);
+          const token = await readPanelToken(panel.url);
           const posted = await fetch(panel.url + "/api/export", {
-            method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+            method: "POST", headers: panelPostHeaders(token), body: "{}",
           });
           const body = await posted.json();
           assert.strictEqual(body.ok, true, JSON.stringify(body));
@@ -4625,6 +4653,120 @@ async function asyncTests() {
         }
       });
     }
+
+    await atest("W-02: POST without token is 403 forbidden_csrf", async () => {
+      const panel = await startPanelChild();
+      try {
+        const posted = await fetch(panel.url + "/api/ping", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+        });
+        assert.strictEqual(posted.status, 403);
+        const body = await posted.json();
+        assert.strictEqual(body.code, "forbidden_csrf");
+        assert.strictEqual(body.ok, false);
+      } finally {
+        await stopPanelChild(panel.child);
+      }
+    });
+
+    await atest("W-02: POST with wrong token is 403; GET still works", async () => {
+      const panel = await startPanelChild();
+      try {
+        const posted = await fetch(panel.url + "/api/ping", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Resonance-Token": "deadbeef" },
+          body: "{}",
+        });
+        assert.strictEqual(posted.status, 403);
+        const body = await posted.json();
+        assert.strictEqual(body.code, "forbidden_csrf");
+        const page = await fetch(panel.url + "/");
+        assert.strictEqual(page.status, 200, "GET / does not need the token");
+        const prev = await fetch(panel.url + "/api/export");
+        assert.strictEqual(prev.status, 200, "GET preview does not need the token");
+      } finally {
+        await stopPanelChild(panel.child);
+      }
+    });
+
+    await atest("W-02: Origin from another site is 403 even with a valid token", async () => {
+      const panel = await startPanelChild();
+      try {
+        const token = await readPanelToken(panel.url);
+        const posted = await fetch(panel.url + "/api/ping", {
+          method: "POST",
+          headers: panelPostHeaders(token, { Origin: "http://evil.example" }),
+          body: "{}",
+        });
+        assert.strictEqual(posted.status, 403);
+        const body = await posted.json();
+        assert.strictEqual(body.code, "forbidden_origin");
+        const leaked = await fetch(panel.url + "/api/export", {
+          headers: { Origin: "http://evil.example" },
+        });
+        assert.strictEqual(leaked.status, 403, "cross-origin GET is refused too (DNS-rebinding cousin)");
+        const leakedBody = await leaked.json();
+        assert.strictEqual(leakedBody.code, "forbidden_origin");
+      } finally {
+        await stopPanelChild(panel.child);
+      }
+    });
+
+    await atest("W-02: same-origin Origin + token is allowed; no CORS header", async () => {
+      const panel = await startPanelChild();
+      try {
+        const token = await readPanelToken(panel.url);
+        const origin = "http://127.0.0.1:" + panel.port;
+        const posted = await fetch(panel.url + "/api/ping", {
+          method: "POST",
+          headers: panelPostHeaders(token, { Origin: origin }),
+          body: "{}",
+        });
+        assert.strictEqual(posted.status, 200);
+        assert.strictEqual(posted.headers.get("access-control-allow-origin"), null,
+          "no ACAO — a browser on another origin cannot read the response");
+        const state = await fetch(panel.url + "/api/state", { headers: { Origin: origin } });
+        assert.strictEqual(state.status, 200);
+        assert.strictEqual(state.headers.get("access-control-allow-origin"), null);
+      } finally {
+        await stopPanelChild(panel.child);
+      }
+    });
+
+    await atest("W-02: Host: evil.example is 403 (DNS rebinding)", async () => {
+      const http = require("http");
+      const panel = await startPanelChild();
+      try {
+        const token = await readPanelToken(panel.url);
+        const body = await new Promise((resolve, reject) => {
+          const req = http.request({
+            host: "127.0.0.1",
+            port: panel.port,
+            path: "/api/ping",
+            method: "POST",
+            headers: {
+              host: "evil.example",
+              "Content-Type": "application/json",
+              "X-Resonance-Token": token,
+              "Content-Length": 2,
+            },
+          }, (res) => {
+            let raw = "";
+            res.setEncoding("utf8");
+            res.on("data", (c) => { raw += c; });
+            res.on("end", () => resolve({ status: res.statusCode, raw }));
+          });
+          req.on("error", reject);
+          req.write("{}");
+          req.end();
+        });
+        assert.strictEqual(body.status, 403);
+        const parsed = JSON.parse(body.raw);
+        assert.strictEqual(parsed.code, "forbidden_host");
+      } finally {
+        await stopPanelChild(panel.child);
+      }
+    });
   }
 
   section("RM-17 import — sovereignty return trip");

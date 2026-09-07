@@ -6,7 +6,7 @@ leaves this list only when it is *fixed*, not when it is understood; if it's und
 unfixed, it stays here with an owner in the backlog.
 
 **Current:** 6 fixed (`BUG-001`, `002`, `003`, `006`, `007`, `008`) · 2 open (`BUG-004`, `005`) ·
-3 on the watch list (`W-02`, `W-03`, `W-04`; `W-01` was dismissed).
+2 on the watch list (`W-03`, `W-04`; `W-01` was dismissed, `W-02` was fixed).
 
 **Severity:** `critical` data loss / corruption · `high` user-visible breakage ·
 `medium` degradation at scale · `low` cosmetic
@@ -267,7 +267,7 @@ capability matrix distorts the roadmap it was written to justify.
 | | Concern | Next step |
 |---|---|---|
 | ~~`W-01`~~ | ~~`nextId()` collisions within a millisecond~~ | ✅ **dismissed** — `nextId()` returns `max + 1` when the clock hasn't advanced, so it is correct by construction and monotonic even if the clock jumps backwards. Verified by two tests (200 rapid saves, all distinct) |
-| `W-02` | Panel binds `127.0.0.1` with no CSRF token — any local process, or a malicious web page via DNS rebinding, could drive the API | Assess before `RM-12` exposes it as a documented API. Cheap mitigations: `Origin` check + a per-process token in the page |
+| ~~`W-02`~~ | ~~Panel binds `127.0.0.1` with no CSRF token — any local process, or a malicious web page via DNS rebinding, could drive the API~~ | ✅ **fixed** — Host must be loopback (DNS rebinding arrives as `Host: evil.example`); Origin, when present, must be this panel; mutating POSTs require a per-process `X-Resonance-Token` baked into the page (a form from another origin cannot set a custom header). Residual: a local process that GETs the page can steal the token — same class as binding `127.0.0.1` at all. No `Access-Control-Allow-Origin`. Tests in `test.js` "W-02". `RM-12` SDKs still wait on documenting the surface. |
 | `W-03` | `field.buildEdges()` is O(n²) per recall when the field is on | ✅ **confirmed (S1)** — field-on `recall()` p95 **90.8 s at N=10k**, 724 ms at N=1k. ANN rides with `RM-07`. Curve in [`eval/RESULTS.md`](../eval/RESULTS.md) "S1". |
 | `W-04` | A concurrent panel + MCP server write could interleave (last-writer-wins) | Real risk once the panel gains write features; needs a lock or single-writer discipline. Phase 0.3's MCP request-ID dedup is **orthogonal**: it makes one JSON-RPC retry one mutation *inside a single process*, it does not serialize two writers. Last-writer-wins on the sidecar remains. |
 
