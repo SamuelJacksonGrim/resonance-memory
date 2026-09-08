@@ -17,6 +17,17 @@ stable; sophistication grows in the substrate, not in the API.
   handing over the "paste the block below…" intro too).
 
 ### Added
+- **Independent A/B value rig (Grok).** `eval/ab-grok/` is a second, disjoint
+  scenario (fictional user Jules Marin — not Dana) measuring cold vs equal-budget
+  recency vs Resonance Memory under modest local drivers (`gpt-oss-20b`,
+  `qwythos-9b`). Same discipline as `eval/ab/` (scaffolded, scripted user,
+  identical injection budget, blind accept/reject grading, pre-declared
+  two-sided bands, mean ± sd); different facts, probes, filler, grader wording.
+  Late plants are left inside the recency window on purpose so the naive
+  control has a home turf. Offline invariants (`node eval/ab-grok/check.js`,
+  also on `node test.js`) refuse Dana-leaks, accept-token-in-question grader
+  leaks, and a recency window that still contains "buried" plants. Not a fifth
+  verb; not on the RM-00 golden path.
 - **PR-path CI.** `.github/workflows/ci.yml` runs the deterministic
   gate (`node test.js` + `node eval/run.js`) on every push to `main`
   and every pull request, so a regression is caught when it lands,

@@ -24,6 +24,20 @@ npm run scale                # S1 needle-in-haystack at 1k/10k/50k/100k (live em
 npm run soak                 # RM-15 control curve (0011 §7.3; field-on, no dream)
 ```
 
+Live A/B value proof (modest local driver, three arms, equal injection budget) is
+**not** on this golden path — it needs LM Studio. Two independent rigs, same
+discipline, disjoint scenarios:
+
+```powershell
+node eval/ab/run.js --selftest --runs 1          # Ember's (Dana)
+node eval/ab-grok/check.js                       # Grok's offline invariants
+node eval/ab-grok/run.js --selftest --runs 1     # Grok's (Jules Marin); needs embedder
+```
+
+See `eval/ab/README.md` and `eval/ab-grok/README.md`. Do not reuse one scenario
+as the other; the point of two rigs is that they did not share a user.
+
+
 Default (RM-07 slice 4) is SqliteStore. `--store jsonl` (or
 `RESONANCE_STORE=jsonl`; `--store` wins) keeps the JSONL path testable. The
 eval stays offline — vectors still come from `embeddings.cache.json`; SQLite

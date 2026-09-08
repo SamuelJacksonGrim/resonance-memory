@@ -4101,6 +4101,9 @@ test("export is not an MCP tool (four verbs stay four)", () => {
   );
 });
 
+section("A/B grok rig (offline invariants)");
+require("./eval/ab-grok/check.js").runChecks(test, assert);
+
 // ------------------------------------------------ edit() embedding safety
 // An embedder outage is transient; losing an embedding is not.
 // createCore already required above (warm-field section)
