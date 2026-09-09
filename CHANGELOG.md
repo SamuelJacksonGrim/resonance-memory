@@ -29,6 +29,14 @@ stable; sophistication grows in the substrate, not in the API.
   handing over the "paste the block below…" intro too).
 
 ### Added
+- **Terminal commands on the control panel.** A closed-by-default
+  reference lists every flag `entry.js` actually dispatches (`--mcp`,
+  `--install` / `--uninstall`, `--export` / `--export-jsonl`, `--import`,
+  `--migrate` / `--migrate-sqlite`, `--dedup-existing`) with the exact
+  command, what it does, and when you'd use it. Copy-paste uses this
+  binary (the exe, or `node entry.js` from source). Mutating ops name
+  the dry-run default and say to export first. Not a fifth MCP verb;
+  the panel is still one card.
 - **Independent A/B value rig (Grok).** `eval/ab-grok/` is a second, disjoint
   scenario (fictional user Jules Marin — not Dana) measuring cold vs equal-budget
   recency vs Resonance Memory under modest local drivers (`gpt-oss-20b`,

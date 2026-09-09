@@ -4033,6 +4033,36 @@ test("panel page source ships MCP snippet + live store path (RM-20 polish)", () 
   assert.ok(/Export is the backup/.test(src), "backup path is named next to the file");
 });
 
+test("panel page source ships a Terminal commands reference of real entry.js flags", () => {
+  // Failure: a stranger looking for --export has to read source, or we
+  // document a flag entry.js does not dispatch (or skip a real one).
+  const entry = fs.readFileSync(path.join(__dirname, "entry.js"), "utf8");
+  const src = fs.readFileSync(path.join(__dirname, "panel.js"), "utf8");
+  assert.ok(src.includes("Terminal commands"), "section is named");
+  assert.ok(src.includes('id="cliCmds"'), "closed-by-default details, matching the MCP snippet");
+  const flags = [
+    "--mcp", "--install", "--uninstall",
+    "--export", "--export-jsonl",
+    "--import", "--migrate", "--migrate-sqlite",
+    "--dedup-existing",
+  ];
+  for (const f of flags) {
+    assert.ok(entry.includes(JSON.stringify(f)) || entry.includes("'" + f + "'") || entry.includes(f),
+      "entry.js actually dispatches " + f);
+    assert.ok(src.includes(f), "panel documents " + f);
+  }
+  assert.ok(/dry-run is the default/i.test(src), "import/dedup name the dry-run default");
+  assert.ok(/Export a backup first/i.test(src), "mutating ops tell you to export first");
+  assert.ok(/Does not delete your memories/.test(src), "uninstall is honest about the store");
+  assert.ok(/writes with --apply/.test(src), "apply is named as the write switch");
+  assert.ok(src.includes("cliPrefix") && src.includes("CLI_PREFIX"),
+    "copy-paste prefix is this binary, not a guessed name");
+  assert.ok(/entry\.js/.test(src), "from source, commands go through entry.js");
+  assert.ok(!/node panel\.js --/.test(src), "must not teach node panel.js --flag (that is not the dispatcher)");
+  assert.ok(/not.*MCP tools/i.test(src), "CLI stays off the four verbs");
+  assert.ok(/planted sidecar is an injection path/.test(src), "0009 refusal is named on --with-edges");
+});
+
 test("mcpSnippet is the same launch Connect writes, and is MCP not the panel", () => {
   const launch = install.selfLaunch();
   const sn = install.mcpSnippet();
@@ -5127,6 +5157,9 @@ async function asyncTests() {
         const page = await (await fetch(panel.url + "/")).text();
         assert.ok(page.includes("Export my memories"));
         assert.ok(/read-only/i.test(page));
+        assert.ok(page.includes("Terminal commands"), "CLI reference is on the served page");
+        assert.ok(page.includes("--dedup-existing"), "a maintenance flag the buttons don't cover is listed");
+        assert.ok(page.includes("entry.js"), "dev prefix is node + entry.js (cliPrefix ran), not panel.js --export");
         const prev = await (await fetch(panel.url + "/api/export")).json();
         assert.strictEqual(prev.demo, false);
         assert.strictEqual(prev.busy, false);
