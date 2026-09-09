@@ -490,6 +490,23 @@ the ordinary nodes, so `noise-schedule` precision is not re-broken.
 
 ---
 
+## Phase 1 — transient activation (APR)
+
+Pre-declared in `docs/phases/phase-1-transient-activation.md` **before** spreading
+was written. Not a recall metric — activation's own behaviour. Reproduce:
+`node eval/substrate/activation-measure.js` (also asserted from `node test.js`).
+
+Knobs: attenuation 0.5 / hop, depth 2, floor 0.05, cap 256, half-life 300 s,
+conductance `max(semantic, tanh(hebbian))`, seed `clamp(sim, 0, 1)`. Rank is
+untouched: RM-00 stays 27/31 with activation computed (that's the ⛔ check).
+
+Claims (all must hold): neighbor coupling `E_B = E_A · γ · α`; stronger edge →
+stronger `E_B`; multi-hop `E_A > E_B > E_C`; hops=1 ⇒ `E_C = 0`; 0.25 bootstrap
+transmits less than a high-Hebbian pair; star of 100 stays `max E ≤ 1` and
+inside cap; `t = H` → half, and a 5 s pause is not a dump.
+
+---
+
 ## Phase 0.1 — save-time bind cost sweep (2026-09-05)
 
 Pre-declared p95 budget **250 ms** (written in `eval/save-time-cost.js` before any

@@ -9,6 +9,17 @@ stable; sophistication grows in the substrate, not in the API.
 ## [Unreleased]
 
 ### Added
+- **Phase 1 — transient activation (observable-only; I7 held).** An in-process
+  `WarmField` (`warm.js`) of "what's warm right now": `id → { value, similarity,
+  timestamp }`, never written to JSONL, SQLite, or the edge table. Seeded from
+  retrieval cosine (`clamp(sim, 0, 1)`), spread over Phase 0 edges (not the
+  ephemeral kNN), attenuated 0.5/hop, depth 2, lazy wall-clock half-life 300 s
+  computed on access. Pruned edges and forgotten ids do not participate. Rank
+  is unchanged — the RM-00 golden holding at 27/31 with activation *computed*
+  is the proof. Trace (`RESONANCE_WARM_TRACE`) already emits the Phase 2.2
+  candidate shape; fusion does not get a second hook. Custom eval:
+  `eval/substrate/activation-measure.js` (APR). Opt out: `RESONANCE_WARM_FIELD=0`.
+  See `docs/phases/phase-1-transient-activation.md`.
 - **RM-03 measurement seed: `staleness_rate` + `false_supersession` + ≥50 contradiction cases.**
   The two reporting metrics RM-03 acceptance and the Phase 2 fusion gate name, which did
   not exist as computable numbers. `staleness_rate` already had an RM-15 soak shape

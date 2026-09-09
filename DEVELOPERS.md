@@ -16,7 +16,8 @@ an opaque `id`.
 | `package.json` | No dependencies — scripts only (`test`, `build`, `panel`, `mcp`, `seed`, `inspect`, `dedup-existing`, `migrate`, `export`, `import`). Sole source of the version string; `server.js` reads it so `serverInfo` can't drift. |
 | `field.js` | Associative layer (Phase 2a): kNN semantic graph over stored vectors; neighborhood expansion. |
 | `ledger.js` | Retired Hebbian sidecar (Phase 2b). Off the live path; kept as the epoch-decay reference. |
-| `edges.js` | Unified persistent edge store (Phase 0): two-signal record + one-way `.assoc.json` → `.edges.json` migration. On the live recall path. Save-time semantic neighbors persist on `save()` (K=5, min cosine 0.25); recall still uses `field.js`. Hebbian decay is lazy wall-clock via `effectiveHebbian` (I6). Reinforce materializes the decayed weight before applying α; MCP request-ID dedup LRU (Phase 0.3). **RM-07 slice 5:** persistence adapter — SqliteStore shares the `.db`; JsonlStore keeps the sidecar. Soft prune (0.4 / I8) is an explicit `pruneSweep()` (not recall/save); reactivation is in-place on save/edit of an endpoint. |
+| `edges.js` | Unified persistent edge store (Phase 0): two-signal record + one-way `.assoc.json` → `.edges.json` migration. On the live recall path. Save-time semantic neighbors persist on `save()` (K=5, min cosine 0.25); recall still uses `field.js`. Hebbian decay is lazy wall-clock via `effectiveHebbian` (I6). Reinforce materializes the decayed weight before applying α; MCP request-ID dedup LRU (Phase 0.3). **RM-07 slice 5:** persistence adapter — SqliteStore shares the `.db`; JsonlStore keeps the sidecar. Soft prune (0.4 / I8) is an explicit `pruneSweep()` (not recall/save); reactivation is in-place on save/edit of an endpoint. Phase 1 spreads activation over this table. |
+| `warm.js` | Ephemeral spreading activation (Phase 1 / I7). In-process Map, never persisted. Seeded from retrieval, spread over Phase 0 edges, does not touch rank. |
 | `extract.js` | RM-01.c Tier 2: opt-in LLM extraction (prompt, parser, sanity, chat/sampling, capability detect). Off by default. |
 | `panel.js` | Local 127.0.0.1 control panel: field toggle, LLM-extraction toggle (surfaced when a capable model is detected), Connect/Disconnect, association graph view, first-run empty-store nudge (RM-20), **Export my memories** (slice 2c) / **Import memories** (RM-17: confirm modal, POST `/api/import` shells `runImport()`, with-edges default-off, heartbeat pause + yield), heartbeat auto-shutdown. **W-02:** Host/Origin lock + per-process `X-Resonance-Token` on POSTs. No CORS. Not an MCP tool. |
 | `install.js` | Detect + wire into LM Studio / Claude Desktop MCP config (preserves other servers, leaves `.bak`). |
@@ -154,7 +155,7 @@ in the `resonance-memory-stack` repo. The load-bearing ones:
 
 | Document | What |
 |---|---|
-| [`docs/ROADMAP.md`](docs/ROADMAP.md) | **Start here** — the scope/status map and phase index; current work is Phase 0 |
+| [`docs/ROADMAP.md`](docs/ROADMAP.md) | **Start here** — the scope/status map and phase index; Phase 0 + Phase 1 exits met; current work is Phase 2 |
 | [`docs/phases/`](docs/phases/) | The buildable phase specs (`phase-0` … `phase-8`): scope, steps, per-phase metrics + tests |
 | [`docs/BACKLOG.md`](docs/BACKLOG.md) | Itemized work (`RM-00` … `RM-20`) with acceptance criteria |
 | [`docs/BUGS.md`](docs/BUGS.md) | Known defects, fixed and open, with a watch list |

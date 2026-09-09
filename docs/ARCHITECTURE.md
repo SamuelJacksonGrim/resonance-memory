@@ -56,7 +56,7 @@ than the code supports is worse than none — it stops anyone from looking.
 | **I4** | **Embed once at save; the server owns all metadata; the model assigns none of it.** A `Store` seam sits behind the verbs so the backend swaps without touching the MCP API. | ✅ held¹ | `memory-core.js` `save`; `store.js` |
 | **I5** | **Durable writes; no *unbounded* write on a read path.** Writes are atomic and durable. A read path must not perform an unbounded / full-corpus rewrite (the BUG-001/002 class). Retention metadata (`access_count` / `last_access`) MAY be updated on recall if that update is bounded, atomic, and cannot truncate the store. **JSONL:** AccessLog sidecar (recall writes the sidecar, never the JSONL file); store mutations go through `writeFileDurable()`. **SQLite:** WAL + `synchronous=FULL`; recall is one `BEGIN`/`UPDATE`/`COMMIT` of the ~5 returned ids. | ✅ held¹ | `record.js` `AccessLog`; `store-sqlite.js` `applyRecall`; `BUG-001`/`BUG-002` |
 | **I6** | **Reading does not drive the decay clock.** Co-recall *reinforcement* is retained (it is the differentiator); edge **decay** is lazy wall-clock, computed at access via `effectiveHebbian`, never stored, never ticked by recall count. A reinforcing mutation **materializes** that computed weight before applying α (Phase 0.3), so reinforcement cannot bypass decay. | ✅ held (Phase 0.2; materialize 0.3) | `edges.js` `effectiveHebbian` / `_bump`; `memory-core.js` recall (no `tick()`) |
-| **I7** | **Activation never persists.** Spreading activation (Phase 1) is seeded per query, attenuated per hop, bounded, and never written to the edge store. | ⬜ n/a until Phase 1 | `phases/phase-0` |
+| **I7** | **Activation never persists.** Spreading activation (Phase 1) is seeded per query, attenuated per hop, bounded, and never written to the edge store. | ✅ held (Phase 1) | `warm.js`; `memory-core.js` recall hook (no `save()`); `test.js` JSONL + SQLite schema scans |
 | **I8** | **No silent removal.** *Record* deletes are soft (`deleted`, compacted at `vacuum()`) and supersession keeps a non-overlapping validity chain. *Edge* pruning is the same pattern: `pruneSweep()` marks `pruned_at` (record kept; `incident()` skips it); `EdgeStore.vacuum()` is the explicit hard drop. Never on `recall`/`save`. Reactivation is in-place on save/edit/reinforce of an endpoint, never a fifth tool. | ✅ held (records + edges, Phase 0.4) | `store.js` `vacuum`; `edges.js` `pruneSweep` / `vacuum`; `phases/phase-0` |
 | **I9** | **Discovery nominates; it does not appoint.** The field/ledger *expand* the candidate set (the `Related:` block); they never reorder the primary cosine result. Primary results are **byte-identical** field on or off. | ✅ held | `memory-core.js` recall |
 
@@ -126,12 +126,12 @@ same record the panel renders, the installer targets, `--dedup-existing` scans,
                 ▼
          memory-core.js   ← the four verbs + the 02.c planner, ONE implementation
                      │
-        ┌────────────┼────────────┬──────────────┐
-        ▼            ▼            ▼              ▼
-     store.js     field.js    ledger.js       edges.js
-        │            │         (retired)    (live Hebbian +
-        │            │                       save-time edges)
-        └────────────┴──► record.js ◄────────────┘
+        ┌────────────┼────────────┬──────────────┬──────────┐
+        ▼            ▼            ▼              ▼          ▼
+     store.js     field.js    ledger.js       edges.js   warm.js
+        │            │         (retired)    (live Hebbian +  (Phase 1
+        │            │                       save-time edges)  activation;
+        └────────────┴──► record.js ◄────────────┘            never persisted)
                           (schema + durable writes + access sidecar)
 ```
 
@@ -145,7 +145,7 @@ same record the panel renders, the installer targets, `--dedup-existing` scans,
 |---|---|---|
 | `entry.js` | Mode dispatch on `argv`. | server / panel / install / dedup-existing / migrate / export-memory / import-memory |
 | `server.js` | MCP server. Declares the four tool schemas + descriptions, wires the *environment* (network embedder, live field toggle, live extract toggle, lazy EdgeStore) into the shared core, runs the stdio JSON-RPC loop, vacuums soft-deletes and `pruneSweep`s faded+weak edges at startup. Reads the version from `package.json` so `serverInfo` can't drift. Outbound `sampling/createMessage` is the Tier 2 path when the client advertised sampling. Per-embedder input formatting via `embed-invoke.js`. | `memory-core`, `store`, `edges`, `extract`, `embed-invoke`, `package.json` |
-| `memory-core.js` | **The four cognitive verbs, as one implementation.** `createCore({ store, embed, fieldEnabled, getEdgeStore, dedupThresholds, fieldMinSim, extractEnabled, extract })` → `{ save, recall, edit, remove }`. Also `dedupExisting` / `planDedupExisting` (RM-02.c) so `--dedup-existing` cannot fork the 02.b bands. Everything environment-specific is *injected*. This is the code both `server.js` and `eval/pipeline.js` run — the RM-00 golden is the proof they never diverge. | `field`, `record`, `extract`, `entity` |
+| `memory-core.js` | **The four cognitive verbs, as one implementation.** `createCore({ store, embed, fieldEnabled, getEdgeStore, dedupThresholds, fieldMinSim, extractEnabled, extract })` → `{ save, recall, edit, remove }`. Also `dedupExisting` / `planDedupExisting` (RM-02.c) so `--dedup-existing` cannot fork the 02.b bands. Everything environment-specific is *injected*. This is the code both `server.js` and `eval/pipeline.js` run — the RM-00 golden is the proof they never diverge. Phase 1 seeds/spreads `WarmField` on recall (default on) and does not consult `out`. | `field`, `record`, `extract`, `entity`, `warm`, `edges` |
 | `extract.js` | RM-01.c Tier 2: opt-in LLM extraction (prompt, parser, sanity gate, `/v1/chat/completions`, MCP sampling, capability detect). Off by default. `save()` is the only caller. | stdlib + `fetch` |
 | `dedup-existing.js` | RM-02.c CLI. Dry-run default; `--apply` is one durable rewrite. Thin wrapper over `dedupExisting()` — no second decision. | `memory-core`, `store` |
 | `record.js` | The shared record schema (`normalize()`), durable atomic writes (`writeFileDurable()`), the access sidecar (`AccessLog`), and the lexical heuristics (constraint typing, historical-query detection, supersession cues, cosine-banded `detectNearDuplicate`). Owned here so server and panel agree on a record byte-for-byte. | stdlib only |
@@ -159,7 +159,8 @@ same record the panel renders, the installer targets, `--dedup-existing` scans,
 | `embed-invoke.js` | Per-embedder input formatting. Nomic raw; Qwen Instruct-query; jina `Query:`/`Document:`. Keyed off panel `config.embedder` then `EMBED_MODEL`. | stdlib only |
 | `field.js` | Associative layer (Phase 2a): a kNN semantic graph over stored vectors, neighborhood expansion, and constraint rescue. No new embedding calls, no LLM extraction. Related: minSim default 0.70; `conflict` callback drops entity/polarity mismatches. | stdlib only |
 | `ledger.js` | Retired Hebbian sidecar (Phase 2b). Off the live path as of Slice C; kept so tests can compare EdgeStore bonuses against the shipped epoch-decay math. | `record` |
-| `edges.js` | Unified persistent edge store (Phase 0 / `RM-21`): one undirected record, two independent signals (`semantic` derived cache validated by version comparison, `hebbian` source of truth), typed provenance, one-way `.assoc.json` → `.edges.json` migration (`kind: "resonance-edges"`). **On the live recall path** — Hebbian bonus (via `effectiveHebbian`)/reinforce/save. Decay is lazy wall-clock (I6); `tick()` is retired. A reinforcing mutation materializes `effectiveHebbian` before applying α (0.3). MCP request-ID idempotency: a 256-entry LRU of processed JSON-RPC ids. **RM-07 slice 5:** persistence adapter — SqliteStore shares the `.db` (`processed_ids` + weight UPDATE are one txn); JsonlStore keeps the sidecar. `effectiveHebbian` is never stored. Soft prune (0.4 / I8): `pruneSweep()` marks `pruned_at` only when *both* unreinforced and semantically weak (`SEMANTIC_PRUNE_GATE` 0.25); hard drop is `vacuum()`, explicit. Reactivation is in-place on save/edit/reinforce of an endpoint. `field.js` still builds the semantic kNN at recall. | `record` |
+| `edges.js` | Unified persistent edge store (Phase 0 / `RM-21`): one undirected record, two independent signals (`semantic` derived cache validated by version comparison, `hebbian` source of truth), typed provenance, one-way `.assoc.json` → `.edges.json` migration (`kind: "resonance-edges"`). **On the live recall path** — Hebbian bonus (via `effectiveHebbian`)/reinforce/save. Decay is lazy wall-clock (I6); `tick()` is retired. A reinforcing mutation materializes `effectiveHebbian` before applying α (0.3). MCP request-ID idempotency: a 256-entry LRU of processed JSON-RPC ids. **RM-07 slice 5:** persistence adapter — SqliteStore shares the `.db` (`processed_ids` + weight UPDATE are one txn); JsonlStore keeps the sidecar. `effectiveHebbian` is never stored. Soft prune (0.4 / I8): `pruneSweep()` marks `pruned_at` only when *both* unreinforced and semantically weak (`SEMANTIC_PRUNE_GATE` 0.25); hard drop is `vacuum()`, explicit. Reactivation is in-place on save/edit/reinforce of an endpoint. `field.js` still builds the semantic kNN at recall. Phase 1 spreads activation over this table (`incident()` / `activationEdgesFromStore`); pruned edges do not participate. | `record` |
+| `warm.js` | Ephemeral spreading activation (Phase 1 / I7). In-process `Map` `id → { value, similarity, timestamp }`; never written to the store. Seeded from retrieval cosine (`clamp(sim, 0, 1)`), spread over Phase 0 edges with per-hop attenuation 0.5 and depth 2, lazy wall-clock half-life 300 s computed on access. Max-not-sum, cache cap 256. Does not touch rank (`final_score` in the trace stays `"semantic"`). Trace shape is the Phase 2.2 candidate record. Opt out: `RESONANCE_WARM_FIELD=0`. | `edges` |
 | `panel.js` | The `127.0.0.1` control panel (largest file): field toggle, LLM-extraction toggle (surfaced when a capable model is detected), Connect/Disconnect, embedder-tuning selector (`/api/embedder`), the 3D association-graph view, demo graph, first-run empty-store nudge (RM-20), **Export my memories** (slice 2c: confirm modal, POST `/api/export` shells `export-memory.js`, heartbeat pause + yield so a long zip cannot starve `/api/ping`), **Import memories** (RM-17: confirm modal, POST `/api/import` shells `runImport()`, `--with-edges` checkbox default-off, heartbeat pause + yield), heartbeat auto-shutdown. **W-02:** Host must be loopback; Origin (when present) must be this panel; mutating POSTs require a per-process `X-Resonance-Token` baked into the page. No CORS. Not an MCP tool. | `install`, `field`, `engine`, `edges`, `record`, `extract`, `export-memory`, `import-memory`, `entity`, `memory-core`, `embedded-assets` |
 | `install.js` | Detect + wire into LM Studio / Claude Desktop MCP config. Preserves other configured servers, leaves a `.bak`. | stdlib only |
 | `engine.js` | One-click embedder setup for the panel: drives LM Studio's bundled `lms` CLI to start the server, download the Nomic embedder, load it, and verify the endpoint answers. Pure convenience — the MCP server never needs it. | stdlib + `fetch` |
@@ -455,6 +456,25 @@ fails open to empty (bonus 0); recall still returns cosine (I3).
   touching an endpoint: `pruned_at → null`, `created_at` and the decayed
   Hebbian bytes preserved, `prune_count` / `first_pruned_at` /
   `last_reactivated_at` kept as O(1) history. No fifth tool (I1).
+
+### `warm.js` — transient activation (Phase 1; I7 held)
+
+An in-process `Map` of "what's warm right now." Seeded from the cosine hits of
+the current recall (`activation = clamp(similarity, 0, 1)`; the two stay
+separate fields), then spread over the Phase 0 edge table — **not** over
+`field.buildEdges`. Conductance is `max(semantic, tanh(effectiveHebbian))`;
+pruned edges are silent. Per-hop attenuation 0.5, depth 2, floor 0.05, cache
+cap 256, half-life 300 s (lazy wall-clock, computed on access, same
+discipline as `effectiveHebbian`). Update is max, not sum.
+
+The recall hook computes this by default and **does not consult `out`**. Rank
+is still cosine; the RM-00 golden holding at 27/31 with activation computed
+is the proof, not a coincidence. Trace (`RESONANCE_WARM_TRACE`) emits the
+Phase 2.2 candidate shape (`semantic` / `hebbian` / `recency` / `activation`
+/ `final_score: "semantic"`). Rank consumption is the 2.2 gate.
+
+APR metric + knobs: [`phases/phase-1`](phases/phase-1-transient-activation.md),
+`eval/substrate/activation-measure.js`.
 
 ---
 

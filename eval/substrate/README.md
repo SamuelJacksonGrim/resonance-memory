@@ -27,6 +27,9 @@ node eval/substrate/export-proof.js
 node eval/substrate/entity-layer-measure.js
      # entity-id split/merge + polarity probes (uses eval/corpora/fire-together-corpus.json, text-only);
      # nomic-plain field kNN @ 0.70 if the gitignored fair-run cache is present
+node eval/substrate/activation-measure.js
+     # Phase 1 APR (activation's own behaviour; not a recall metric). Also
+     # asserted from test.js. Knobs: warm.js; spec: docs/phases/phase-1.
 ```
 
 First run live-embeds against LM Studio (`:1234`, `text-embedding-nomic-embed-text-v1.5`),

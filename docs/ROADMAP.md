@@ -52,7 +52,7 @@ compete on **reproducibility**, which hosted vendors structurally cannot match. 
 |---|---|---|
 | Evaluation | **No longer a gap.** `RM-00` shipped: offline, deterministic, golden-gated. Reporting metrics: `recall@k` + `duplicate_rate` (RM-02.a), `extraction_precision` / `extraction_recall` (RM-01), `mrr` (S1). Staleness still open — Phase 2.5. S1 scale curve in `eval/RESULTS.md`. | `RM-00`, `eval/` |
 | Write path | **The real gap, closing.** `RM-04` + `RM-03` v1 + `RM-02` landed; `RM-01` done (Tier 0/1 + opt-in Tier 2). | `RM-01`–`RM-04` |
-| Substrate | **Unified.** One edge table, two signals (semantic derived, Hebbian source-of-truth). Phase 0 exit met (0.6). | Phase 0 ✅, `ARCHITECTURE.md` |
+| Substrate | **Unified + warm.** One edge table, two signals (semantic derived, Hebbian source-of-truth). Phase 0 exit met (0.6). Phase 1 activation is observable/traced, never ranked, never persisted (I7 held). | Phase 0 ✅, Phase 1 ✅, `ARCHITECTURE.md` |
 | Distribution | **Ahead.** Single file, zero terminal, no API key. | `DEVELOPERS.md` |
 
 Which fixes the order: **the substrate is unified (Phase 0); close the write-path gap, then tune
@@ -91,14 +91,15 @@ Every phase must leave these standing. **Definitions, rationale, and the backing
 | I4 | Embed at save; server owns all metadata | ✅ held (one self-extinguishing legacy exception) |
 | I5 | Durable writes; no *unbounded* write on a read path | ✅ held (one self-extinguishing legacy exception) |
 | I6 | Reading does not drive the decay clock | ✅ held |
-| I7 | Activation never persists | ⬜ n/a until Phase 1 |
+| I7 | Activation never persists | ✅ held (Phase 1) |
 | I8 | No silent removal | ✅ held (records + edges, Phase 0.4) |
 | I9 | Discovery nominates; it does not appoint | ✅ held |
 
 The I4/I5 exceptions are real and named on purpose; an invariant claimed more strongly than
 the code supports stops anyone from looking. Full accounting in ARCHITECTURE. I6 flipped
-from target to held in Phase 0.2 (lazy wall-clock decay; `tick()` gone from recall). I8
-flipped from held-records-only to held-for-edges in Phase 0.4 (`pruneSweep` marks
+from target to held in Phase 0.2 (lazy wall-clock decay; `tick()` gone from recall). I7 flipped
+from n/a to held in Phase 1 (in-process `WarmField`; JSONL + SQLite schema scans after a warm
+recall). I8 flipped from held-records-only to held-for-edges in Phase 0.4 (`pruneSweep` marks
 `pruned_at`; `vacuum()` is the explicit hard drop).
 
 ---
@@ -144,8 +145,8 @@ without its own custom eval** — a blanket metric does not fit a phase scope.
 | Phase | Focus | Status | Doc |
 |---|---|---|---|
 | **0** | Unify time & persistence (edge substrate) 🔀 | ✅ **exit met** | [`phase-0`](phases/phase-0-edge-substrate.md) |
-| 1 | Transient activation | ⬜ **← next** | [`phase-1`](phases/phase-1-transient-activation.md) |
-| 2 | Retrieval & association dynamics | ⬜ ⛔ | [`phase-2`](phases/phase-2-retrieval-dynamics.md) |
+| **1** | Transient activation | ✅ **exit met** (observable-only) | [`phase-1`](phases/phase-1-transient-activation.md) |
+| 2 | Retrieval & association dynamics | ⬜ ⛔ **← next** | [`phase-2`](phases/phase-2-retrieval-dynamics.md) |
 | 3 | Episodic working context *(overlaps `RM-06`)* | ⬜ | [`phase-3`](phases/phase-3-episodic-context.md) |
 | 4 | Consolidation *(weakest prior — cut if unproven)* | ⬜ | [`phase-4`](phases/phase-4-consolidation.md) |
 | 5 | Temporal & predictive 🔀 | ⬜ | [`phase-5`](phases/phase-5-temporal-predictive.md) |
@@ -153,7 +154,7 @@ without its own custom eval** — a blanket metric does not fit a phase scope.
 | 7 | Reconsolidation *(extends `RM-04`/`RM-03`)* | 🟡 | [`phase-7`](phases/phase-7-reconsolidation.md) |
 | 8 | Cognitive integration | ⬜ | [`phase-8`](phases/phase-8-cognitive-integration.md) |
 
-Phase 0 exit is met; everything after Phase 1 is **planned, not committed** — the code must earn it.
+Phase 0 and Phase 1 exits are met; everything after Phase 1 is **planned, not committed** — the code must earn it. Phase 1 activation is traced and never ranked (I7 held; golden 27/31 unchanged with it computed). Rank entry is the Phase 2.2 gate.
 
 ### Phase 0 — live sub-phase tracker
 
@@ -170,9 +171,25 @@ Full spec + metrics + tests: [`phase-0`](phases/phase-0-edge-substrate.md). **Ex
 | **0.6** | Threat-model sketch (design only; `RM-16` stays gated to Phase 2) | ✅ [`0009`](proposed/0009-edge-threat-model.md) |
 
 **Exit met:** golden green and reliable; I6 held; I8 held for edges; migration lossless + one-way;
-signals stay separate. Next is Phase 1. `RM-16` implementation stays gated to Phase 2 — the
+signals stay separate. `RM-16` implementation stays gated to Phase 2 — the
 sketch feeds it, it does not build it. Deferred out of this exit (named): `superseded → inherited?`
 is Phase 7; `RM-08` record importance decay is a different object.
+
+### Phase 1 — live sub-phase tracker
+
+Full spec + APR metric + tests: [`phase-1`](phases/phase-1-transient-activation.md). **Exit met.**
+
+| Sub-phase | Purpose | Status |
+|---|---|---|
+| **1.1** | In-memory `Map` `id → { value, similarity, timestamp }`; never persisted; bounded; cleared on restart / prune | ✅ |
+| **1.2** | Seed from semantic retrieval; similarity and activation separate; `clamp(sim, 0, 1)` | ✅ |
+| **1.3** | Spread over Phase 0 edges; attenuate per hop; depth 2; pruned edges silent; max-not-sum | ✅ |
+| **1.4** | Lazy wall-clock half-life (300 s), computed on access; lives for the process; never resurrects a pruned memory | ✅ |
+| **1.5** | APR custom eval + I7 disk/schema scan + rank-identity (golden unchanged with activation computed) | ✅ |
+
+**Exit met:** activation is observable and traced (`[warm-trace]` is the Phase 2.2 candidate shape);
+provably ephemeral (I7); provably not affecting rank (byte-identical on/off; RM-00 27/31). Next is
+Phase 2. Rank consumption stays behind the 2.2 gate.
 
 ### The promotion gate ⛔ (Phase 2)
 
@@ -259,7 +276,11 @@ Phase 0.6   threat-model sketch (design only; RM-16 stays gated)   ✅
   ↓
 GREEN (npm test + npm run eval)  — Phase 0 EXIT MET
   ↓
-Phase 1
+Phase 1.1–1.5   transient activation (observable-only; I7 held)   ✅
+  ↓
+GREEN (npm test + npm run eval, 27/31 unchanged)  — Phase 1 EXIT MET
+  ↓
+Phase 2   retrieval dynamics (rank entry is the 2.2 gate)   ⬜ ⛔
 ```
 
 Everything after Phase 1 is planned, not committed.

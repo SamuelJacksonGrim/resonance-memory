@@ -3358,14 +3358,17 @@ test("cover-match: a short paraphrase hits gold; a long blob does not", () => {
     "exact match (messy.jsonl) still rejects paraphrase");
 });
 
-// ------------------------------------------------- warm field (Phase 1 / PR1)
-// Tests construct WarmField DIRECTLY. Pre-declared Phase 1 metrics from the
-// warm-field design: A→B raises E, stronger sim → higher E, thisTurn-only
-// spread, 1-hop bound, split clocks, restart-empty, forget, I7 disk-scan.
+// ------------------------------------------------- warm field (Phase 1)
+// Pre-declared APR metric: docs/phases/phase-1-transient-activation.md
+// (declared before 1.3). Unit tests here encode the failure signatures;
+// eval/substrate/activation-measure.js is the numeric readout the knobs
+// were tuned against.
 section("warm field (Phase 1)");
 
 const {
-  WarmField, shouldSpread, vectorCount, emitWarmTrace,
+  WarmField, shouldSpread, vectorCount, emitWarmTrace, emitActivationTrace,
+  ATTENUATION, HALF_LIFE_SECONDS: WARM_HALF_LIFE, normalizeSeed, conductance,
+  activationEdgesFromStore,
 } = require("./warm.js");
 const {
   createCore, defaultGetEdges, cosine: coreCosine,
@@ -3373,9 +3376,8 @@ const {
   DEDUP_HI, DEDUP_LO, readDedupThresholds,
   dedupExisting,
 } = require("./memory-core.js");
-
-const LAMBDA_TURN = 0.357;
-const turnDecay = (e, turns) => e * Math.exp(-LAMBDA_TURN * turns);
+const { runMeasure: runActivationMeasure, format: formatActivationMeasure } =
+  require("./eval/substrate/activation-measure.js");
 
 function chainEdges(pairs) {
   const m = new Map();
@@ -3386,32 +3388,49 @@ function chainEdges(pairs) {
   return m;
 }
 
-test("A activating raises B through A↔B", () => {
-  const W = new WarmField();
+test("APR metric (pre-declared): all seven claims hold", () => {
+  const result = runActivationMeasure();
+  assert.ok(result.pass, formatActivationMeasure(result));
+});
+
+test("A activating raises B through A↔B (attenuated)", () => {
+  const W = new WarmField({ hops: 1, now: () => 1_000_000 });
   W.seed(["A"]);
   assert.strictEqual(W.get("B"), 0, "B is cold before spread");
   W.spread(chainEdges([["A", "B", 0.8]]));
+  const want = 1.0 * 0.8 * ATTENUATION;
   assert.ok(W.get("B") > 0, "B received energy through A↔B");
-  assert.ok(Math.abs(W.get("B") - 0.8) < 1e-12, "E_B = E_A * sim");
+  assert.ok(Math.abs(W.get("B") - want) < 1e-12, "E_B = E_A * γ * α, got " + W.get("B"));
+  assert.ok(W.get("B") < W.get("A"), "attenuation: E_B < E_A");
 });
 
-test("stronger sim yields higher E_B (max-not-sum contract)", () => {
-  const strong = new WarmField();
-  const weak = new WarmField();
+test("stronger edge yields higher E_B (max-not-sum contract)", () => {
+  const strong = new WarmField({ hops: 1, now: () => 1_000_000 });
+  const weak = new WarmField({ hops: 1, now: () => 1_000_000 });
   strong.seed(["A"]);
   weak.seed(["A"]);
   strong.spread(chainEdges([["A", "B", 0.9]]));
-  weak.spread(chainEdges([["A", "B", 0.6]]));
-  assert.ok(strong.get("B") > weak.get("B"), "0.9 sim transmits more than 0.6");
+  weak.spread(chainEdges([["A", "B", 0.4]]));
+  assert.ok(strong.get("B") > weak.get("B"), "0.9 transmits more than 0.4");
 
   // max, not sum: a second weaker incoming must not add
   strong.seed(["A"]);
   strong.spread(chainEdges([["A", "B", 0.5]]));
-  assert.ok(Math.abs(strong.get("B") - 0.9) < 1e-12, "max keeps 0.9, does not sum to 1.4");
+  const kept = 1.0 * 0.9 * ATTENUATION;
+  assert.ok(Math.abs(strong.get("B") - kept) < 1e-12, "max keeps the stronger incoming, does not sum");
+});
+
+test("multi-hop attenuates monotonically at hops=2", () => {
+  const W = new WarmField({ hops: 2, now: () => 1_000_000 });
+  W.seed(["A"], 0.9);
+  W.spread(chainEdges([["A", "B", 0.8], ["B", "C", 0.8]]));
+  assert.ok(W.get("A") > W.get("B") && W.get("B") > W.get("C") && W.get("C") > 0,
+    "E_A > E_B > E_C > 0");
 });
 
 test("spread iterates thisTurn only; a previously-warm node does not re-spread", () => {
-  const W = new WarmField();
+  let t = 0;
+  const W = new WarmField({ now: () => t, hops: 1, halfLife: 1e9 });
   const edges = chainEdges([
     ["A", "B", 0.9],
     ["B", "C", 0.9],
@@ -3421,22 +3440,20 @@ test("spread iterates thisTurn only; a previously-warm node does not re-spread",
   W.spread(edges);                       // B warms; C does not (1-hop)
   const eB = W.get("B");
   assert.ok(eB > 0);
-  W.decayAll({ turns: 1 });
-  const eBDecayed = W.get("B");
-  assert.ok(eBDecayed < eB);
+  t += 1000;                             // 1s; H is huge so decay is ~0
   W.seed(["X"]);                         // thisTurn = {X} only; A is warm but not re-seeded
   W.spread(edges);                       // must NOT re-spread from A (which would refresh B)
-  assert.ok(Math.abs(W.get("B") - eBDecayed) < 1e-12, "B held its decayed value; A did not re-spread");
+  assert.ok(Math.abs(W.get("B") - eB) < 1e-9, "B held its value; A did not re-spread");
   assert.ok(W.get("Z") > 0, "X's neighbor DID warm");
 });
 
 test("value === 1.0 is not the seed test (sim=1.0 neighbor does not re-spread)", () => {
-  const W = new WarmField();
-  // A seeds at 1.0, B receives sim=1.0 so B.value === 1.0. If spread used
-  // value===1.0 as the seed test, B would then warm C in the same tick.
+  const W = new WarmField({ hops: 1, now: () => 1_000_000 });
+  // A seeds at 1.0, B receives 1.0 * 1.0 * α. If spread used value===1.0
+  // as the seed test, B would then warm C in the same tick at hops=1.
   W.seed(["A"]);
   W.spread(chainEdges([["A", "B", 1.0], ["B", "C", 1.0]]));
-  assert.strictEqual(W.get("B"), 1.0);
+  assert.ok(Math.abs(W.get("B") - ATTENUATION) < 1e-12);
   assert.strictEqual(W.get("C"), 0, "C stayed cold: B was not a thisTurn source");
 });
 
@@ -3448,49 +3465,40 @@ test("hops=1 does not warm a 2-hop neighbor", () => {
   assert.strictEqual(W.get("C"), 0, "2-hop C stays cold at hops=1");
 });
 
-test("decayAll({ turns: 1 }) is λ_turn, not wall-clock seconds", () => {
+test("lazy wall-clock half-life: 5s pause is not a dump; t=H → ½", () => {
   let t = 1_000_000;
-  const W = new WarmField({ now: () => t, lambdaTurn: LAMBDA_TURN, lambdaWall: 0 });
+  const W = new WarmField({ now: () => t, halfLife: WARM_HALF_LIFE });
   W.seed(["A"], 1.0);
-  t += 5000;                             // 5s wall pause
-  W.decayAll({ turns: 1 });
-  const got = W.get("A");
-  const expected = turnDecay(1.0, 1);    // ≈ 0.700
-  assert.ok(Math.abs(got - expected) < 1e-10, "E * exp(-λ_turn), got " + got);
-  assert.ok(got > 0.6, "5s wall pause with λ_wall=0 must not dump energy (~0.12 would mean seconds fed into λ_turn)");
+  t += 5000;
+  const afterPause = W.get("A");
+  assert.ok(afterPause > 0.98, "5s pause must not dump energy, got " + afterPause);
+  t = 1_000_000 + WARM_HALF_LIFE * 1000;
+  const atH = W.get("A");
+  assert.ok(Math.abs(atH - 0.5) < 1e-9, "t=H → ½, got " + atH);
 });
 
-test("λ_wall=0: a 5s pause does not dump energy even across two decays", () => {
+test("get() does not write the decayed number back (I6 discipline)", () => {
   let t = 0;
-  const W = new WarmField({ now: () => t, lambdaWall: 0 });
+  const W = new WarmField({ now: () => t, halfLife: 10 });
   W.seed(["A"], 1.0);
-  t += 5000;
-  W.decayAll({ turns: 1 });
-  t += 5000;
-  W.decayAll({ turns: 1 });
-  const expected = turnDecay(1.0, 2);
-  assert.ok(Math.abs(W.get("A") - expected) < 1e-10);
+  t = 10_000;                            // one half-life
+  assert.ok(Math.abs(W.get("A") - 0.5) < 1e-9);
+  const stored = W.nodes.get("A");
+  assert.strictEqual(stored.value, 1.0, "stored value stays the seed");
+  assert.strictEqual(stored.timestamp, 0, "timestamp unmoved by get()");
 });
 
 test("below floor ⇒ dropped", () => {
-  const W = new WarmField({ floor: 0.1, lambdaTurn: 10 });
-  W.seed(["A"], 0.12);
-  W.decayAll({ turns: 1 });              // 0.12 * exp(-10) << 0.1
-  assert.strictEqual(W.get("A"), 0);
-});
-
-test("idle TTL clears the map", () => {
   let t = 0;
-  const W = new WarmField({ now: () => t, idleMs: 1000 });
+  const W = new WarmField({ now: () => t, floor: 0.1, halfLife: 1 });
   W.seed(["A"], 1.0);
-  t = 1001;
-  W.decayAll({ turns: 1 });
-  assert.strictEqual(W.get("A"), 0, "idle TTL wiped the session");
-  assert.strictEqual(W.thisTurn.size, 0);
+  t = 10_000;                            // 10000 half-lives
+  assert.strictEqual(W.get("A"), 0);
+  assert.strictEqual(W.nodes.size, 0);
 });
 
 test("a new WarmField() is empty (restart)", () => {
-  const live = new WarmField();
+  const live = new WarmField({ hops: 1 });
   live.seed(["A"]);
   live.spread(chainEdges([["A", "B", 0.9]]));
   assert.ok(live.get("A") > 0 && live.get("B") > 0);
@@ -3500,20 +3508,54 @@ test("a new WarmField() is empty (restart)", () => {
   assert.strictEqual(restarted.nodes.size, 0);
 });
 
-test("forget drops a node so it cannot resurrect", () => {
-  const W = new WarmField();
+test("forget drops a node so it cannot resurrect via spread", () => {
+  const W = new WarmField({ hops: 1 });
   W.seed(["A", "B"]);
   W.forget("A");
   assert.strictEqual(W.get("A"), 0);
   assert.ok(W.get("B") > 0);
   assert.ok(!W.thisTurn.has("A"));
+  W.seed(["B"]);
+  W.spread(chainEdges([["B", "A", 1.0]]), { live: ["B"] });
+  assert.strictEqual(W.get("A"), 0, "live-set refuses to rewrite a forgotten id");
+});
+
+test("pruned Phase 0 edge does not transmit", () => {
+  const when = "2026-01-01T00:00:00.000Z";
+  const e = makeEdge("A", "B", { origin: "save-time-neighbor", now: when });
+  setSemantic(e, 0.9, { a: 1, b: 1 });
+  e.pruned_at = when;
+  assert.strictEqual(conductance(e, when), 0);
+  const store = new EdgeStore(null);
+  store.put(e);
+  const W = new WarmField({ hops: 1 });
+  W.seed(["A"]);
+  W.spread(activationEdgesFromStore(store, [{ id: "A" }, { id: "B" }], { now: when }),
+    { live: ["A", "B"] });
+  assert.strictEqual(W.get("B"), 0);
+});
+
+test("seedFromRetrieval keeps similarity and activation separate", () => {
+  const W = new WarmField();
+  W.seedFromRetrieval([
+    { id: "A", similarity: 0.92 },
+    { id: "B", similarity: 0.4 },
+    { id: "C", similarity: 0 },          // below floor, skipped
+  ]);
+  assert.ok(Math.abs(W.get("A") - 0.92) < 1e-12);
+  assert.strictEqual(W.similarity("A"), 0.92);
+  assert.ok(Math.abs(W.get("B") - 0.4) < 1e-12);
+  assert.strictEqual(W.get("C"), 0);
+  assert.strictEqual(normalizeSeed(1.7), 1, "clamp high");
+  assert.strictEqual(normalizeSeed(-0.3), 0, "clamp negative");
 });
 
 test("cap evicts lowest-E first", () => {
-  const W = new WarmField({ cap: 2 });
-  W.nodes.set("low", { value: 0.2, ts: 1 });
-  W.nodes.set("mid", { value: 0.5, ts: 1 });
-  W.nodes.set("high", { value: 0.9, ts: 1 });
+  const W = new WarmField({ cap: 2, halfLife: 1e9 });
+  const t = 1;
+  W.nodes.set("low", { value: 0.2, similarity: null, timestamp: t });
+  W.nodes.set("mid", { value: 0.5, similarity: null, timestamp: t });
+  W.nodes.set("high", { value: 0.9, similarity: null, timestamp: t });
   W._evictCap();
   assert.strictEqual(W.nodes.size, 2);
   assert.strictEqual(W.get("low"), 0);
@@ -3548,22 +3590,28 @@ test("WARM_EDGE_CAP gates shouldSpread only (512 default; 0 is a real cap)", () 
   assert.strictEqual(vectorCount([{ id: 1 }, { id: 2, embedding: [1] }]), 1);
 });
 
-test("emitWarmTrace is callable and does not throw (hot path is `if (warmTrace())`)", () => {
-  // The helper itself stringifies; the hot-path contract is `if (warmTrace()) emit…`
-  // so a false flag is one boolean and no stringify. Don't print into the test run.
+test("emitActivationTrace is Phase 2.2 shape (hot path is `if (warmTrace())`)", () => {
   const W = new WarmField();
-  W.seed(["A"]);
+  W.seedFromRetrieval([{ id: "A", similarity: 0.91 }]);
   const orig = process.stderr.write;
   const writes = [];
   process.stderr.write = (s) => { writes.push(String(s)); return true; };
   try {
-    emitWarmTrace(W, { query: "x", primary: ["A"] });
+    emitActivationTrace(W, { query: "x", primary: ["A"] });
     emitWarmTrace(null, { query: "x", primary: [] });
   } finally {
     process.stderr.write = orig;
   }
   assert.ok(writes.some((s) => s.indexOf("[warm-trace]") === 0));
-  assert.ok(writes.some((s) => /"activation"/.test(s)), "activation is its own field");
+  const row = JSON.parse(writes[0].replace(/^\[warm-trace\] /, ""));
+  assert.ok(row.activation, "activation is its own field");
+  assert.ok(Array.isArray(row.candidates) && row.candidates.length === 1);
+  const c = row.candidates[0];
+  assert.strictEqual(c.candidate_id, "A");
+  assert.strictEqual(c.semantic, 0.91);
+  assert.strictEqual(c.final_score, "semantic");
+  assert.ok(typeof c.activation === "number" && c.activation > 0);
+  assert.strictEqual(c.hebbian, null, "Phase 1 does not fold Hebbian into the trace rank");
 });
 
 // ------------------------------------------------ RM-11 cross-platform SEA (helpers only; no 90MB inject)
@@ -7126,7 +7174,7 @@ async function asyncTests() {
     assert.strictEqual(store.get(id).embedding_version, 1);
   });
 
-  section("warm hook in createCore (silent, flags-off default)");
+  section("warm hook in createCore (computed, never ranked)");
 
   // Orthogonal embeddings so ranking is deterministic: query [1,0] hits A, then B.
   const pack = {
@@ -7165,21 +7213,21 @@ async function asyncTests() {
     return hits;
   }
 
-  await atest("flags-off recall is byte-identical to a core with no warm injection", async () => {
+  await atest("default-on recall is byte-identical to explicit warm-off", async () => {
     const store = new JsonlStore(tmp("warm-off.jsonl"));
     const a = createCore({ store, embed: packEmbed });
     await a.save("alpha lives here");
     await a.save("beta is nearby");
-    const off = await a.recall("alpha");
+    const on = await a.recall("alpha");
     const b = createCore({ store, embed: packEmbed, warmEnabled: () => false });
-    const alsoOff = await b.recall("alpha");
-    assert.strictEqual(alsoOff, off);
+    const off = await b.recall("alpha");
+    assert.strictEqual(on, off, "computing activation must not change the output string");
   });
 
   await atest("warm-ENABLED-but-unconsumed recall is byte-identical to warm-off", async () => {
     const store = new JsonlStore(tmp("warm-silent.jsonl"));
     const W = new WarmField();
-    const offCore = createCore({ store, embed: packEmbed });
+    const offCore = createCore({ store, embed: packEmbed, warmEnabled: () => false });
     await offCore.save("alpha lives here");
     await offCore.save("beta is nearby");
     await offCore.save("gamma is far away");
@@ -7193,13 +7241,11 @@ async function asyncTests() {
     });
     const on = await onCore.recall("alpha");
     assert.strictEqual(on, off, "silent hook must not change the output string");
-    assert.ok(W.nodes.size > 0, "decay/seed/spread actually ran (map is not empty)");
-    const primaryId = String(store.current()[0].id);
-    // ranked order is cosine, first listing is the top hit — seed it at 1.0
+    assert.ok(W.nodes.size > 0, "seed actually ran (map is not empty)");
     assert.ok(/\[id /.test(on));
-    const seeded = [...W.nodes.entries()].some(([, n]) => n.value === 1.0);
-    assert.ok(seeded, "at least one node seeded at E=1.0");
-    void primaryId;
+    // packEmbed: query "alpha" is [1,0], top hit "alpha lives here" is [1,0] → sim 1.0
+    const seeded = [...W.nodes.values()].some((n) => n.similarity === 1.0 && n.value === 1.0);
+    assert.ok(seeded, "top hit seeded from similarity (not a hardcoded 1.0 with similarity dropped)");
   });
 
   await atest("warmth survives a second recall on the same core (session = process)", async () => {
@@ -7275,6 +7321,36 @@ async function asyncTests() {
     assert.strictEqual(new WarmField().get([...W.nodes.keys()][0]), 0);
   });
 
+  if (sqliteAvailable()) {
+    await atest("I7: sqlite memories/edges tables have no activation column after warm recall", async () => {
+      const { SqliteStore } = require("./store-sqlite.js");
+      const dir = path.join(tmpRoot, "warm-i7-sqlite");
+      fs.mkdirSync(dir, { recursive: true });
+      const file = path.join(dir, "store.jsonl");
+      const store = new SqliteStore(file);
+      const E = openEdgeStore({ store, storePath: file });
+      const W = new WarmField();
+      const core = createCore({
+        store, embed: packEmbed,
+        warmEnabled: () => true,
+        getWarm: () => W,
+        getEdgeStore: () => E,
+        saveSeed: () => false,
+      });
+      await core.save("alpha lives here");
+      await core.save("beta is nearby");
+      await core.recall("alpha");
+      assert.ok(W.nodes.size > 0, "warmth existed in RAM");
+      const FORBIDDEN = /activation|warm|energy|resonance/i;
+      const memCols = store.db.prepare("PRAGMA table_info(memories)").all().map((c) => c.name);
+      const edgeCols = store.db.prepare("PRAGMA table_info(edges)").all().map((c) => c.name);
+      assert.ok(!memCols.some((n) => FORBIDDEN.test(n)), "memories columns: " + memCols.join(","));
+      assert.ok(!edgeCols.some((n) => FORBIDDEN.test(n)), "edges columns: " + edgeCols.join(","));
+      const hits = scanActivation(dir);
+      assert.deepStrictEqual(hits, [], "I7 violated on sqlite files: " + hits.join(", "));
+    });
+  }
+
   await atest("shouldSpread false still seeds, but does not spread (cap at spread only)", async () => {
     const store = new JsonlStore(tmp("warm-cap.jsonl"));
     const W = new WarmField();
@@ -7290,11 +7366,41 @@ async function asyncTests() {
     await core.save("beta is nearby");
     const out = await core.recall("alpha");
     assert.ok(/alpha lives here/.test(out));
-    const seeded = [...W.entries()].filter(([, n]) => n.value === 1.0);
+    const seeded = [...W.entries()].filter(([, n]) => n.value > 0);
     assert.ok(seeded.length > 0, "seed still happens when cap skips spread");
-    // With cap 0, getEdges is not consulted for spread; only thisTurn seeds exist at 1.0
-    const extras = [...W.entries()].filter(([, n]) => n.value > 0 && n.value < 1.0);
+    // With cap 0, getEdges is not consulted for spread; only retrieval seeds exist
+    const extras = [...W.entries()].filter(([, n]) => n.similarity == null && n.value > 0);
     assert.strictEqual(extras.length, 0, "no spread energy when shouldSpread is false");
+  });
+
+  await atest("spread over Phase 0 edges warms a neighbor; output still identical", async () => {
+    const store = new JsonlStore(tmp("warm-edges.jsonl"));
+    const E = new EdgeStore(tmp("warm-edges.jsonl") + ".edges.json");
+    const offCore = createCore({
+      store, embed: packEmbed, warmEnabled: () => false, getEdgeStore: () => E,
+    });
+    await offCore.save("alpha lives here");
+    await offCore.save("beta is nearby");
+    // k=1 so only alpha is a retrieval seed; beta must get energy from the edge.
+    const off = await offCore.recall("alpha", 1);
+
+    const W = new WarmField();
+    const onCore = createCore({
+      store, embed: packEmbed,
+      warmEnabled: () => true,
+      getWarm: () => W,
+      getEdgeStore: () => E,
+      saveSeed: () => false,
+    });
+    const on = await onCore.recall("alpha", 1);
+    assert.strictEqual(on, off, "Phase 0 spread must not change rank");
+    const recs = store.current();
+    const alpha = recs.find((m) => m.text === "alpha lives here");
+    const beta = recs.find((m) => m.text === "beta is nearby");
+    assert.ok(W.get(alpha.id) > 0, "primary seeded");
+    assert.ok(W.similarity(alpha.id) === 1, "seeded from cosine, not a hardcoded 1 with sim dropped");
+    assert.ok(W.get(beta.id) > 0, "neighbor received activation through the save-time edge");
+    assert.strictEqual(W.similarity(beta.id), null, "spread-activated node has no retrieval similarity");
   });
 
   // ------------------------------------------------ Slice C: EdgeStore on the live path

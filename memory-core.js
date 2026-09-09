@@ -37,9 +37,14 @@
  *                                  tick() is retired — I6, Phase 0.2.)
  *   getLedger     () -> same surface as getEdgeStore; kept as a fallback alias so
  *                       a leftover injector still works. Live path uses getEdgeStore.
- *   warmEnabled   () -> boolean   (RESONANCE_WARM_FIELD; default off)
+ *   warmEnabled   () -> boolean   (RESONANCE_WARM_FIELD; default ON. Phase 1
+ *                                  computes activation; it does not rank.
+ *                                  Opt out with "0"/"false"/"no".)
  *   getWarm       () -> WarmField (lazy, like getEdgeStore; in-proc Map, never persisted)
- *   getEdges      (mems, L) -> Map  ALWAYS a Map, never null. Cap is at spread().
+ *   getEdges      (mems, L) -> Map  OPTIONAL override of the Phase 0 edge
+ *                                  walk. Tests inject a Map. Production
+ *                                  omits this and spreads over EdgeStore.
+ *                                  Cap is at spread().
  *   saveSeed      () -> boolean   (production may pass true; eval MUST pass false)
  *   warmTrace     () -> boolean   (RESONANCE_WARM_TRACE; default off, zero-cost)
  *   warmEdgeCap   () -> number    (RESONANCE_WARM_EDGE_CAP; default 512)
@@ -63,13 +68,15 @@
  *                                  stall save. Default EXTRACT_TIMEOUT_MS.)
  *
  * Ranking is COSINE ONLY (see server.js's invariants); the field is additive and
- * never allowed to throw into the recall path. Warmth in PR1 is the same: seed
- * and spread run when enabled, but nothing is read into the output string.
+ * never allowed to throw into the recall path. Phase 1 warmth is the same: seed
+ * and spread run (default on — the signal has to exist to be measured), but
+ * nothing is read into the output string. Rank entry is the Phase 2.2 gate.
  */
 
 const field = require("./field.js");
 const {
   WarmField, shouldSpread, WARM_EDGE_CAP, emitWarmTrace,
+  activationEdgesFromStore,
 } = require("./warm.js");
 const {
   normalize, isCurrent, isHistoricalQuery, detectSupersession, supersedePatches,
@@ -201,9 +208,13 @@ function readDedupThresholds(config) {
 }
 
 /*
- * Default edge source for warmth (and, later, a Phase 0 swap). ALWAYS returns a
- * Map (possibly empty). NEVER null — null-as-sentinel would disable field
+ * Default edge source for warmth when a test injects getEdges. ALWAYS returns
+ * a Map (possibly empty). NEVER null — null-as-sentinel would disable field
  * neighborhood on large stores (WARM_EDGE_CAP gates spread(), not Related:).
+ *
+ * Production recall does NOT use this: Phase 1 spreads over the persistent
+ * Phase 0 EdgeStore (activationEdgesFromStore). This helper remains the
+ * field.js kNN builder for tests that want an ephemeral graph.
  */
 function defaultGetEdges(mems, L) {
   const list = mems || [];
@@ -604,16 +615,17 @@ function keywordScore(query, text) {
  * remove }. `remove` (not `delete`) avoids the reserved word; callers map their own
  * verb name onto it.
  *
- * Warmth flags default off: decay/seed/spread do not run, output is today's
- * cosine (+ field). When warmEnabled is true, the silent hook still must not
- * change the output string (PR1); Related: consumption is PR2, rank is PR3.
+ * Phase 1 warmth is computed by default (the signal has to exist to be
+ * measured). The silent hook still must not change the output string;
+ * Related: consumption is Phase 2, rank is the Phase 2.2 gate. Opt out
+ * with warmEnabled: () => false.
  */
 function createCore({
   store, embed,
   fieldEnabled = () => false,
   getEdgeStore,
   getLedger,
-  warmEnabled = () => false,
+  warmEnabled = () => true,
   saveSeed = () => false,
   getWarm,
   getEdges,
@@ -648,15 +660,23 @@ function createCore({
     return null;
   }
 
-  function edgesFor(mems) {
+  function edgesFor(mems, now) {
     const L = hebbianStore();
-    return asEdgeMap((getEdges || defaultGetEdges)(mems, L));
+    if (typeof getEdges === "function") return asEdgeMap(getEdges(mems, L));
+    return activationEdgesFromStore(L, mems, { now: now != null ? now : Date.now() });
+  }
+
+  function liveIds(mems) {
+    return (mems || []).map((m) => String(m.id));
   }
 
   function pruneWarm(W, mems) {
-    const live = new Set((mems || []).map((m) => String(m.id)));
-    for (const [id] of [...W.entries()]) {
-      if (!live.has(String(id))) W.forget(id);
+    if (typeof W.pruneTo === "function") W.pruneTo(liveIds(mems));
+    else {
+      const live = new Set(liveIds(mems));
+      for (const [id] of [...W.entries()]) {
+        if (!live.has(String(id))) W.forget(id);
+      }
     }
   }
 
@@ -667,7 +687,9 @@ function createCore({
       const W = warm();
       W.seed([id], 1.0);
       const mems = store.current();
-      if (shouldSpread(mems, warmEdgeCap())) W.spread(edgesFor(mems));
+      if (shouldSpread(mems, warmEdgeCap())) {
+        W.spread(edgesFor(mems, W.now()), { live: liveIds(mems) });
+      }
     } catch { /* warmth must never break save */ }
   }
 
@@ -913,6 +935,7 @@ function createCore({
 
     let ranked;               // the top-k the model actually sees (return radius)
     let seedPool = [];        // wider top-K_SEARCH ids: the field's constraint walk seeds
+    let rankedScores = [];    // Phase 1 seed: [{ id, similarity }] — cosine, not activation
     try {
       // Embed the query as a query and only the records missing a stored vector
       // as documents. Split so server.js can apply embedder-specific roles
@@ -930,6 +953,7 @@ function createCore({
         .map((m) => ({ m, s: cosine(qv, m.embedding || fresh.get(String(m.id))) }))
         .sort((a, b) => b.s - a.s);
       ranked = scored.slice(0, k).map((x) => x.m);
+      rankedScores = scored.slice(0, k).map((x) => ({ id: x.m.id, similarity: x.s }));
       seedPool = scored.slice(0, K_SEARCH).map((x) => x.m.id);
 
       store.applyRecall(ranked.map((m) => m.id), fresh); // backfill + bump in one write
@@ -937,7 +961,9 @@ function createCore({
       const scored = mems
         .map((m) => ({ m, s: keywordScore(query, m.text) }))
         .sort((a, b) => b.s - a.s);
-      ranked = scored.slice(0, k).filter((x, i) => x.s > 0 || i === 0).map((x) => x.m);
+      const kwHits = scored.slice(0, k).filter((x, i) => x.s > 0 || i === 0);
+      ranked = kwHits.map((x) => x.m);
+      rankedScores = kwHits.map((x) => ({ id: x.m.id, similarity: x.s }));
       seedPool = scored.slice(0, K_SEARCH).map((x) => x.m.id);
       store.applyRecall(ranked.map((m) => m.id), null); // bump access even on fallback
     }
@@ -1032,19 +1058,20 @@ function createCore({
       } catch { /* the field is additive; never let it break recall */ }
     }
 
-    // Silent warm hook (PR1). Flags default off → this block does not run and
-    // 27/31 is the field's A/B, unchanged. When warmEnabled, decay/seed/spread
-    // run and E is observable via WarmField.trace, but `out` is not consulted
-    // — byte-identical to warm-off. Related: consumption is PR2; rank is PR3.
-    // I3: the whole path is in try/catch and degrades to the cosine `out` already
-    // built. I7: nothing here writes E to disk.
+    // Silent warm hook (Phase 1). Default ON so the signal exists to be
+    // measured; `out` is not consulted — byte-identical to warm-off. That
+    // identity is the ⛔ gate (rank entry is Phase 2.2). Decay is lazy
+    // wall-clock on get/spread (no decayAll, no turn clock). I3: the whole
+    // path is in try/catch and degrades to the cosine `out` already built.
+    // I7: nothing here writes E to disk. I5: no EdgeStore.save() either.
     try {
       if (warmEnabled()) {
         const W = warm();
-        W.decayAll({ turns: 1 });
         pruneWarm(W, mems);
-        W.seed(ranked.map((m) => m.id), 1.0);
-        if (shouldSpread(mems, warmEdgeCap())) W.spread(edgesFor(mems));
+        W.seedFromRetrieval(rankedScores);
+        if (shouldSpread(mems, warmEdgeCap())) {
+          W.spread(edgesFor(mems, W.now()), { live: liveIds(mems) });
+        }
         // Zero-cost when off: one boolean, no stringify, no iteration.
         if (warmTrace()) emitWarmTrace(W, { query, primary: ranked });
       }
