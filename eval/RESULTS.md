@@ -570,9 +570,13 @@ On `field-rescue` at either weight, after one recall:
 - `lemon bars` is a cosine seed (sim ≈ 0.66) → rank bonus 0 (no double-count).
 - `diabetic` is a spread node (sim `null`, E ≈ 0.202) → bonus 0.202.
 - Boost at w=0.3 is **+0.061**. That does not close rank-21 → top-5.
-- `vegetarian` on `field-rescue-veg` gets bonus **0** — the save-time
-  K=5 neighbor table never carried the leaf. Related: uses `field.js`
-  constraint-rescue (gate 0.45, K_SEARCH seeds), a **different graph**.
+- `vegetarian` on `field-rescue-veg` gets bonus **0**. The A/B probe
+  read this as "save-time K=5 never wired the leaf." **Correction
+  (Lane C, `docs/edge-density.md`):** the leaf *is* wired (degree 13,
+  risotto 0.520, ribeye 0.571). It is cosine rank **10** — inside
+  `K_SEARCH=15`, outside return-k=5 — so the combiner zeros seed
+  energy and bonus is 0 by construction. Related: still uses `field.js`
+  constraint-rescue (gate 0.45), a **different graph**.
 
 So this is not "activation is dead." Spread reaches the diabetic leaf.
 It is also not "we needed 2.3/2.4 to see a win" — competition /
@@ -592,6 +596,27 @@ two-turn corpus (diabetes then dessert, leftover warmth), Hebbian-strong
 low-semantic edges (field-on multi-turn, not save-time semantic), or a
 combiner willing to close gaps ≫ 0.06 — which is the override 2.2 said
 it would not do without 2.3/2.4.
+
+---
+
+## Lane C — edge-binding density / reachability (exploratory)
+
+**Date:** 2026-09-09 · **Reproduce:** `node eval/edge-density.js` · **Report:**
+[`docs/edge-density.md`](../docs/edge-density.md). **Golden:** 27/31, flag-off.
+
+Prior question to the combiner: can spread even *reach* the leaf? On the
+field-rescue / associative cases, **yes — 3/3 rescue leaves are
+graph-reachable at status-quo K=5 / 0.25**, with E above the activation
+floor. Vegetarian is a rank-10 seed (bonus 0 is the combiner). Diabetic
+and heights are 1-hop from a seed (E 0.202 / 0.167). Raising K, dropping
+the persist floor, complete-store rebind, and recall-time seed-kNN do
+not move those E numbers. Honest fork **(b)**: reachability is not the
+bottleneck on this corpus. Denser persist costs ~3× edges at K=15
+(hubs already at max-degree 35/140 at K=5; I8 will not prune them).
+`WARM_EDGE_CAP=512` already skips spread at S1 scale. Lane A should not
+A/B denser K as the primary lever; test a combiner that can use a
+seed outside return-k, with `adv-height-homonym` as the TBR control
+(heights-phobia is itself a rank-7 seed on the bookshelf query).
 
 ---
 

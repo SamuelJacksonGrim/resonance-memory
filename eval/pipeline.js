@@ -27,12 +27,14 @@
  */
 
 const { openEdgeStore } = require("../edges.js");
-const { createCore, cosine } = require("../memory-core.js");
+const { createCore, cosine, SAVE_TIME_K, SAVE_TIME_MIN_COS } = require("../memory-core.js");
 
 function createMemory({
   store, embed, fieldEnabled = false, edgesPath, ledgerPath,
   extractEnabled = false, extractCapable, extract, extractTimeoutMs,
   warmRank = false, warmRankWeight, warmRankSeedK, warmEnabled,
+  saveTimeK, saveTimeMinCos,
+  recallBind = false, recallBindK, recallBindMinCos,
 }) {
   // Lazy EdgeStore, exactly as server.js does it, so a field-off run never touches disk.
   // Persistence follows the injected Store (RM-07 slice 5): SqliteStore shares
@@ -60,8 +62,16 @@ function createMemory({
     warmRank: () => !!warmRank,
     warmRankWeight: warmRankWeight != null ? () => Number(warmRankWeight) : undefined,
     warmRankSeedK: warmRankSeedK != null ? () => Number(warmRankSeedK) : undefined,
+    // Pin save-time / recall-bind knobs unless the density harness asks.
+    // Do not read RESONANCE_SAVE_K from the process env — a leftover user
+    // flag must not move the golden (same posture as warmRank).
+    saveTimeK: saveTimeK != null ? () => Number(saveTimeK) : () => SAVE_TIME_K,
+    saveTimeMinCos: saveTimeMinCos != null ? () => Number(saveTimeMinCos) : () => SAVE_TIME_MIN_COS,
+    recallBind: () => !!recallBind,
+    recallBindK: recallBindK != null ? () => Number(recallBindK) : () => SAVE_TIME_K,
+    recallBindMinCos: recallBindMinCos != null ? () => Number(recallBindMinCos) : () => SAVE_TIME_MIN_COS,
   });
-  return { save: core.save, recall: core.recall };
+  return { save: core.save, recall: core.recall, getEdgeStore };
 }
 
 module.exports = { createMemory, cosine };

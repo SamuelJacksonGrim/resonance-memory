@@ -259,18 +259,22 @@ argument is always the smallest possible thing (`content`, `query`, or `id`).
    kept, never deleted. The cue is the precision gate; cosine only picks *which* memory the cue
    targets. Worst case: it retires nothing.
 9. **Append** the record to the JSONL store.
-10. **Save-time semantic bind (Phase 0.1).** If the record got a real vector, find its top-K=5
-   neighbors among existing stored vectors above cosine **0.25** and persist them on the
-   EdgeStore: measured `semantic.value` + `src_versions` tagged to the canonical endpoints,
-   `hebbian.weight = 0` (no seeded baseline), `provenance.origin = "save-time-neighbor"`.
-   No vector (embedder down) → bind nothing, don't throw. A bind that finds an already-
-   pruned pair revives it in place (0.4) rather than inserting a duplicate. This is a
-   sidecar write (I5
-   protects the JSONL store, not sidecars). **Recall does not read this table yet** —
-   `Related:` still comes from `field.js` at minSim **0.55**. The two thresholds are
-   different jobs: 0.55 is a tight gate for what *surfaces*; 0.25 is a looser net for
-   what's *worth persisting*. Do not unify them. (`SAVE_TIME_K` / `SAVE_TIME_MIN_COS` in
-   `memory-core.js`.)
+10. **Save-time semantic bind (Phase 0.1).** If the record got a real vector, find its
+   top-K neighbors among existing stored vectors above a min cosine and persist them on
+   the EdgeStore: measured `semantic.value` + `src_versions` tagged to the canonical
+   endpoints, `hebbian.weight = 0` (no seeded baseline), `provenance.origin =
+   "save-time-neighbor"`. Defaults **K=5 / 0.25** (`SAVE_TIME_K` / `SAVE_TIME_MIN_COS`);
+   env `RESONANCE_SAVE_K` / `RESONANCE_SAVE_MIN_COS` and live-config `save_k` /
+   `save_min_cos` override (eval/tests pin the constants). Do not lower the floor
+   below `SEMANTIC_PRUNE_GATE` (0.25) without also dropping the prune gate — those
+   edges are born already dead. No vector (embedder down) → bind nothing, don't throw.
+   A bind that finds an already-pruned pair revives it in place (0.4) rather than
+   inserting a duplicate. This is a sidecar write (I5 protects the JSONL store, not
+   sidecars). **Related: still comes from `field.js` at minSim 0.70.** The two
+   thresholds are different jobs: 0.70 is a tight gate for what *surfaces*; 0.25 is a
+   looser net for what's *worth persisting*. Do not unify them. Exploratory
+   `RESONANCE_WARM_RECALL_BIND` (default off) unions an ephemeral seed-kNN into the
+   Phase 1 spread walk without persisting (Lane C, `docs/edge-density.md`).
 
 ### `recall_memory({ query })`
 
@@ -408,7 +412,7 @@ similarity floor (~0.45) that made a global threshold connect everything. Three 
 ### `edges.js` — the unified edge table (Phase 0; was `ledger.js`)
 
 "Fire together, wire together." One persistent sidecar (`<store>.edges.json`) holding both
-signals. Phase 0.1 persists save-time semantic neighbors here (K=5, min cosine 0.25,
+signals. Phase 0.1 persists save-time semantic neighbors here (default K=5, min cosine 0.25,
 Hebbian weight 0); **recall still rebuilds semantic kNN in `field.js`** (minSim 0.70) and
 does not read the cached semantic signal yet. The two cosine thresholds are deliberate
 (Risk #2): recall's 0.70 is what the model *sees*, save's 0.25 is what is *worth writing*.

@@ -157,7 +157,8 @@ new golden case: `EVAL_REFRESH=1 npm run eval -- --store jsonl`. For a measureme
    vector (embedder down) → skip compare, append, don't crash. Thresholds are config
    (`RESONANCE_DEDUP_HI`/`LO` + live-config `dedup_hi`/`dedup_lo`), tuned on
    `eval/duplicates`. Then RM-03 cue-gated supersession, then append. A record that got
-   a real vector also binds its top-5 semantic neighbors (cosine ≥ 0.25) into the
+   a real vector also binds its top-K semantic neighbors (default K=5, cosine ≥ 0.25;
+   `RESONANCE_SAVE_K` / `RESONANCE_SAVE_MIN_COS`) into the
    EdgeStore; Hebbian weight starts at 0. Recall does not read those edges yet.
    Stores written *before* 02.b still carry the extras: `--dedup-existing` (dry-run
    default; `--apply` to mutate) runs the same bands over the current store, file
@@ -180,7 +181,7 @@ new golden case: `EVAL_REFRESH=1 npm run eval -- --store jsonl`. For a measureme
   associations / access counts, never a memory):
   - `<store>.edges.json` — unified edge table (`edges.js` EdgeStore) for
     JsonlStore. Hebbian weights are the source of truth; semantic scores are a
-    derived cache, filled at save-time for top-K neighbors (K=5, min cosine 0.25).
+    derived cache, filled at save-time for top-K neighbors (default K=5, min cosine 0.25).
     Discovery bonus uses `effectiveHebbian` (wall-clock half-life, computed on
     read, not stored). A reinforcing mutation materializes that computed weight,
     then applies α (Phase 0.3). Processed MCP request ids live in the same
@@ -287,7 +288,11 @@ activation compute, default **on**; `0`/`false`/`no` opt-out — does not rank),
 `RESONANCE_WARM_RANK` (exploratory: put spread-activation into primary rank as
 `cosine + 0.3·bonus`; default **off**; not the Phase 2.2 promotion),
 `RESONANCE_WARM_RANK_WEIGHT` (combiner weight, default 0.3, same cap as Related:
-maxBonus), `RESONANCE_WARM_TRACE` (stderr `[warm-trace]` JSON, default off). The embedder is **not bundled**
+maxBonus), `RESONANCE_WARM_TRACE` (stderr `[warm-trace]` JSON, default off),
+`RESONANCE_SAVE_K` / `RESONANCE_SAVE_MIN_COS` (save-time bind; defaults 5 / 0.25;
+live-config `save_k` / `save_min_cos`; eval pins the constants),
+`RESONANCE_WARM_RECALL_BIND` (ephemeral seed-kNN unioned into spread at recall;
+default **off**; does not persist). The embedder is **not bundled**
 — we depend on the `/v1/embeddings` *interface*, not a specific model, so any
 compatible embedding model can be swapped in.
 
