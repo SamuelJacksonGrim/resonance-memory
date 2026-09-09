@@ -797,12 +797,15 @@ function createCore({
     if (dup && dup.action === "restate") return confirmRestatement(dup.match, now);
     if (dup && dup.action === "merge") return commitMerge(rec, dup.match, mems, now, requestId);
 
-    // RM-03: does this correct a fact we already hold? A save carrying an explicit
-    // correction cue ("moved", "now", "no longer"...) retires the single most-similar
-    // current memory rather than piling a contradiction beside it. See docs/proposed
-    // /0002 and eval/RESULTS.md for why the cue - not cosine - is the precision gate.
-    const superseded = detectSupersession(rec, mems, cosine);
-    if (superseded) {
+    // RM-03: does this correct a fact we already hold? v2: exclusive-slot /
+    // polarity / numeric match retires even without a cue ("I work at Globex"
+    // after "I work at Acme"). v1 cue+cosine remains the paraphrase fallback
+    // (and the precision gate for anything that does not extract a slot).
+    // Hypothetical / ambiguous → keep both + needs_review, never retire.
+    // See docs/proposed/0002 and eval/RESULTS.md RM-03 v2.
+    const ss = detectSupersession(rec, mems, cosine);
+    if (ss && ss.action === "supersede" && ss.match) {
+      const superseded = ss.match;
       const p = supersedePatches(superseded, rec, now);
       Object.assign(rec, p.new);            // new memory carries supersedes/revision
       store.add(rec);                       // append the correction as current
@@ -813,6 +816,16 @@ function createCore({
       tryPrimeSave(rec.id);
       return "Saved — updated what I knew, retiring memory " + superseded.id +
              ". (" + store.current().length + " memories total.)";
+    }
+    if (ss && ss.action === "review") {
+      rec.needs_review = true;
+      store.add(rec);
+      if (ss.match) {
+        try { store.update(ss.match.id, { needs_review: true, modified: now }); } catch { /* keep-both must not throw */ }
+      }
+      tryBindSaveTime(rec, mems, requestId);
+      tryPrimeSave(rec.id);
+      return "Saved. (" + store.current().length + " memories total.)";
     }
     store.add(rec);
     tryBindSaveTime(rec, mems, requestId);

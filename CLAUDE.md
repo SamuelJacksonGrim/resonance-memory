@@ -45,7 +45,7 @@ roadmap, and per-repo backlog live in the companion repo
 | `server.js` | The MCP server. Declares the four verbs (tool schemas + descriptions), wires the environment (network embed, live field toggle, live extract toggle, lazy ledger) into the shared core, and runs the JSON-RPC stdio loop. Reads the version from `package.json` so `serverInfo` can't drift. Outbound MCP `sampling/createMessage` is the Tier 2 path when the client advertised sampling. |
 | `memory-core.js` | **The four cognitive verbs, as ONE implementation.** `createCore({ store, embed, fieldEnabled, getEdgeStore, dedupThresholds, fieldMinSim, extractEnabled, extract })` returns `{ save, recall, edit, remove }`. Also owns `dedupExisting` / `planDedupExisting` (RM-02.c) so the `--dedup-existing` backfill cannot fork the 02.b bands. Everything environment-specific is *injected*, nothing reached for — so `server.js` (network embedder) and `eval/pipeline.js` (cached embedder) build on the exact same code. This is deliberate: two copies of the recall path is the drift the RM-00 harness exists to catch. |
 | `extract.js` | RM-01.c Tier 2: the opt-in LLM extraction pass (prompt, parser, sanity gate, chat POST, MCP sampling, capability detect). `save()` in `memory-core.js` is the only caller. Off by default. |
-| `record.js` | The shared record schema (`normalize()`), durable atomic writes (`writeFileDurable()`), the access sidecar (`AccessLog`), and the lexical heuristics (constraint typing, historical-query detection, supersession cues + `detectSupersession`, cosine-banded `detectNearDuplicate` + `pickMergeSurvivor`). Owned here so the server and panel agree on a record byte-for-byte. |
+| `record.js` | The shared record schema (`normalize()`), durable atomic writes (`writeFileDurable()`), the access sidecar (`AccessLog`), and the lexical heuristics (constraint typing, historical-query detection, RM-03 `detectSupersession` — cue-gated v1 + silent exclusive-slot / polarity / numeric v2 — plus cosine-banded `detectNearDuplicate` + `pickMergeSurvivor`). Owned here so the server and panel agree on a record byte-for-byte. |
 | `store.js` | Store seam. `openStore()` is the default-switch path (RM-07 slice 4): SQLite is the default; existing JSONL auto-migrates on first open via the 2a protocol; a failed migrate fail-opens to JSONL. Slice 5 also ingests a leftover `.edges.json` into the edges table on that first-open. `RESONANCE_STORE=jsonl` / live-config `store: "jsonl"` pins JSONL. Same method surface so `memory-core.js` does not change. See `docs/proposed/0010`. |
 | `store-sqlite.js` | RM-07 `SqliteStore`: `node:sqlite` `DatabaseSync`, WAL + `synchronous=FULL`, BLOB embeddings, in-process Float32 cache, in-table access counts. Never constructs `AccessLog`. |
 | `migrate-sqlite.js` | RM-07 slice 2a: streaming JSONL→SQLite migrator (10-step protocol). Opt-in CLI (`--migrate`); `openStore()` calls the same function on first open of an existing JSONL (slice 4). `.bak` is a recovery snapshot, not the sovereignty export. |
@@ -155,7 +155,12 @@ new golden case: `EVAL_REFRESH=1 npm run eval -- --store jsonl`. For a measureme
    text, union metadata, link the loser with `superseded_by` — never a hard delete). No
    vector (embedder down) → skip compare, append, don't crash. Thresholds are config
    (`RESONANCE_DEDUP_HI`/`LO` + live-config `dedup_hi`/`dedup_lo`), tuned on
-   `eval/duplicates`. Then RM-03 cue-gated supersession, then append. A record that got
+   `eval/duplicates`. Then RM-03 supersession: exclusive-slot / polarity / numeric
+   value-swaps retire even without a cue ("I work at Globex" after "I work at Acme");
+   cue + cosine argmax remains the paraphrase fallback; hypothetical / additive
+   markers keep both and set `needs_review`. A same-slot value swap is not a
+   duplicate — `detectNearDuplicate` yields to RM-03 rather than merging the
+   longer (often stale) text. Then append. A record that got
    a real vector also binds its top-5 semantic neighbors (cosine ≥ 0.25) into the
    EdgeStore; Hebbian weight starts at 0. Recall does not read those edges yet.
    Stores written *before* 02.b still carry the extras: `--dedup-existing` (dry-run

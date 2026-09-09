@@ -1,14 +1,16 @@
 # 0002 — Temporal metadata and supersession
 
-**Status:** proposed · **Backlog:** `RM-04` (schema), `RM-03` (logic) · **Depends on:** `RM-00`
+**Status:** proposed · **Backlog:** `RM-04` (schema, shipped), `RM-03` (logic, v2 shipped) · **Depends on:** `RM-00`
 
 ## Problem
 
 > **Status:** the schema half (`RM-04`) **shipped** — `valid_from` / `valid_to` /
 > `last_confirmed` / `superseded_by` / `supersedes` / `revision` are live in `record.js`,
 > recall filters to currently-true memories, and `supersedePatches()` + `updateMany()` apply a
-> supersession atomically. What is still missing is `RM-03`: the *detection* logic that decides
-> **when** to call them. The problem statement below describes the situation before `RM-04`.
+> supersession atomically. `RM-03` v2 detection has also shipped (cue-gated v1 + silent
+> exclusive-slot / polarity / numeric; `staleness_rate` 0.4889 → 0.0889). Optional Tier 2
+> LLM adjudication remains open. The problem statement below describes the situation
+> before `RM-04`.
 
 Before this work, the store had no concept of *when a fact was true* — only `created` /
 `modified`. So:

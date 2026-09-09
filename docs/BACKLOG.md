@@ -155,28 +155,36 @@ See [`eval/RESULTS.md`](../eval/RESULTS.md) RM-02.c.
 
 ---
 
-### `RM-03` — Contradiction and supersession · **L** · `in progress` — v1 (cue-gated) shipped & ON
+### `RM-03` — Contradiction and supersession · **L** · ✅ `done` for v2 detection — v1 cue-gated + v2 silent-slot shipped & ON
 
 Follow Graphiti's proven shape: **invalidate, never delete.** v1 landed in `b143e2d`
-(cue-gated, argmax-limited, on by default — worst case retires nothing).
+(cue-gated, argmax-limited, on by default — worst case retires nothing). v2 adds silent
+same-slot detection; measured on `eval/corpora/contradictions.jsonl`.
 
 - [x] On save, find high-similarity prior memories that are *not* duplicates (the
       "same subject, different value" band) via a contradiction check.
-- [~] Detection: **explicit correction markers shipped** (cue-gated — "actually", "now",
-      "no longer", "moved to"…, argmax-limited). *(negation-flip and numeric/date-change
-      heuristics + optional Tier 2 LLM adjudication reusing the `RM-01` endpoint: still open.)*
+- [x] Detection: **cue-gated v1** ("actually", "now", "no longer", "moved"…, argmax,
+      floor 0.535) **plus silent exclusive-slot / polarity / numeric v2**. A same-slot
+      value swap is not an RM-02 merge. `correction:` colon-boundary fixed.
+      *(optional Tier 2 LLM adjudication reusing the `RM-01` endpoint: still open,
+      off by default — would not move the offline number.)*
 - [x] On confirmed contradiction: set old `valid_to = new.valid_from`, `superseded_by = new.id`.
       **Both rows are kept** — non-overlapping validity chain, history preserved. *(first live
       writer of the bi-temporal model, via `supersedePatches()`.)*
 - [x] Recall prefers current facts; superseded surface only when the query is explicitly
       historical ("used to", "before", "last year").
-- [~] Ambiguous cases keep **both** and mark `needs_review` — never guess destructively.
-      *(the conservative cue-gate covers this today; richer adjudication rides with the
-      heuristics above.)*
+- [x] Ambiguous / hypothetical cases keep **both** and mark `needs_review` — never guess
+      destructively. (v2: slot collision + `might` / `considering` / `too` → review, not retire.)
 
 **Acceptance:** `staleness_rate` drops ≥70% on `eval/contradictions`; **zero** cases where a
 still-true fact is wrongly invalidated (this metric is a hard gate — a false supersession is
 worse than a miss).
+**Met (v2):** `staleness_rate` 0.4889 → **0.0889** (81.8% drop, bar was ≤0.1467);
+`silent` 1.0000 → **0.0000**; `false_supersession` **0.0000** on guard / ambiguous /
+needs_review. Overall 0.0256 is the pre-existing RM-02 merge hit on
+`contra-samename-same-role`, unchanged. Residual 4/45: cue-below-floor paraphrases
+(`renamed her Nova`, `switched to Neovim`) and a narrative coffee blob. See
+[`eval/RESULTS.md`](../eval/RESULTS.md) RM-03 v2.
 
 Design: [`proposed/0002`](proposed/0002-temporal-supersession.md).
 

@@ -42,11 +42,12 @@
  *                      Same sidecar pattern as ledger.js.
  *
  * Decision helpers also live here so they stay pure and testable: constraint
- * typing, historical-query detection, RM-03 cue-gated detectSupersession,
- * RM-02.b cosine-banded detectNearDuplicate / pickMergeSurvivor, and RM-01.b
- * write-side extraction (normalizeText / splitFacts / guardSecrets /
- * prepareWrite). Callers own persistence. `normalize()` is the record schema
- * — do not overload it for incoming text; that job is `normalizeText`.
+ * typing, historical-query detection, RM-03 detectSupersession (cue-gated
+ * v1 + silent exclusive-slot / polarity / numeric v2), RM-02.b cosine-banded
+ * detectNearDuplicate / pickMergeSurvivor, and RM-01.b write-side extraction
+ * (normalizeText / splitFacts / guardSecrets / prepareWrite). Callers own
+ * persistence. `normalize()` is the record schema — do not overload it for
+ * incoming text; that job is `normalizeText`.
  *
  * Temporal fields (RM-04) are defined here too - see docs/proposed/0002.
  */
@@ -192,36 +193,252 @@ function isHistoricalQuery(q) { return HISTORICAL_RE.test(String(q || "")); }
  * Deliberately about replacement ("moved", "now", "no longer"), not history
  * ("used to"), which is a HISTORICAL_RE cue that surfaces the old fact instead of
  * retiring it. See detectSupersession for why this lexical gate is load-bearing.
+ *
+ * `update:` / `correction:` sit OUTSIDE the trailing `\b`. JS `\b` is a word/
+ * non-word edge, and both `:` and the following space are non-word, so
+ * `\b(correction:)\b` never fired on "Correction: my sister's birthday…"
+ * (measured miss on contra-numeric-cue-bday). The colon is the labeled-prefix
+ * marker; requiring it keeps "I need a correction on the invoice" from firing.
  */
 const SUPERSEDE_CUE_RE =
-  /\b(actually|now|nowadays|no longer|anymore|as of|currently|instead|moved|relocated|switched|became|update:|correction:)\b/i;
+  /\b(actually|now|nowadays|no longer|anymore|as of|currently|instead|moved|relocated|switched|became)\b|\b(?:update|correction):/i;
 function hasSupersedeCue(t) { return SUPERSEDE_CUE_RE.test(String(t || "")); }
 
 /*
- * Decide whether a newly-saved memory supersedes an existing CURRENT one (RM-03).
- *
- * Measured reality (eval/RESULTS.md, "RM-03"): on the shipped embedder a same-slot
- * update ("Actually I work at Globex now" vs "I work at Acme", cos 0.57) and a
- * DIFFERENT-slot statement in the same voice ("...Globex now" vs "I live in Austin",
- * cos 0.51) are only ~0.05 apart. Cosine alone cannot tell a correction from a
- * coincidental resemblance, so we:
- *   1. require an explicit correction cue in the new text (the precision gate), and
- *   2. retire only the SINGLE most-similar current memory, and only above a floor.
- * The cue carries the precision; cosine only picks which memory the cue targets.
- *
- * Pure: returns the memory record to supersede, or null. Caller owns persistence.
+ * Hypothetical / incomplete-correction language. A wrong retirement is worse
+ * than a miss (BACKLOG RM-03 hard-zero on false_supersession), so these never
+ * retire — they may mark needs_review when they collide with an exclusive slot.
+ * "becoming" is not `became`; "move" is not `moved`; those v1 misses stay
+ * misses unless a slot collision + this gate promotes them to review.
  */
-function detectSupersession(newRec, currentMems, cosineFn, opts = {}) {
-  const minSim = typeof opts.minSim === "number" ? opts.minSim : 0.535;
-  if (!newRec || !newRec.embedding) return null;      // no vector -> can't target one
-  if (!hasSupersedeCue(newRec.text)) return null;     // no correction intent -> keep both
+const SUPERSEDE_HYPOTHETICAL_RE =
+  /\b(?:might|maybe|considering|thinking about|hoping to|planning to|would like to|i think i might|not (?:yet )?accepted|haven['’]t accepted|have not accepted)\b/i;
+function isSupersedeHypothetical(t) { return SUPERSEDE_HYPOTHETICAL_RE.test(String(t || "")); }
+
+/*
+ * Additive markers: the new fact is ANOTHER value, not a replacement.
+ * Silent-slot replace must not fire ("I have a place in Denver too",
+ * "and also freelance"). The cue path still can: "I also moved to Denver"
+ * is a real correction and v1 already handled it.
+ */
+const SUPERSEDE_ADDITIVE_RE = /\b(?:too|as well|in addition|and also|also)\b/i;
+function isSupersedeAdditive(t) { return SUPERSEDE_ADDITIVE_RE.test(String(t || "")); }
+
+function canonSlotValue(s) {
+  return String(s || "")
+    .toLowerCase()
+    .replace(/[\u2018\u2019\u201c\u201d']/g, "")
+    .replace(/[.,;:!?()]+/g, " ")
+    .replace(/\b(?:these days|right now|currently|today|yesterday|last month|this month|last week|this week|now)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function addSlot(slots, key, value) {
+  const v = canonSlotValue(value);
+  if (!key || !v) return;
+  if (!slots.has(key)) slots.set(key, v);
+}
+
+/*
+ * Closed-class exclusive slots (RM-03 v2). A silent same-slot correction is
+ * "I work at Acme" → "I work at Globex": same predicate, different filler,
+ * cardinality 1. Additive frames (speak / allergic to / like-different-object
+ * / have-a-DIFFERENT-pet-type / sister-vs-brother) are deliberately absent —
+ * those are the guard band a generic 1-span aligner would eat.
+ *
+ * v1 measurement (eval/RESULTS.md RM-03 seed): silent band stale=1.0000;
+ * catching that mass is the 70% drop. Cosine cannot do it (same-slot vs
+ * cross-slot is ~0.05 apart; cue was the precision gate). Slot keys are
+ * assigned from text here, never by the model (I4 / small-model-safe).
+ *
+ * `used to` frames yield no current slot — they are history, not a live claim.
+ */
+function extractFactSlots(text) {
+  const t = String(text || "").trim();
+  const slots = new Map();
+  if (!t) return slots;
+  if (/\bused to\b/i.test(t)) return slots;
+
+  let m;
+  if ((m = t.match(/\b(?:live|lived|living)\s+in\s+(.+?)(?:\s+and\b|[.,;]|$)/i))) {
+    addSlot(slots, "residence", m[1]);
+  }
+  // I/we must be in the sentence so "Project Magpie moved to Sable's team"
+  // cannot steal the residence slot. Intervening tokens are allowed so
+  // "I think I might move to Denver" still extracts (then the hypothetical
+  // gate keeps it at needs_review, never a retirement).
+  if (/\b(?:i|we)\b/i.test(t) &&
+      (m = t.match(/\b(?:moved|relocated|move|moving)\s+to\s+(.+?)(?:\s+and\b|[.,;]|$)/i))) {
+    addSlot(slots, "residence", m[1]);
+  }
+  if ((m = t.match(/\bwork(?:ing)?\s+at\s+(.+?)(?:\s+and\b|\s+as\b|[.,;]|$)/i))) {
+    addSlot(slots, "employer", m[1]);
+  }
+  if ((m = t.match(/\b(?:my\s+)?employer\s+is\s+(.+?)(?:\s+and\b|[.,;]|$)/i))) {
+    addSlot(slots, "employer", m[1]);
+  }
+  if ((m = t.match(/\bi(?:'m| am| became)\s+(?:a|an)\s+.+?\s+at\s+(.+?)(?:\s+and\b|[.,;]|$)/i))) {
+    addSlot(slots, "employer", m[1]);
+  }
+  if ((m = t.match(/\bon the\s+(.+?)\s+team\b/i))) {
+    addSlot(slots, "team", m[1]);
+  }
+  if ((m = t.match(/\bphone number is\s+(.+)$/i))) {
+    addSlot(slots, "phone", m[1]);
+  }
+  if ((m = t.match(/\bmy favorite\s+(\w+)\s+is\s+(.+)$/i))) {
+    addSlot(slots, "favorite:" + canonSlotValue(m[1]), m[2]);
+  }
+  if ((m = t.match(/\bdrive\s+(?:a|an)\s+(.+)$/i))) {
+    addSlot(slots, "vehicle", m[1]);
+  }
+  if ((m = t.match(/\bwrite code in\s+(.+)$/i))) {
+    addSlot(slots, "editor", m[1]);
+  }
+  if ((m = t.match(/\b(?:laptop|computer|pc)\s+runs\s+(.+)$/i))) {
+    addSlot(slots, "os", m[1]);
+  }
+  if ((m = t.match(/\bthe\s+(.+?)\s+(?:is at|moved to)\s+(.+)$/i))) {
+    addSlot(slots, "event_time:" + canonSlotValue(m[1]), m[2]);
+  }
+  if ((m = t.match(/\beat lunch at\s+(.+)$/i))) {
+    addSlot(slots, "lunch_time", m[1]);
+  }
+  if ((m = t.match(/\bhave\s+(?:a|an)\s+(\w+)\s+named\s+(\w+)\b/i))) {
+    addSlot(slots, "pet:" + canonSlotValue(m[1]), m[2]);
+  }
+  if ((m = t.match(/\bcoffee order is\s+(.+)$/i))) {
+    addSlot(slots, "coffee", m[1]);
+  }
+  if ((m = t.match(/\b(.+?'s birthday)\s+is\s+(.+)$/i))) {
+    addSlot(slots, "birthday:" + canonSlotValue(m[1]), m[2]);
+  }
+  if ((m = t.match(/\bhave\s+(\d+)\s+(\w+)\b/i))) {
+    addSlot(slots, "count:" + canonSlotValue(m[2]), m[1]);
+  }
+  if ((m = t.match(/\bi(?:'m| am)\s+an?\s+(introvert|extrovert)\b/i))) {
+    addSlot(slots, "identity:intro_extro", m[1]);
+  }
+  if ((m = t.match(/\bi(?:'m| am)\s+(single|married|divorced|engaged)\b/i))) {
+    addSlot(slots, "relationship", m[1]);
+  }
+  if (/\beat meat\b/i.test(t)) addSlot(slots, "diet", "meat");
+  if ((m = t.match(/\b(vegetarian|vegan|pescatarian)\b/i))) {
+    addSlot(slots, "diet", m[1]);
+  }
+
+  // Polarity on the SAME object (like cilantro / hate cilantro). Different
+  // objects ("like coffee" vs "like tea") are different keys — additive, the
+  // contra-guard-drinks trap. Skip infinitive "like to".
+  if (!/\bwould like\b/i.test(t)) {
+    const neg = t.match(/\b(?:don't like|do not like|dont like|hate|hates|dislike|dislikes)\s+(?!to\b)(.+)$/i);
+    const pos = !neg && t.match(/\b(?:like|love|enjoy|likes|loves|enjoys)\s+(?!to\b)(.+)$/i);
+    const hit = neg || pos;
+    if (hit) {
+      const obj = canonSlotValue(hit[1]);
+      const nTok = obj ? obj.split(" ").length : 0;
+      if (obj && nTok > 0 && nTok <= 6) {
+        addSlot(slots, "pref:" + obj, neg ? "neg" : "pos");
+      }
+    }
+  }
+  return slots;
+}
+
+function findSlotConflict(newText, currentMems) {
+  const newSlots = extractFactSlots(newText);
+  if (!newSlots.size) return null;
+  const hits = [];
+  for (const mem of currentMems || []) {
+    if (!mem || String(mem.text || "") === String(newText || "")) continue;
+    const oldSlots = extractFactSlots(mem.text);
+    if (!oldSlots.size) continue;
+    for (const [key, newVal] of newSlots) {
+      if (!oldSlots.has(key)) continue;
+      const oldVal = oldSlots.get(key);
+      if (oldVal === newVal) continue;
+      hits.push({ mem, key, oldVal, newVal });
+    }
+  }
+  if (!hits.length) return null;
+
+  const byKey = new Map();
+  for (const h of hits) {
+    if (!byKey.has(h.key)) byKey.set(h.key, []);
+    const arr = byKey.get(h.key);
+    if (!arr.some((x) => String(x.mem.id) === String(h.mem.id))) arr.push(h);
+  }
+  for (const [key, arr] of byKey) {
+    if (arr.length > 1) {
+      return { kind: "ambiguous", match: arr[0].mem, key, hits };
+    }
+  }
+  const memIds = new Set(hits.map((h) => String(h.mem.id)));
+  if (memIds.size > 1) {
+    return { kind: "ambiguous", match: hits[0].mem, key: hits[0].key, hits };
+  }
+  return { kind: "replace", match: hits[0].mem, key: hits[0].key, hits };
+}
+
+function cueCosineTarget(newRec, currentMems, cosineFn, minSim) {
+  if (!newRec || !newRec.embedding) return null;
   let best = null, bestSim = -Infinity;
-  for (const m of currentMems) {
+  for (const m of currentMems || []) {
     if (!m || String(m.id) === String(newRec.id) || !m.embedding) continue;
     const s = cosineFn(newRec.embedding, m.embedding);
     if (s > bestSim) { bestSim = s; best = m; }
   }
   return (best && bestSim >= minSim) ? best : null;
+}
+
+/*
+ * Decide whether a newly-saved memory supersedes an existing CURRENT one (RM-03).
+ *
+ * Two independent targeting paths; both are server-side (I4). Ranking is
+ * untouched (I2) — this only decides whether to call supersedePatches.
+ *
+ *   1. Exclusive-slot / polarity / numeric (v2). Same closed-class key, different
+ *      filler. Does not need a vector (lexical). Hypothetical / additive markers
+ *      never retire; a slot collision on those becomes `{ action: "review" }`
+ *      (keep both, needs_review) instead of a guess.
+ *   2. Cue + cosine argmax (v1). Explicit correction cue AND the single most-
+ *      similar current memory above 0.535. The cue is still the precision gate
+ *      for paraphrases that do not extract a slot ("I switched to Neovim").
+ *      Floor is the measured 0.05 same-slot/cross-slot margin — do not lower it.
+ *
+ * Returns `{ action: "supersede"|"review", match, reason }` or null.
+ * Caller owns persistence. A wrong retirement is worse than a miss.
+ *
+ * Measured: eval/corpora/contradictions.jsonl, eval/RESULTS.md RM-03 v2.
+ */
+function detectSupersession(newRec, currentMems, cosineFn, opts = {}) {
+  const minSim = typeof opts.minSim === "number" ? opts.minSim : 0.535;
+  if (!newRec) return null;
+  const newText = String(newRec.text || "");
+  if (!newText) return null;
+
+  const hypo = isSupersedeHypothetical(newText);
+  const additive = isSupersedeAdditive(newText);
+  const conflict = findSlotConflict(newText, currentMems);
+
+  if (hypo) {
+    if (conflict) return { action: "review", match: conflict.match, reason: "hypothetical", key: conflict.key };
+    return null;
+  }
+  if (conflict && conflict.kind === "ambiguous") {
+    return { action: "review", match: conflict.match, reason: "ambiguous", key: conflict.key };
+  }
+  if (conflict && conflict.kind === "replace" && !additive) {
+    return { action: "supersede", match: conflict.match, reason: "silent-slot", key: conflict.key };
+  }
+  if (additive && conflict && conflict.kind === "replace") {
+    return { action: "review", match: conflict.match, reason: "additive", key: conflict.key };
+  }
+
+  if (!hasSupersedeCue(newText)) return null;
+  const best = cueCosineTarget(newRec, currentMems, cosineFn, minSim);
+  return best ? { action: "supersede", match: best, reason: "cue" } : null;
 }
 
 /*
@@ -256,6 +473,13 @@ function hasVector(r) {
  * against nomic-embed-text-v1.5 — see memory-core.js DEDUP_HI / DEDUP_LO
  * and eval/RESULTS.md RM-02.a geometry. ≥ hi (not >): a pair sitting
  * exactly on the restatement floor keeps the original rather than merging.
+ *
+ * Exclusive-slot VALUE swaps are not duplicates. "The Friday standup is at
+ * 10am" vs "…at 3pm" sits in the merge/HI band because the frames are
+ * near-identical; pickMergeSurvivor then keeps the longer (often stale)
+ * text and RM-03 never runs. That was the measured silent-standup / phone
+ * / lunch / birthday miss. Same-slot same-value elaborations ("a cat named
+ * Koneko" → "a black cat named Koneko") still merge — the filler matches.
  */
 function detectNearDuplicate(newRec, currentMems, cosineFn, opts = {}) {
   const hi = typeof opts.hi === "number" ? opts.hi : 0.95;
@@ -268,6 +492,12 @@ function detectNearDuplicate(newRec, currentMems, cosineFn, opts = {}) {
     if (s > bestSim) { bestSim = s; best = m; }
   }
   if (!best || !Number.isFinite(bestSim)) return null;
+  if (bestSim >= lo) {
+    const conflict = findSlotConflict(newRec.text, [best]);
+    if (conflict && (conflict.kind === "replace" || conflict.kind === "ambiguous")) {
+      return null;
+    }
+  }
   if (bestSim >= hi) return { action: "restate", match: best, cosine: bestSim };
   if (bestSim >= lo) return { action: "merge", match: best, cosine: bestSim };
   return null;
@@ -579,7 +809,7 @@ class AccessLog {
 module.exports = {
   writeFileDurable, appendLineDurable,
   normalize, isCurrent, isHistoricalQuery, supersedePatches,
-  detectSupersession, hasSupersedeCue, SUPERSEDE_CUE_RE,
+  detectSupersession, hasSupersedeCue, SUPERSEDE_CUE_RE, extractFactSlots,
   detectNearDuplicate, pickMergeSurvivor,
   detectConstraint, CONSTRAINT_RE,
   normalizeText, splitFacts, guardSecrets, prepareWrite, isStandaloneFact,

@@ -10,7 +10,7 @@ an opaque `id`.
 | File | What it is |
 |---|---|
 | `server.js` | The MCP server. Four verbs: `save_memory`, `recall_memory`, `edit_memory`, `delete_memory`. |
-| `record.js` | The shared record schema (incl. temporal fields and `embedding_version`), durable atomic writes, and the access sidecar. |
+| `record.js` | The shared record schema (incl. temporal fields and `embedding_version`), durable atomic writes, the access sidecar, and RM-03 `detectSupersession` (cue-gated v1 + silent-slot v2). |
 | `store.js` | Store seam. `openStore()` default-switch (slice 4): SQLite default; JSONL auto-migrates on first open; fail-open to JSONL. Slice 5 also ingests a leftover `.edges.json` into the same `.db`. `RESONANCE_STORE=jsonl` pins JSONL. |
 | `test.js` | Dependency-free test suite: `npm test`. |
 | `package.json` | No dependencies — scripts only (`test`, `build`, `panel`, `mcp`, `seed`, `inspect`, `dedup-existing`, `migrate`, `export`, `import`). Sole source of the version string; `server.js` reads it so `serverInfo` can't drift. |
@@ -67,7 +67,14 @@ an opaque `id`.
 - Embed **once** at save; recall embeds only the query, then cosine vs stored vectors.
   Save also runs cosine-banded dedup (RM-02.b): ≥ 0.95 restates, 0.88–0.95 merges
   (longer original text, loser linked with `superseded_by`). Thresholds are config
-  (`RESONANCE_DEDUP_HI` / `RESONANCE_DEDUP_LO`).
+  (`RESONANCE_DEDUP_HI` / `RESONANCE_DEDUP_LO`). An exclusive-slot *value swap*
+  (same predicate, different filler — "standup at 10am" vs "3pm") is not a
+  duplicate: `detectNearDuplicate` returns null and RM-03 supersedes.
+- **RM-03 v2 supersession** (on by default, server-side): silent same-slot
+  corrections, polarity flips, and numeric/date swaps retire the old row
+  (`valid_to` / `superseded_by`) even without a cue. Cue + cosine argmax
+  (floor 0.535) remains the paraphrase fallback. Hypothetical / additive
+  language keeps both and sets `needs_review`. Ranking is untouched.
 - **`--dedup-existing`** (RM-02.c) is the offline pass for stores written before
   02.b. Dry-run default (`npm run dedup-existing`); `--apply` is one durable
   rewrite. File-order, each record vs earlier survivors — the same

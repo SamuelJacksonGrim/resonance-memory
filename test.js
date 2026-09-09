@@ -39,7 +39,7 @@ const assert = require("assert");
 const {
   writeFileDurable, appendLineDurable,
   normalize, isCurrent, isHistoricalQuery, supersedePatches, AccessLog,
-  detectSupersession, hasSupersedeCue,
+  detectSupersession, hasSupersedeCue, extractFactSlots,
   detectNearDuplicate, pickMergeSurvivor,
   normalizeText, splitFacts, guardSecrets, prepareWrite, isStandaloneFact,
   isVector, hasVector,
@@ -178,6 +178,7 @@ section("supersession detection (RM-03)");
 // Supersession only ever calls cosineFn(newRec.embedding, m.embedding).
 const simStub = (_new, mem) => mem[0];
 const mem = (id, text, sim) => ({ id, text, embedding: [sim] });
+function ssMatch(d) { return d && d.action === "supersede" ? d.match : null; }
 
 test("hasSupersedeCue fires on correction language, not on history", () => {
   assert.strictEqual(hasSupersedeCue("Actually I work at Globex now"), true);
@@ -185,12 +186,18 @@ test("hasSupersedeCue fires on correction language, not on history", () => {
   assert.strictEqual(hasSupersedeCue("I no longer eat meat"), true);
   assert.strictEqual(hasSupersedeCue("I have a cat named Whiskers"), false);
   assert.strictEqual(hasSupersedeCue("I used to work at Acme"), false, "'used to' is historical, not a retirement cue");
+  assert.strictEqual(hasSupersedeCue("Correction: my sister's birthday is March 5th"), true,
+    "correction: must fire when a space follows the colon (v1 \\b after colon missed this)");
+  assert.strictEqual(hasSupersedeCue("I need a correction on the invoice"), false,
+    "bare 'correction' without a colon is not a labeled prefix");
 });
 
 test("detectSupersession: cue + above floor retires the most-similar memory", () => {
   const newRec = { id: 2, text: "Actually I work at Globex now", embedding: [1] };
   const cur = [mem(1, "I work at Acme", 0.57)];
-  assert.strictEqual(detectSupersession(newRec, cur, simStub), cur[0]);
+  const d = detectSupersession(newRec, cur, simStub);
+  assert.strictEqual(ssMatch(d), cur[0]);
+  assert.ok(d.reason === "silent-slot" || d.reason === "cue");
 });
 
 test("detectSupersession: no correction cue -> keep both (additive)", () => {
@@ -208,20 +215,147 @@ test("detectSupersession: cue but below floor -> cross-slot, keep both", () => {
 test("detectSupersession: picks the argmax, not just any above-floor memory", () => {
   const newRec = { id: 3, text: "Actually I work at Globex now", embedding: [1] };
   const cur = [mem(1, "I live in Austin", 0.54), mem(2, "I work at Acme", 0.57)];
-  assert.strictEqual(detectSupersession(newRec, cur, simStub), cur[1], "the employer, not the city");
+  assert.strictEqual(ssMatch(detectSupersession(newRec, cur, simStub)), cur[1], "the employer, not the city");
 });
 
-test("detectSupersession: a vectorless new memory can't target anything", () => {
-  const newRec = { id: 2, text: "Actually I work at Globex now", embedding: null };
-  const cur = [mem(1, "I work at Acme", 0.99)];
+test("detectSupersession: a vectorless cue paraphrase without a slot can't target", () => {
+  // Cue path still needs a vector to pick a target. "switched to Neovim" does
+  // not extract the editor slot, so without an embedding there is nothing to
+  // aim at. (Silent slot match, below, does NOT need a vector.)
+  const newRec = { id: 2, text: "I switched to Neovim", embedding: null };
+  const cur = [mem(1, "I write code in VS Code", 0.99)];
   assert.strictEqual(detectSupersession(newRec, cur, simStub), null);
 });
 
 test("detectSupersession: honors a custom minSim", () => {
   const newRec = { id: 2, text: "I switched to decaf now", embedding: [1] };
   const cur = [mem(1, "I drink regular coffee", 0.60)];
-  assert.strictEqual(detectSupersession(newRec, cur, simStub, { minSim: 0.7 }), null);
-  assert.strictEqual(detectSupersession(newRec, cur, simStub, { minSim: 0.5 }), cur[0]);
+  assert.strictEqual(ssMatch(detectSupersession(newRec, cur, simStub, { minSim: 0.7 })), null);
+  assert.strictEqual(ssMatch(detectSupersession(newRec, cur, simStub, { minSim: 0.5 })), cur[0]);
+});
+
+test("detectSupersession: silent same-slot job swap retires without a cue", () => {
+  const newRec = { id: 2, text: "I work at Globex", embedding: [1] };
+  const cur = [mem(1, "I work at Acme", 0.4)];  // below the cue floor; slot is enough
+  const d = detectSupersession(newRec, cur, simStub);
+  assert.strictEqual(d && d.action, "supersede");
+  assert.strictEqual(d.match, cur[0]);
+  assert.strictEqual(d.reason, "silent-slot");
+});
+
+test("detectSupersession: silent slot match does not need a vector", () => {
+  const newRec = { id: 2, text: "I live in Denver", embedding: null };
+  const cur = [mem(1, "I live in Austin", 0.99)];
+  const d = detectSupersession(newRec, cur, simStub);
+  assert.strictEqual(d && d.action, "supersede");
+  assert.strictEqual(d.match, cur[0]);
+});
+
+test("detectSupersession: same pet type, different name is a rename (not additive)", () => {
+  const newRec = { id: 2, text: "I have a dog named Nova", embedding: [1] };
+  const cur = [mem(1, "I have a dog named Biscuit", 0.9)];
+  assert.strictEqual(ssMatch(detectSupersession(newRec, cur, simStub)), cur[0]);
+});
+
+test("detectSupersession: polarity flip on the same object retires", () => {
+  const newRec = { id: 2, text: "I hate cilantro", embedding: [1] };
+  const cur = [mem(1, "I like cilantro", 0.9)];
+  assert.strictEqual(ssMatch(detectSupersession(newRec, cur, simStub)), cur[0]);
+});
+
+test("detectSupersession: silent date swap on the same birthday slot retires", () => {
+  const newRec = { id: 2, text: "My sister's birthday is March 5th", embedding: [1] };
+  const cur = [mem(1, "My sister's birthday is March 3rd", 0.9)];
+  assert.strictEqual(ssMatch(detectSupersession(newRec, cur, simStub)), cur[0]);
+});
+
+test("detectSupersession: employer-is paraphrase targets work-at", () => {
+  const newRec = { id: 2, text: "I wanted to mention that my employer is Globex these days", embedding: [1] };
+  const cur = [mem(1, "I work at Acme", 0.4)];
+  assert.strictEqual(ssMatch(detectSupersession(newRec, cur, simStub)), cur[0]);
+});
+
+test("detectSupersession: two languages stay additive (no exclusive speak slot)", () => {
+  const newRec = { id: 2, text: "I speak Japanese", embedding: [1] };
+  const cur = [mem(1, "I speak Spanish", 0.95)];
+  assert.strictEqual(detectSupersession(newRec, cur, simStub), null);
+});
+
+test("detectSupersession: two allergies stay additive", () => {
+  const newRec = { id: 2, text: "I am allergic to bees", embedding: [1] };
+  const cur = [mem(1, "I am allergic to penicillin", 0.95)];
+  assert.strictEqual(detectSupersession(newRec, cur, simStub), null);
+});
+
+test("detectSupersession: like-coffee then like-tea stays additive", () => {
+  const newRec = { id: 2, text: "I like green tea", embedding: [1] };
+  const cur = [mem(1, "I like black coffee", 0.95)];
+  assert.strictEqual(detectSupersession(newRec, cur, simStub), null);
+});
+
+test("detectSupersession: freelance does not retire work-at (different predicate)", () => {
+  const newRec = { id: 2, text: "I freelance for Globex on Tuesdays", embedding: [1] };
+  const cur = [mem(1, "I work at Acme", 0.8)];
+  assert.strictEqual(detectSupersession(newRec, cur, simStub), null);
+});
+
+test("detectSupersession: used-to history does not retire the current job", () => {
+  const newRec = { id: 2, text: "I used to work at Acme", embedding: [1] };
+  const cur = [mem(1, "I work at Globex", 0.8)];
+  assert.strictEqual(detectSupersession(newRec, cur, simStub), null);
+});
+
+test("detectSupersession: hypothetical move keeps both and asks for review", () => {
+  const newRec = { id: 2, text: "I think I might move to Denver", embedding: [1] };
+  const cur = [mem(1, "I live in Austin", 0.8)];
+  const d = detectSupersession(newRec, cur, simStub);
+  assert.strictEqual(d && d.action, "review");
+  assert.strictEqual(d.match, cur[0]);
+  assert.ok(cur[0].valid_to == null, "review must not retire");
+});
+
+test("detectSupersession: considering vegan does not retire eat-meat", () => {
+  const newRec = { id: 2, text: "I am considering becoming vegan", embedding: [1] };
+  const cur = [mem(1, "I eat meat", 0.8)];
+  const d = detectSupersession(newRec, cur, simStub);
+  assert.strictEqual(d && d.action, "review");
+  assert.notStrictEqual(d && d.action, "supersede");
+});
+
+test("detectSupersession: two homes with 'too' do not retire residence", () => {
+  const newRec = { id: 2, text: "I have a place in Denver too", embedding: [1] };
+  const cur = [mem(1, "I live in Austin", 0.8)];
+  assert.strictEqual(detectSupersession(newRec, cur, simStub), null);
+});
+
+test("detectSupersession: same-name different relation is not a slot replace", () => {
+  const newRec = { id: 2, text: "My coworker Naima is a designer", embedding: [1] };
+  const cur = [mem(1, "My sister Naima is a chemist", 0.95)];
+  assert.strictEqual(detectSupersession(newRec, cur, simStub), null);
+});
+
+test("detectSupersession: two dentists same name different street keeps both (no exclusive dentist slot)", () => {
+  const newRec = { id: 2, text: "My dentist is Dr Park on Pine Street", embedding: [1] };
+  const cur = [mem(1, "My dentist is Dr Park on Oak Street", 0.95)];
+  assert.strictEqual(detectSupersession(newRec, cur, simStub), null,
+    "ambiguous same-role address is RM-02 merge's problem, not silent supersession");
+});
+
+test("extractFactSlots: exclusive keys, not additive frames", () => {
+  assert.strictEqual(extractFactSlots("I work at Acme").get("employer"), "acme");
+  assert.strictEqual(extractFactSlots("I work at Globex").get("employer"), "globex");
+  assert.strictEqual(extractFactSlots("my employer is Globex these days").get("employer"), "globex");
+  assert.strictEqual(extractFactSlots("I am a designer at Fathom").get("employer"), "fathom");
+  assert.strictEqual(extractFactSlots("I live in Austin").get("residence"), "austin");
+  assert.strictEqual(extractFactSlots("I have a dog named Biscuit").get("pet:dog"), "biscuit");
+  assert.ok(!extractFactSlots("I have a dog named Biscuit").has("pet:cat"));
+  assert.ok(!extractFactSlots("I speak Spanish").size, "speak is additive — no exclusive slot");
+  assert.ok(!extractFactSlots("I used to work at Acme").size, "used-to is not a current claim");
+  assert.ok(!extractFactSlots("Project Magpie moved to Sable's team").has("residence"),
+    "a project move is not a residence claim (no I/we)");
+  assert.strictEqual(extractFactSlots("I think I might move to Denver").get("residence"), "denver");
+  assert.strictEqual(extractFactSlots("I like cilantro").get("pref:cilantro"), "pos");
+  assert.strictEqual(extractFactSlots("I hate cilantro").get("pref:cilantro"), "neg");
 });
 
 // ------------------------------------------------ cosine-banded dedup (RM-02.b)
@@ -289,6 +423,21 @@ test("detectNearDuplicate: argmax, not the first above the floor", () => {
   const d = detectNearDuplicate(newRec, cur, simStub, { hi: 0.95, lo: 0.88 });
   assert.strictEqual(d.action, "restate");
   assert.strictEqual(d.match, cur[1]);
+});
+
+test("detectNearDuplicate: exclusive-slot value swap is not a merge (RM-03 owns it)", () => {
+  const newRec = { id: 2, text: "The Friday standup is at 3pm", embedding: [1] };
+  const cur = [mem(1, "The Friday standup is at 10am", 0.93)];
+  assert.strictEqual(detectNearDuplicate(newRec, cur, simStub), null,
+    "same frame, different time: high cosine is a correction, not a duplicate");
+});
+
+test("detectNearDuplicate: same-slot same-value elaboration still merges", () => {
+  const newRec = { id: 2, text: "I have a black cat named Koneko", embedding: [1] };
+  const cur = [mem(1, "I have a cat named Koneko", 0.93)];
+  const d = detectNearDuplicate(newRec, cur, simStub);
+  assert.strictEqual(d && d.action, "merge");
+  assert.strictEqual(d.match, cur[0]);
 });
 
 test("detectNearDuplicate: honors injected thresholds (config, not constants)", () => {
@@ -6624,6 +6773,54 @@ async function asyncTests() {
     await core.save("I prefer tea over coffee");
     await core.save("I like tea more than coffee");
     assert.strictEqual(store.current().length, 2, "pair that is HI at 0.95 appends when config hi=0.99");
+  });
+
+  section("RM-03 v2 save() wiring (silent slot + needs_review)");
+
+  await atest("save() silent job swap retires Acme without a cue", async () => {
+    const { store, core } = extractCore("rm03-silent-job.jsonl");
+    await core.save("I work at Acme");
+    const msg = await core.save("I work at Globex");
+    assert.ok(/retiring memory/.test(msg), msg);
+    const cur = store.current();
+    assert.strictEqual(cur.length, 1, "one current employer");
+    assert.ok(/Globex/.test(cur[0].text));
+    const stale = store.all().find((r) => /Acme/.test(r.text));
+    assert.ok(stale && stale.superseded_by != null && stale.valid_to, "Acme retired, not deleted");
+  });
+
+  await atest("save() silent time swap retires 10am even when cosine is merge-band", async () => {
+    const { store, core } = extractCore("rm03-silent-standup.jsonl");
+    await core.save("The Friday standup is at 10am");
+    const msg = await core.save("The Friday standup is at 3pm");
+    assert.ok(/retiring memory/.test(msg), "must supersede, not merge: " + msg);
+    const cur = store.current();
+    assert.strictEqual(cur.length, 1);
+    assert.ok(/3pm/.test(cur[0].text), cur[0].text);
+    assert.ok(!/10am/.test(cur[0].text), "stale time must not be the survivor");
+  });
+
+  await atest("save() additive pets still keep both", async () => {
+    const { store, core } = extractCore("rm03-additive-pets.jsonl");
+    await core.save("I have a dog named Rex");
+    await core.save("I have a cat named Whiskers");
+    const texts = store.current().map((r) => r.text).sort();
+    assert.deepStrictEqual(texts, [
+      "I have a cat named Whiskers",
+      "I have a dog named Rex",
+    ].sort());
+    assert.ok(store.all().every((r) => !r.superseded_by), "neither pet retired");
+  });
+
+  await atest("save() hypothetical move keeps Austin current and flags needs_review", async () => {
+    const { store, core } = extractCore("rm03-hypo-move.jsonl");
+    await core.save("I live in Austin");
+    const msg = await core.save("I think I might move to Denver");
+    assert.ok(/^Saved\./.test(msg), "review is a keep-both save, not a retirement: " + msg);
+    const cur = store.current();
+    assert.strictEqual(cur.length, 2, "both stay current");
+    assert.ok(cur.some((r) => /Austin/.test(r.text) && !r.superseded_by));
+    assert.ok(cur.some((r) => r.needs_review), "at least the new row is flagged");
   });
 
   await atest("readDedupThresholds: live config wins over env, env over defaults", async () => {
