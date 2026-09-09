@@ -3375,6 +3375,7 @@ const {
   bindSaveTimeNeighbors, SAVE_TIME_K, SAVE_TIME_MIN_COS, FIELD_MINSIM,
   DEDUP_HI, DEDUP_LO, readDedupThresholds,
   dedupExisting,
+  WARM_RANK_WEIGHT, activationRankBonus, fuseScoredWithActivation,
 } = require("./memory-core.js");
 const { runMeasure: runActivationMeasure, format: formatActivationMeasure } =
   require("./eval/substrate/activation-measure.js");
@@ -3388,9 +3389,11 @@ function chainEdges(pairs) {
   return m;
 }
 
-test("APR metric (pre-declared): all seven claims hold", () => {
+test("APR metric (pre-declared): all eight claims hold", () => {
   const result = runActivationMeasure();
   assert.ok(result.pass, formatActivationMeasure(result));
+  const ids = result.rows.map((r) => r.id);
+  assert.ok(ids.includes(8), "claim 8 (each signal is productive) must be in the readout");
 });
 
 test("A activating raises B through A↔B (attenuated)", () => {
@@ -3612,6 +3615,39 @@ test("emitActivationTrace is Phase 2.2 shape (hot path is `if (warmTrace())`)", 
   assert.strictEqual(c.final_score, "semantic");
   assert.ok(typeof c.activation === "number" && c.activation > 0);
   assert.strictEqual(c.hebbian, null, "Phase 1 does not fold Hebbian into the trace rank");
+});
+
+test("emitActivationTrace tags hybrid when rank consumed the signal", () => {
+  const W = new WarmField();
+  W.seedFromRetrieval([{ id: "A", similarity: 0.91 }]);
+  const orig = process.stderr.write;
+  const writes = [];
+  process.stderr.write = (s) => { writes.push(String(s)); return true; };
+  try {
+    emitActivationTrace(W, { query: "x", primary: ["A"], fused: true });
+  } finally {
+    process.stderr.write = orig;
+  }
+  const row = JSON.parse(writes[0].replace(/^\[warm-trace\] /, ""));
+  assert.strictEqual(row.final_score, "hybrid");
+  assert.strictEqual(row.candidates[0].final_score, "hybrid");
+});
+
+test("activationRankBonus ignores this-turn cosine seeds (no double-count)", () => {
+  const W = new WarmField({ hops: 1, now: () => 1_000_000 });
+  W.seedFromRetrieval([{ id: "A", similarity: 0.8 }]);
+  assert.strictEqual(activationRankBonus(W, "A"), 0, "seed energy is the cosine term");
+  W.spread(chainEdges([["A", "B", 1.0]]));
+  const eB = W.get("B");
+  assert.ok(eB > 0, "B received spread");
+  assert.strictEqual(W.similarity("B"), null);
+  assert.strictEqual(activationRankBonus(W, "B"), eB, "spread surplus is the rank bonus");
+  const fused = fuseScoredWithActivation(
+    [{ m: { id: "A" }, s: 0.8 }, { m: { id: "B" }, s: 0.4 }],
+    W, WARM_RANK_WEIGHT
+  );
+  assert.strictEqual(fused[0].m.id, "A", "seeded cosine still leads");
+  assert.ok(fused[1].final > 0.4, "B's fused score includes the spread bonus");
 });
 
 // ------------------------------------------------ RM-11 cross-platform SEA (helpers only; no 90MB inject)
@@ -7401,6 +7437,97 @@ async function asyncTests() {
     assert.ok(W.similarity(alpha.id) === 1, "seeded from cosine, not a hardcoded 1 with sim dropped");
     assert.ok(W.get(beta.id) > 0, "neighbor received activation through the save-time edge");
     assert.strictEqual(W.similarity(beta.id), null, "spread-activated node has no retrieval similarity");
+  });
+
+  await atest("warmRank flag-off (default) is still byte-identical with an associated neighbor", async () => {
+    const store = new JsonlStore(tmp("warm-rank-off.jsonl"));
+    const offCore = createCore({ store, embed: packEmbed, warmEnabled: () => false });
+    await offCore.save("alpha lives here");
+    await offCore.save("beta is nearby");
+    await offCore.save("gamma is far away");
+    const off = await offCore.recall("alpha", 2);
+    const recs = store.current();
+    const alpha = recs.find((m) => m.text === "alpha lives here");
+    const beta = recs.find((m) => m.text === "beta is nearby");
+    const W = new WarmField();
+    const onCore = createCore({
+      store, embed: packEmbed,
+      warmEnabled: () => true,
+      warmRank: () => false,
+      getWarm: () => W,
+      getEdges: () => chainEdges([[String(alpha.id), String(beta.id), 1.0]]),
+      saveSeed: () => false,
+    });
+    const on = await onCore.recall("alpha", 2);
+    assert.strictEqual(on, off, "flag-off must not reorder even when a neighbor is warm");
+  });
+
+  await atest("warmRank flag-on: spread neighbor can outrank a higher-cosine distractor", async () => {
+    // Orthogonal pack: query "alpha" [1,0].
+    // A cosine 1.0, C cosine 0 (gamma), B cosine ~0.8 — wait, the standing
+    // pack already has B at 0.8 and C at 0, so B already outranks C. Use a
+    // dedicated pack where C sits between B's cosine and B's fused score.
+    // 3-d so B and C are not near-duplicates of each other (2-d y-heavy
+    // pair was cosine ~0.99 → RM-02.b restated the third save).
+    const rankPack = {
+      "alpha lives here": [1, 0, 0],
+      "beta is nearby": [0.4, 0, Math.sqrt(1 - 0.16)],  // cosine 0.40 with query
+      "gamma is far away": [0.5, Math.sqrt(0.75), 0],   // cosine 0.50 with query
+      "alpha": [1, 0, 0],
+    };
+    const rankEmbed = async (texts) => texts.map((t) => rankPack[t] || [0, 1]);
+    const store = new JsonlStore(tmp("warm-rank-on.jsonl"));
+    const setup = createCore({ store, embed: rankEmbed, warmEnabled: () => false });
+    await setup.save("alpha lives here");
+    await setup.save("beta is nearby");
+    await setup.save("gamma is far away");
+    const recs = store.current();
+    const alpha = recs.find((m) => m.text === "alpha lives here");
+    const beta = recs.find((m) => m.text === "beta is nearby");
+    const gamma = recs.find((m) => m.text === "gamma is far away");
+
+    const off = await setup.recall("alpha", 2);
+    assert.ok(off.indexOf("alpha lives here") < off.indexOf("gamma is far away"), "cosine: A then C");
+    assert.ok(!/beta is nearby/.test(off.split("\n").slice(0, 2).join("\n")), "cosine top-2 excludes B");
+
+    const W = new WarmField();
+    const onCore = createCore({
+      store, embed: rankEmbed,
+      warmEnabled: () => true,
+      warmRank: () => true,
+      warmRankWeight: () => WARM_RANK_WEIGHT,
+      warmRankSeedK: () => 1,          // only A is a cosine seed; B is the pull
+      getWarm: () => W,
+      getEdges: () => chainEdges([[String(alpha.id), String(beta.id), 1.0]]),
+      saveSeed: () => false,
+    });
+    const on = await onCore.recall("alpha", 2);
+    assert.notStrictEqual(on, off, "flag-on must be allowed to reorder");
+    const lines = on.split("\n");
+    assert.ok(/alpha lives here/.test(lines[0]), "A stays first (cosine 1.0)");
+    assert.ok(/beta is nearby/.test(lines[1]), "B pulled over C: 0.40 + 0.3·0.5 = 0.55 > 0.50");
+    assert.ok(!/gamma is far away/.test(lines[1]), "C dropped from top-2");
+    // Bonus sanity: B's spread energy is the rank input, not its cosine seed.
+    assert.ok(W.get(beta.id) > 0);
+    assert.strictEqual(W.similarity(beta.id), null);
+    assert.ok(activationRankBonus(W, alpha.id) === 0, "seeded A does not double-count");
+    void gamma;
+  });
+
+  await atest("warmRank I3: a throwing getEdges degrades to cosine order", async () => {
+    const store = new JsonlStore(tmp("warm-rank-i3.jsonl"));
+    const off = createCore({ store, embed: packEmbed, warmEnabled: () => false });
+    await off.save("alpha lives here");
+    await off.save("beta is nearby");
+    const expected = await off.recall("alpha", 2);
+    const on = createCore({
+      store, embed: packEmbed,
+      warmEnabled: () => true,
+      warmRank: () => true,
+      getEdges: () => { throw new Error("edges boom"); },
+    });
+    const got = await on.recall("alpha", 2);
+    assert.strictEqual(got, expected, "cosine output survives a rank-path throw");
   });
 
   // ------------------------------------------------ Slice C: EdgeStore on the live path

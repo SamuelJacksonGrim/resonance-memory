@@ -497,13 +497,101 @@ was written. Not a recall metric — activation's own behaviour. Reproduce:
 `node eval/substrate/activation-measure.js` (also asserted from `node test.js`).
 
 Knobs: attenuation 0.5 / hop, depth 2, floor 0.05, cap 256, half-life 300 s,
-conductance `max(semantic, tanh(hebbian))`, seed `clamp(sim, 0, 1)`. Rank is
-untouched: RM-00 stays 27/31 with activation computed (that's the ⛔ check).
+conductance noisy-OR `s + tanh(heb) − s·tanh(heb)`, seed `clamp(sim, 0, 1)`.
+Rank is untouched at the default: RM-00 stays 27/31 with activation computed
+(that's the ⛔ check). `RESONANCE_WARM_RANK` is a separate exploratory flag.
 
 Claims (all must hold): neighbor coupling `E_B = E_A · γ · α`; stronger edge →
 stronger `E_B`; multi-hop `E_A > E_B > E_C`; hops=1 ⇒ `E_C = 0`; 0.25 bootstrap
 transmits less than a high-Hebbian pair; star of 100 stays `max E ≤ 1` and
-inside cap; `t = H` → half, and a 5 s pause is not a dump.
+inside cap; `t = H` → half, and a 5 s pause is not a dump; **claim 8** hold
+`s=0.70`, raise hebbian 0→0.3, `γ` rises (noisy-OR; `max` would hold).
+
+---
+
+## Activation-in-rank A/B (exploratory; not a ship)
+
+**Date:** 2026-09-09 · **Flag:** `RESONANCE_WARM_RANK` default **off** · **Golden:**
+`node eval/run.js` → 27/31, no regressions (flag-off). **Reproduce:**
+`node eval/ab-warm-rank.js` (offline; `embeddings.cache.json`).
+
+This is the measured bet on Samuel's question: if Phase 1 activation is
+dormant, does putting it into rank help recall? Combiner, locked *before*
+looking at numbers, not tuned against this run:
+
+```
+final = cosine + w · spread-activation
+w = 0.3          # Related: maxBonus; "Hebbian must never fully override semantic"
+spread-activation = surplus above this-turn cosine seed (no double-count)
+seed radius      = K_SEARCH (15)
+field            = off (isolates save-time Phase 0 edges)
+```
+
+A unit test with a 0.10 cosine gap and a dedicated A→B edge of γ=1 **does**
+reorder (`beta` over `gamma` at k=2). The corpora below are the real
+question.
+
+### Scorecard (w = 0.3)
+
+| corpus | n | recall@5 off → on | mrr off → on | Δ recall | Δ mrr | primary list |
+|---|---|---|---|---|---|---|
+| basic | 3 | 1.0000 → 1.0000 | 1.0000 → 1.0000 | 0 | 0 | identical |
+| field-noise | 2 | 1.0000 → 1.0000 | 0.6667 → 0.6667 | 0 | 0 | identical |
+| field-stress | 4 | 0.2500 → 0.2500 | 0.2500 → 0.2500 | 0 | 0 | identical |
+| adversarial | 2 | 1.0000 → 1.0000 | 0.7500 → 0.7500 | 0 | 0 | identical |
+| contradictions | 69 | 0.9420 → 0.9420 | 0.8406 → 0.8406 | 0 | 0 | identical |
+| **pooled** | **80** | **0.9125 → 0.9125** | **0.8104 → 0.8104** | **0** | **0** | |
+
+Contradictions: `staleness_rate` 0.4889 → 0.4889, `false_supersession`
+0.0256 → 0.0256. No staleness regression because **nothing reordered**.
+
+field-stress 0.25 is `regress-direct` (Koneko, cosine already has it) plus
+three misses (`field-rescue` / `-veg` / `-heights`). Flag-on does not
+pull those leaves into primary. Related: still does, field-on, without
+touching rank (golden ROC 1/4 → 4/4).
+
+### Sensitivity (declared weights, not a search)
+
+| w | Δ recall@5 | Δ mrr | Δ staleness | notes |
+|---|---|---|---|---|
+| 0.1 | 0 | 0 | 0 | same as 0.3 |
+| **0.3** (locked) | **0** | **0** | **0** | primary byte-identical |
+| 1.0 | 0 | 0 | 0 | metrics still flat; **lists move** on the rescue cases |
+
+At `w = 1.0` on `field-rescue`, the primary list *does* change — it
+promotes Friday/office hubs (`casual dress`, `carpool with Dana`) into
+slots 4–5. `diabetic` still misses. Cranking the weight without 2.3/2.4
+does the rich-get-richer thing, not the apex-rule thing.
+
+### Probe: the signal exists, it is too small, and it is the wrong graph
+
+On `field-rescue` at either weight, after one recall:
+
+- `lemon bars` is a cosine seed (sim ≈ 0.66) → rank bonus 0 (no double-count).
+- `diabetic` is a spread node (sim `null`, E ≈ 0.202) → bonus 0.202.
+- Boost at w=0.3 is **+0.061**. That does not close rank-21 → top-5.
+- `vegetarian` on `field-rescue-veg` gets bonus **0** — the save-time
+  K=5 neighbor table never carried the leaf. Related: uses `field.js`
+  constraint-rescue (gate 0.45, K_SEARCH seeds), a **different graph**.
+
+So this is not "activation is dead." Spread reaches the diabetic leaf.
+It is also not "we needed 2.3/2.4 to see a win" — competition /
+normalization *damp* hubs; they would not enlarge a 0.06 cosine bump.
+The missing 2.3/2.4 *does* explain the w=1.0 hub promotion.
+
+### Verdict
+
+**No. Activation-in-rank is not net positive in this exploratory form.**
+
+A measured zero on recall@k / mrr / staleness at the locked weight, and
+a hub-shaped list change (still no rescue) at w=1.0. Keep the flag
+**off**. Do not promote. Related: remains the working associative path.
+
+What would have to be true for a later 2.2 attempt to look different: a
+two-turn corpus (diabetes then dessert, leftover warmth), Hebbian-strong
+low-semantic edges (field-on multi-turn, not save-time semantic), or a
+combiner willing to close gaps ≫ 0.06 — which is the override 2.2 said
+it would not do without 2.3/2.4.
 
 ---
 

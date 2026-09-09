@@ -9,6 +9,14 @@ stable; sophistication grows in the substrate, not in the API.
 ## [Unreleased]
 
 ### Added
+- **Exploratory activation-in-rank (`RESONANCE_WARM_RANK`, default off).** Phase 1
+  activation can enter primary rank behind a flag: `final = cosine + 0.3 ·
+  spread-activation` (weight = Related: `maxBonus`, not tuned). Flag-off is
+  byte-identical to today's cosine. This is a measured bet, not a ship — the
+  2.2 promotion gate (competition + normalization + RM-16) is not this slice.
+  APR claim 8 locks noisy-OR conductance (`s` held at 0.70, hebbian 0→0.3, γ
+  must rise; `max` would fail). A/B: `node eval/ab-warm-rank.js`. See
+  `eval/RESULTS.md` ("Activation-in-rank A/B").
 - **Phase 1 — transient activation (observable-only; I7 held).** An in-process
   `WarmField` (`warm.js`) of "what's warm right now": `id → { value, similarity,
   timestamp }`, never written to JSONL, SQLite, or the edge table. Seeded from

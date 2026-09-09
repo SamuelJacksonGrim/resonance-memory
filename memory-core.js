@@ -38,8 +38,19 @@
  *   getLedger     () -> same surface as getEdgeStore; kept as a fallback alias so
  *                       a leftover injector still works. Live path uses getEdgeStore.
  *   warmEnabled   () -> boolean   (RESONANCE_WARM_FIELD; default ON. Phase 1
- *                                  computes activation; it does not rank.
+ *                                  computes activation; it does not rank
+ *                                  unless warmRank is on.
  *                                  Opt out with "0"/"false"/"no".)
+ *   warmRank      () -> boolean   (RESONANCE_WARM_RANK; default OFF.
+ *                                  Exploratory: cosine + w·spread-activation
+ *                                  reorders primary. Flag-off is today's
+ *                                  byte-identical cosine. Not the 2.2 gate.)
+ *   warmRankWeight () -> number   (RESONANCE_WARM_RANK_WEIGHT; default 0.3,
+ *                                  same cap as Related: maxBonus. Injected
+ *                                  so eval cannot inherit a user env.)
+ *   warmRankSeedK  () -> number   (how many cosine hits seed the rank
+ *                                  combiner; default K_SEARCH. Tests inject
+ *                                  1 so a 3-item store can show a pull.)
  *   getWarm       () -> WarmField (lazy, like getEdgeStore; in-proc Map, never persisted)
  *   getEdges      (mems, L) -> Map  OPTIONAL override of the Phase 0 edge
  *                                  walk. Tests inject a Map. Production
@@ -67,10 +78,12 @@
  *   extractTimeoutMs () -> number  (backstop so a hanging extract cannot
  *                                  stall save. Default EXTRACT_TIMEOUT_MS.)
  *
- * Ranking is COSINE ONLY (see server.js's invariants); the field is additive and
- * never allowed to throw into the recall path. Phase 1 warmth is the same: seed
- * and spread run (default on — the signal has to exist to be measured), but
- * nothing is read into the output string. Rank entry is the Phase 2.2 gate.
+ * Ranking is COSINE ONLY by default (see server.js's invariants); the field is
+ * additive and never allowed to throw into the recall path. Phase 1 warmth is
+ * the same: seed and spread run (default on — the signal has to exist to be
+ * measured), but nothing is read into the output string unless warmRank is
+ * on. Rank consumption is the Phase 2.2 gate; RESONANCE_WARM_RANK is an
+ * exploratory A/B behind a flag, off by default, and is not a promotion.
  */
 
 const field = require("./field.js");
@@ -108,6 +121,13 @@ const K_SEARCH = Number(process.env.RESONANCE_FIELD_KSEARCH) || 15;
 // The gate only governs whether a TYPED constraint finds a bridge, so it cannot
 // loosen ordinary recall. Independent of field minSim — do not unify them.
 const CONSTRAINT_GATE = process.env.RESONANCE_CONSTRAINT_GATE ? Number(process.env.RESONANCE_CONSTRAINT_GATE) : 0.45;
+
+// Exploratory activation-in-rank (RESONANCE_WARM_RANK, default off). Same
+// 0.3 cap as Related: maxBonus — a fully-warm neighbor cannot fully
+// override a ≥0.3-higher cosine hit ("Hebbian must never fully override
+// semantic", phase-2). Not tuned against the A/B; a miss at this weight
+// is a real miss, not a missed knob.
+const WARM_RANK_WEIGHT = 0.3;
 
 /*
  * Save-time semantic bind (Phase 0.1). K neighbors above SAVE_TIME_MIN_COS are
@@ -611,6 +631,36 @@ function keywordScore(query, text) {
 }
 
 /*
+ * How much activation may add to cosine when warmRank is on.
+ *
+ * This-turn cosine seeds already ARE the cosine term — folding their seed
+ * energy in again double-counts (rich-get-richer on items cosine already
+ * ranked). Only spread / leftover warmth enters: nodes with no retrieval
+ * similarity, or surplus above the seed. That is the "associated but not
+ * textually similar" signal, not recency-of-the-top-hit.
+ */
+function activationRankBonus(W, id) {
+  if (!W || id == null) return 0;
+  const a = W.get(id);
+  if (!(a > 0)) return 0;
+  const sim = typeof W.similarity === "function" ? W.similarity(id) : null;
+  if (sim == null || !Number.isFinite(sim)) return a;
+  const extra = a - sim;
+  return extra > 0 ? extra : 0;
+}
+
+function fuseScoredWithActivation(scored, W, weight) {
+  const w = Number(weight);
+  const ww = Number.isFinite(w) && w > 0 ? w : 0;
+  return (scored || [])
+    .map((x) => {
+      const bonus = activationRankBonus(W, x.m.id);
+      return { m: x.m, s: x.s, bonus, final: x.s + ww * bonus };
+    })
+    .sort((a, b) => (b.final - a.final) || (b.s - a.s) || String(a.m.id).localeCompare(String(b.m.id)));
+}
+
+/*
  * Build the four verbs over an injected environment. Returns { save, recall, edit,
  * remove }. `remove` (not `delete`) avoids the reserved word; callers map their own
  * verb name onto it.
@@ -626,6 +676,9 @@ function createCore({
   getEdgeStore,
   getLedger,
   warmEnabled = () => true,
+  warmRank = () => false,
+  warmRankWeight = () => WARM_RANK_WEIGHT,
+  warmRankSeedK = () => K_SEARCH,
   saveSeed = () => false,
   getWarm,
   getEdges,
@@ -678,6 +731,29 @@ function createCore({
         if (!live.has(String(id))) W.forget(id);
       }
     }
+  }
+
+  // Seed + spread. Shared by the flag-off observable hook and the
+  // flag-on rank combiner so the two paths cannot fork the WarmField
+  // contract. Caller owns the try/catch (I3).
+  function seedAndSpread(hits, mems) {
+    const W = warm();
+    pruneWarm(W, mems);
+    W.seedFromRetrieval(hits);
+    if (shouldSpread(mems, warmEdgeCap())) {
+      W.spread(edgesFor(mems, W.now()), { live: liveIds(mems) });
+    }
+    return W;
+  }
+
+  function resolveRankWeight() {
+    const w = Number(warmRankWeight());
+    return Number.isFinite(w) && w > 0 ? w : 0;
+  }
+
+  function resolveRankSeedK() {
+    const n = Number(warmRankSeedK());
+    return Number.isFinite(n) && n > 0 ? Math.trunc(n) : K_SEARCH;
   }
 
   // Internal prime (I1: not a tool). Whole path in try/catch — I3.
@@ -936,6 +1012,7 @@ function createCore({
     let ranked;               // the top-k the model actually sees (return radius)
     let seedPool = [];        // wider top-K_SEARCH ids: the field's constraint walk seeds
     let rankedScores = [];    // Phase 1 seed: [{ id, similarity }] — cosine, not activation
+    let warmSeededForRank = false; // flag-on already seeded; skip the silent hook
     try {
       // Embed the query as a query and only the records missing a stored vector
       // as documents. Split so server.js can apply embedder-specific roles
@@ -952,19 +1029,50 @@ function createCore({
       const scored = mems
         .map((m) => ({ m, s: cosine(qv, m.embedding || fresh.get(String(m.id))) }))
         .sort((a, b) => b.s - a.s);
-      ranked = scored.slice(0, k).map((x) => x.m);
-      rankedScores = scored.slice(0, k).map((x) => ({ id: x.m.id, similarity: x.s }));
+      let fused = scored;
       seedPool = scored.slice(0, K_SEARCH).map((x) => x.m.id);
+
+      // Exploratory rank (flag-off default). Seed from the cosine search
+      // radius so a rank-7 bridge can warm a rank-21 leaf, then re-sort
+      // by cosine + w·spread-activation. Related: still seeds from the
+      // original cosine pool (I9: discovery does not take over geometry).
+      if (warmEnabled() && warmRank()) {
+        try {
+          const seedK = resolveRankSeedK();
+          const W = seedAndSpread(
+            scored.slice(0, seedK).map((x) => ({ id: x.m.id, similarity: x.s })),
+            mems
+          );
+          fused = fuseScoredWithActivation(scored, W, resolveRankWeight());
+          warmSeededForRank = true;
+          if (warmTrace()) emitWarmTrace(W, { query, primary: fused.slice(0, k).map((x) => x.m), fused: true });
+        } catch { /* I3: keep cosine order */ }
+      }
+
+      ranked = fused.slice(0, k).map((x) => x.m);
+      rankedScores = fused.slice(0, k).map((x) => ({ id: x.m.id, similarity: x.s }));
 
       store.applyRecall(ranked.map((m) => m.id), fresh); // backfill + bump in one write
     } catch {
       const scored = mems
         .map((m) => ({ m, s: keywordScore(query, m.text) }))
         .sort((a, b) => b.s - a.s);
-      const kwHits = scored.slice(0, k).filter((x, i) => x.s > 0 || i === 0);
+      let fused = scored;
+      seedPool = scored.slice(0, K_SEARCH).map((x) => x.m.id);
+      if (warmEnabled() && warmRank()) {
+        try {
+          const seedK = resolveRankSeedK();
+          const W = seedAndSpread(
+            scored.slice(0, seedK).map((x) => ({ id: x.m.id, similarity: x.s })),
+            mems
+          );
+          fused = fuseScoredWithActivation(scored, W, resolveRankWeight());
+          warmSeededForRank = true;
+        } catch { /* I3: keep keyword order */ }
+      }
+      const kwHits = fused.slice(0, k).filter((x, i) => x.s > 0 || i === 0);
       ranked = kwHits.map((x) => x.m);
       rankedScores = kwHits.map((x) => ({ id: x.m.id, similarity: x.s }));
-      seedPool = scored.slice(0, K_SEARCH).map((x) => x.m.id);
       store.applyRecall(ranked.map((m) => m.id), null); // bump access even on fallback
     }
 
@@ -1059,19 +1167,17 @@ function createCore({
     }
 
     // Silent warm hook (Phase 1). Default ON so the signal exists to be
-    // measured; `out` is not consulted — byte-identical to warm-off. That
-    // identity is the ⛔ gate (rank entry is Phase 2.2). Decay is lazy
-    // wall-clock on get/spread (no decayAll, no turn clock). I3: the whole
-    // path is in try/catch and degrades to the cosine `out` already built.
-    // I7: nothing here writes E to disk. I5: no EdgeStore.save() either.
+    // measured; `out` is not consulted unless warmRank already re-sorted
+    // above. Flag-off identity is the ⛔ gate (rank entry is Phase 2.2;
+    // RESONANCE_WARM_RANK is the exploratory A/B, not a promotion).
+    // Decay is lazy wall-clock on get/spread (no decayAll, no turn clock).
+    // I3: the whole path is in try/catch and degrades to the cosine `out`
+    // already built. I7: nothing here writes E to disk. I5: no
+    // EdgeStore.save() either. Skip re-seed when rank already consumed
+    // this turn — seedFromRetrieval would overwrite spread surplus.
     try {
-      if (warmEnabled()) {
-        const W = warm();
-        pruneWarm(W, mems);
-        W.seedFromRetrieval(rankedScores);
-        if (shouldSpread(mems, warmEdgeCap())) {
-          W.spread(edgesFor(mems, W.now()), { live: liveIds(mems) });
-        }
+      if (warmEnabled() && !warmSeededForRank) {
+        const W = seedAndSpread(rankedScores, mems);
         // Zero-cost when off: one boolean, no stringify, no iteration.
         if (warmTrace()) emitWarmTrace(W, { query, primary: ranked });
       }
@@ -1136,4 +1242,5 @@ module.exports = {
   DEDUP_HI, DEDUP_LO, readDedupThresholds,
   planDedupExisting, applyDedupExisting, dedupExisting,
   mergeBandPatches, restateSurvivorPatch,
+  WARM_RANK_WEIGHT, activationRankBonus, fuseScoredWithActivation,
 };

@@ -188,8 +188,9 @@ Full spec + APR metric + tests: [`phase-1`](phases/phase-1-transient-activation.
 | **1.5** | APR custom eval + I7 disk/schema scan + rank-identity (golden unchanged with activation computed) | ✅ |
 
 **Exit met:** activation is observable and traced (`[warm-trace]` is the Phase 2.2 candidate shape);
-provably ephemeral (I7); provably not affecting rank (byte-identical on/off; RM-00 27/31). Next is
-Phase 2. Rank consumption stays behind the 2.2 gate.
+provably ephemeral (I7); provably not affecting rank at the default (byte-identical on/off; RM-00
+27/31). `RESONANCE_WARM_RANK` is an exploratory A/B (flag-off default), not the 2.2 promotion.
+Next is Phase 2. Rank *promotion* stays behind the 2.2 gate.
 
 ### The promotion gate ⛔ (Phase 2)
 

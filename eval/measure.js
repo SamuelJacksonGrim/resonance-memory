@@ -21,6 +21,9 @@
  *   node eval/measure.js --extract           RM-01.c live Tier 2 (needs a chat model)
  *   node eval/measure.js --extract-model ID  chat model id (default: first non-embed)
  *   node eval/measure.js --extract-timeout N ms (default 45000 for the live A/B)
+ *   node eval/measure.js --warm-rank            exploratory activation-in-rank
+ *   node eval/measure.js --warm-rank-weight 0.3 combiner weight (default 0.3)
+ *   node eval/measure.js --include-gate         also score golden corpora via expect.contains
  *
  * Reuses `pipeline.js` → `memory-core.js`. Does not write golden.json, does
  * not change product behaviour. Measurement corpora (`kind: "duplicates"` /
@@ -31,7 +34,10 @@
  * runner flags, not inside a metric: a metric is a number over a result
  * shape; the runner decides which core flags produced the result. Today:
  * field off (I2: rank is cosine), k=5. `--field` is reserved so 02.b /
- * fusion don't grow a second runner.
+ * fusion don't grow a second runner. `--warm-rank` turns on the
+ * exploratory activation-in-rank combiner (default off; not the golden).
+ * `--include-gate` also scores golden corpora (basic / field-stress / …)
+ * as recall@k / mrr via expect.contains → relevant ids.
  */
 
 const fs = require("fs");
@@ -73,6 +79,8 @@ function queriesFromCase(c) {
     current_values: Array.isArray(c.current_values) ? c.current_values : [],
     keep_values: Array.isArray(c.keep_values) ? c.keep_values : [],
     relevant_facts: Array.isArray(c.current_values) ? c.current_values : null,
+    contains: (c.expect && Array.isArray(c.expect.contains)) ? c.expect.contains : [],
+    excludes: (c.expect && Array.isArray(c.expect.excludes)) ? c.expect.excludes : [],
     band: c.band || null,
     historical: !!c.historical,
   }];
@@ -126,13 +134,16 @@ function loadScenarios(file) {
   return scenarios;
 }
 
-function loadAllScenarios(filter) {
+function loadAllScenarios(filter, opts) {
+  const includeGate = !!(opts && opts.includeGate);
   const out = [];
   for (const fn of fs.readdirSync(CORPORA).filter((f) => f.endsWith(".jsonl"))) {
     const file = path.join(CORPORA, fn);
     const lines = readJsonl(file);
-    if (!lines.some(isMeasurementLine)) continue;
     const stem = fn.replace(/\.jsonl$/, "");
+    const hasMeasure = lines.some(isMeasurementLine);
+    const hasGate = lines.some((c) => isSelfContainedScenario(c) && c.expect);
+    if (!hasMeasure && !(includeGate && hasGate)) continue;
     // RM-15 soak is a timed event log with its own runner (eval/soak/run.js).
     // Playing it as write-then-query would drop clock / missed_dup / order.
     if (lines.some((c) => c && c.kind === "soak")) continue;
@@ -189,6 +200,12 @@ function resolveRelevant(q, records, groups, saveLog, allRecords, opts) {
   if (Array.isArray(q.current_values) && q.current_values.length) {
     const ids = (records || [])
       .filter((r) => q.current_values.some((v) => textHasValue(r.text, v)))
+      .map((r) => String(r.id));
+    if (ids.length) return ids;
+  }
+  if (Array.isArray(q.contains) && q.contains.length) {
+    const ids = (records || [])
+      .filter((r) => q.contains.some((v) => textHasValue(r.text, v)))
       .map((r) => String(r.id));
     if (ids.length) return ids;
   }
@@ -272,6 +289,8 @@ async function runScenario(scenario, opts) {
   const k = opts && opts.k != null ? Number(opts.k) : 5;
   const fieldEnabled = !!(opts && opts.fieldEnabled);
   const extractEnabled = !!(opts && opts.extractEnabled);
+  const warmRank = !!(opts && opts.warmRank);
+  const warmRankWeight = opts && opts.warmRankWeight;
   const { store, file, dir } = freshStore();
   const mem = createMemory({
     store, embed, fieldEnabled, edgesPath: file + ".edges.json",
@@ -279,6 +298,7 @@ async function runScenario(scenario, opts) {
     extractCapable: opts && opts.extractCapable,
     extract: opts && opts.extract,
     extractTimeoutMs: opts && opts.extractTimeoutMs,
+    warmRank, warmRankWeight,
   });
 
   const writes = (scenario.writes || []).map((w) => (typeof w === "string" ? { text: w } : w));
@@ -383,7 +403,7 @@ async function runScenario(scenario, opts) {
     file: scenario.file || null,
     kind: scenario.kind || null,
     band: scenario.band || null,
-    k, field: fieldEnabled,
+    k, field: fieldEnabled, warm_rank: warmRank,
     n_writes: writes.length,
     n_stored_current: records.length,
     n_groups: Object.keys(groups).length,
@@ -551,7 +571,11 @@ async function main(argv) {
   const json = args.includes("--json");
   const bands = args.includes("--bands");
   const fieldEnabled = args.includes("--field");
+  const warmRank = args.includes("--warm-rank");
+  const includeGate = args.includes("--include-gate");
   const wantExtract = args.includes("--extract");
+  const wi = args.indexOf("--warm-rank-weight");
+  const warmRankWeight = wi >= 0 ? Number(args[wi + 1]) : undefined;
   const ci = args.indexOf("--corpus");
   const filter = ci >= 0 ? args[ci + 1] : null;
   const ki = args.indexOf("--k");
@@ -584,7 +608,7 @@ async function main(argv) {
     }
   }
 
-  const scenarios = loadAllScenarios(filter);
+  const scenarios = loadAllScenarios(filter, { includeGate });
   if (!scenarios.length) {
     console.error("No measurement scenarios" + (filter ? " matching --corpus " + filter : "") + ".");
     process.exit(2);
@@ -592,7 +616,7 @@ async function main(argv) {
   const reports = [];
   for (const s of scenarios) {
     reports.push(await runScenario(s, {
-      k, fieldEnabled, bands,
+      k, fieldEnabled, bands, warmRank, warmRankWeight,
       extractEnabled, extract: extractFn, extractTimeoutMs,
     }));
   }
@@ -600,7 +624,7 @@ async function main(argv) {
   if (json) {
     console.log(JSON.stringify({
       generated: new Date().toISOString(),
-      k, field: fieldEnabled,
+      k, field: fieldEnabled, warm_rank: warmRank,
       metrics: listMetrics().map((m) => ({ name: m.name, description: m.description })),
       contradictions: poolContradiction(reports),
       scenarios: reports.map((r) => ({

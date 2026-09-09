@@ -27,10 +27,12 @@
  * activation so Phase 2.2 can trace both without collapsing them.
  *
  * Ranking is not this module's job. Creating a WarmField, seeding it,
- * spreading it, decaying it must not change a recall's output string.
- * Rank entry is the Phase 2.2 gate. Tracing already emits that phase's
- * candidate shape (`semantic` / `hebbian` / `recency` / `activation` /
- * `final_score: "semantic"`) so fusion does not need a second hook.
+ * spreading it, decaying it must not change a recall's output string
+ * unless memory-core.js consumes the signal behind RESONANCE_WARM_RANK
+ * (exploratory, flag-off default — not the 2.2 promotion). Tracing
+ * already emits the Phase 2.2 candidate shape (`semantic` / `hebbian` /
+ * `recency` / `activation` / `final_score`) so fusion does not need a
+ * second hook.
  *
  * Knobs — tuned against the APR metric in
  * eval/substrate/activation-measure.js (docs/phases/phase-1). Do not
@@ -382,12 +384,15 @@ class WarmField {
  * Tracing helper. Callers MUST gate on the trace flag before calling so the
  * hot path is a single boolean check when RESONANCE_WARM_TRACE is off (no
  * stringify, no iteration). activation is its own field — do not collapse it
- * into final_score (Phase 2.1). Phase 1 does not rank, so final_score stays
- * "semantic". Shape matches Phase 2.2's per-candidate record so that gate
- * can consume this hook rather than grow a second one.
+ * into final_score (Phase 2.1). Flag-off (the default) keeps final_score
+ * "semantic". Flag-on exploratory rank tags "hybrid" so a trace can tell
+ * the two apart without a second hook. Shape matches Phase 2.2's
+ * per-candidate record so that gate can consume this rather than grow one.
  */
 function emitActivationTrace(W, info) {
   if (!W) return;
+  const fused = !!(info && info.fused);
+  const finalScore = fused ? "hybrid" : "semantic";
   const candidates = [];
   const activation = {};
   const ids = [...W.nodes.keys()];
@@ -401,7 +406,7 @@ function emitActivationTrace(W, info) {
       hebbian: null,     // Phase 2.2 fills; not a rank input here
       recency: null,     // I2b telemetry; Phase 2.2 may trace it
       activation: v,
-      final_score: "semantic",
+      final_score: finalScore,
     });
     activation[id] = v;
   }
@@ -411,7 +416,7 @@ function emitActivationTrace(W, info) {
     primary: ((info && info.primary) || []).map((m) => String(m && m.id != null ? m.id : m)),
     candidates,
     activation,
-    final_score: "semantic",
+    final_score: finalScore,
   };
   try { process.stderr.write("[warm-trace] " + JSON.stringify(row) + "\n"); } catch { /* never throw */ }
 }

@@ -70,11 +70,12 @@ const STORE_PATH = process.env.MEMORY_FILE_PATH ||
 const CONFIG_PATH = process.env.RESONANCE_MEMORY_CONFIG ||
   path.join(path.dirname(STORE_PATH), "resonance-memory.config.json");
 const ENV_FIELD = ["1", "true", "yes"].includes(String(process.env.RESONANCE_MEMORY_FIELD || "").toLowerCase());
-// Phase 1: activation is computed by default (observable, never ranked).
-// Opt out with RESONANCE_WARM_FIELD=0. RESONANCE_WARM_RANK is read so the
-// MCP process ships the flag; ranking consumption is Phase 2.2 and ignored.
+// Phase 1: activation is computed by default (observable, never ranked
+// unless RESONANCE_WARM_RANK is on). Opt out with RESONANCE_WARM_FIELD=0.
+// Rank consumption is exploratory and flag-off by default — not the 2.2
+// promotion. "on"/"1"/"true"/"yes" enable it; anything else is off.
 const ENV_WARM = !["0", "false", "no"].includes(String(process.env.RESONANCE_WARM_FIELD || "1").toLowerCase());
-const ENV_WARM_RANK = String(process.env.RESONANCE_WARM_RANK || "off").toLowerCase() || "off";
+const ENV_WARM_RANK = ["1", "true", "yes", "on"].includes(String(process.env.RESONANCE_WARM_RANK || "").toLowerCase());
 const ENV_WARM_TRACE = ["1", "true", "yes"].includes(String(process.env.RESONANCE_WARM_TRACE || "").toLowerCase());
 function envInt(name, fallback) {
   const raw = process.env[name];
@@ -83,6 +84,13 @@ function envInt(name, fallback) {
   return Number.isFinite(n) ? n : fallback;
 }
 const ENV_WARM_EDGE_CAP = envInt("RESONANCE_WARM_EDGE_CAP", 512);
+function envNumber(name, fallback) {
+  const raw = process.env[name];
+  if (raw == null || raw === "") return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : fallback;
+}
+const ENV_WARM_RANK_WEIGHT = envNumber("RESONANCE_WARM_RANK_WEIGHT", 0.3);
 function fieldEnabled() {
   try {
     const c = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
@@ -196,15 +204,16 @@ function getEdgeStore() {
 }
 
 // Warm field (Phase 1). In-proc Map, never persisted (I7). Computed by
-// default — the 27/31 golden holding with it ON is the proof it does not
-// touch rank. RESONANCE_WARM_RANK is read so the MCP process ships the
-// flag; ranking consumption is Phase 2.2 and ignored until then.
+// default — the 27/31 golden holding with it ON (and rank OFF) is the
+// proof compute does not touch rank. RESONANCE_WARM_RANK is the
+// exploratory combiner, off by default; 2.2 promotion is a separate gate.
 let _warm = null;
 function getWarm() { if (!_warm) _warm = new WarmField(); return _warm; }
 function warmEnabled() { return ENV_WARM; }
+function warmRank() { return ENV_WARM_RANK; }
+function warmRankWeight() { return ENV_WARM_RANK_WEIGHT; }
 function warmTrace() { return ENV_WARM_TRACE; }
 function warmEdgeCap() { return ENV_WARM_EDGE_CAP; }
-// ENV_WARM_RANK is read (so the MCP process ships the flag) and ignored until Phase 2.2.
 
 // --------------------------------------------------------------- embedding
 // Role-aware: nomic stays raw (verified best); Qwen queries get Instruct;
@@ -242,7 +251,7 @@ async function bootStore() {
   // implementation of save/recall and the RM-00 golden guards that they never diverge.
   core = createCore({
     store, embed, fieldEnabled, getEdgeStore, dedupThresholds, fieldMinSim, constraintGate,
-    warmEnabled, getWarm,
+    warmEnabled, getWarm, warmRank, warmRankWeight,
     saveSeed: () => true,          // production: a just-saved fact is warm without a recall
     warmTrace, warmEdgeCap,
     extractEnabled, extractCapable, extract: extractFn,

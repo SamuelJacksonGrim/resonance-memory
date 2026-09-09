@@ -36,7 +36,8 @@ self-contained. The custom eval is `eval/substrate/activation-measure.js` (also 
 `test.js`). Tuned knobs live in `warm.js` and must not move without re-running that readout.
 
 On a chain `A —w_ab— B —w_bc— C`, seed A from similarity `E_A = clamp(sim_A, 0, 1)`, spread
-with per-hop attenuation `α` and conductance `γ(e) = clamp(max(semantic, tanh(hebbian)), 0, 1)`:
+with per-hop attenuation `α` and conductance `γ(e) = s + h − s·h` (noisy-OR;
+`s = clamp(semantic, 0, 1)`, `h = tanh(effectiveHebbian)`):
 
 | # | Claim | Pass | Fail (the signature) |
 |---|---|---|---|
@@ -47,6 +48,7 @@ with per-hop attenuation `α` and conductance `γ(e) = clamp(max(semantic, tanh(
 | 5 | **Bootstrap vs learned.** A 0.25 semantic-only edge transmits strictly less than the same pair with high Hebbian. | `E_B(0.25, w=0) < E_B(0.25, tanh(w)≈0.96)` | equal transmission |
 | 6 | **Runaway bound.** Star of N=100, `γ=1`. Update is max-not-sum, cap holds. | `max(E) ≤ 1` and `size ≤ cap` | any `E > 1` or unbounded growth |
 | 7 | **Half-life.** Lazy wall-clock, computed on access, injectable clock. | at `t = H`, `E = ½ E_0` | turn-count decay, or a 5s pause dumping energy |
+| 8 | **Each signal is productive.** Hold `s = 0.70`, raise hebbian `0 → 0.3`. | `γ` rises (noisy-OR `0.70 → ~0.787`) | `γ` holds (the `max` mux: learning is invisible until `tanh(w) > s`) |
 
 **Rank identity** and **I7** are not APR — they are the ⛔ gates (below). They must hold even
 when APR is green.
@@ -61,7 +63,7 @@ when APR is green.
 | cache cap | **256** | Conversation working set; evict lowest-effective first. Bound is the point. |
 | half-life | **300 s** | Conversation-scale "right now". A 5s think-pause is ~1.1% decay (the trap the old `λ_turn` was invented to avoid — a proper wall-clock H makes that trap imaginary). 5 min → ½. ~13 min → floor. |
 | seed norm | **clamp(sim, 0, 1)** | Cosine is already bounded; this stops keyword-fallback or a >1 sneak from creating unbounded activation. Top-hit is **not** renormalized to 1.0 — that would throw away "how good was this retrieval." |
-| conductance | **max(sem, tanh(heb))** | Weak bootstrap transmits 0.25; a learned edge can approach 1. Signals stay separate on the edge; we only combine them into a transmission scalar. |
+| conductance | **noisy-OR `s + h − s·h`** | Either channel carries alone (`γ(s,0)=s`, `γ(0,h)=h`). Both corroborate: holding `s=0.70` and raising hebbian 0→0.3 raises γ (claim 8); `max` would not. Weak bootstrap still transmits 0.25. |
 | spread cap (`WARM_EDGE_CAP`) | **512** vectors | Skip spread (not seed) on a huge store. Related: is not this cap. |
 
 Idle-TTL (the old 30 min map wipe) did **not** earn its place: with wall-clock half-life + floor,

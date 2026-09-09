@@ -30,6 +30,7 @@ node eval/substrate/entity-layer-measure.js
 node eval/substrate/activation-measure.js
      # Phase 1 APR (activation's own behaviour; not a recall metric). Also
      # asserted from test.js. Knobs: warm.js; spec: docs/phases/phase-1.
+     # Claim 8: hold s=0.70, raise hebbian 0→0.3, γ must rise (noisy-OR).
 ```
 
 First run live-embeds against LM Studio (`:1234`, `text-embedding-nomic-embed-text-v1.5`),

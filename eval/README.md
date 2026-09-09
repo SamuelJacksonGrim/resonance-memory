@@ -20,6 +20,7 @@ npm run eval -- --store jsonl         # RM-07: JSONL path (still 27/31; --accept
 npm run measure              # reporting metrics (A/B): recall@k, duplicate_rate, extraction_precision, mrr, …
 npm run measure -- --bands   # also print pairwise cosine within each dup group
 npm run measure -- --json    # machine-readable (the 02.b A/B compares this)
+node eval/ab-warm-rank.js    # exploratory activation-in-rank A/B (flag ON vs OFF; not the golden)
 npm run scale                # S1 needle-in-haystack at 1k/10k/50k/100k (live embed first run)
 npm run soak                 # RM-15 control curve (0011 §7.3; field-on, no dream)
 ```

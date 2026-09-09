@@ -157,6 +157,23 @@ function runMeasure() {
       "5s→" + afterPause + " (want >0.98); t=H→" + atH + " (want 0.5)");
   }
 
+  // --- 8 each signal is productive (noisy-OR corroboration) --------------
+  // Hold s in (0,1), raise hebbian 0→0.3. max(s, tanh(w)) is a mux: at
+  // s=0.70, tanh(0.3)≈0.291 never moves γ. noisy-OR γ = s+h-s·h rises
+  // (0.70 → ~0.787). That is the hole APR #5 cannot see (overtake-only).
+  {
+    const s = 0.70;
+    const base = makeEdge("A", "B", { origin: "save-time-neighbor", now: T0, hebbianWeight: 0 });
+    setSemantic(base, s, { a: 1, b: 1 });
+    const learned = makeEdge("A", "B", { origin: "co-activation", now: T0, hebbianWeight: 0.3 });
+    setSemantic(learned, s, { a: 1, b: 1 });
+    const g0 = conductance(base, T0);
+    const g1 = conductance(learned, T0);
+    claim(8, "each signal is productive",
+      g1 > g0,
+      "s=0.70 w:0→0.3  γ=" + g0 + " → " + g1 + " (noisy-OR rises; max would hold)");
+  }
+
   // --- extras the phase doc named as gates, cheap to keep here -----------
   {
     const W = new WarmField({ hops: 2, now: frozen });
