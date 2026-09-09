@@ -160,8 +160,8 @@ first, and why these cases are the cheapest first thing to run.
 |---|---|---|
 | `recall@k` | fraction of cases whose expected memory is in top-k | baseline quality. **Shipped (RM-02.a)** as reporting metric `recall_at_k` (success@k; registry in `eval/metrics.js`). |
 | `MRR` | mean reciprocal rank of first correct hit | ranking quality, not just presence. **Shipped (S1)** as reporting metric `mrr` (misses contribute 0; truncated at the ranked-list window). |
-| **`staleness_rate`** | answers drawn from a superseded fact | **our differentiating axis** |
-| `false_supersession` | still-true facts wrongly invalidated | **hard gate — must be 0** |
+| **`staleness_rate`** | answers drawn from a superseded fact | **our differentiating axis.** **Shipped as reporting** (two shapes: RM-15 slot-probe = current value missing from top-k; RM-03 contradiction = ground-truth stale value present in top-k). Not folded into `golden.json`. |
+| `false_supersession` | still-true facts wrongly invalidated | **hard gate — must be 0.** **Shipped as reporting** (`keep_values` no longer current / labeled keep facts). `explain().of_supersessions` is the "fraction of supersessions that were wrong" readout. Not folded into `golden.json`. |
 | `duplicate_rate` | extras beyond one-per-ground-truth-group / current stored count | store hygiene. **Shipped (RM-02.a)** as a labeled reporting metric, *not* "pairs with cos > 0.95" (that would be circular for cosine-dedup). |
 | `extraction_precision` | stored facts that are genuinely durable | `RM-01` guard. **Shipped (RM-01.a)** as reporting metric (exact gold-fact match, not containment; PII refusal is a separate explain readout). |
 | `extraction_recall` | gold facts that actually landed as a stored record | `RM-01` anti-cheat. **Shipped (RM-01.b)**. Vacuous precision (refuse everything → 1.0) craters this. |

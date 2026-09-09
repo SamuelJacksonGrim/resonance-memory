@@ -73,8 +73,10 @@ $env:EVAL_REFRESH=1; npm run measure; Remove-Item Env:EVAL_REFRESH
 That hits a live LM Studio (`/v1/embeddings` on :1234), grows the cache, and you commit
 the diff. The two-step ritual is a feature: fixtures stay honest and reviewable.
 
-Measurement corpora (`duplicates.jsonl`, `messy.jsonl`, `messy-hard.jsonl`) are skipped by `npm run eval`,
+Measurement corpora (`duplicates.jsonl`, `messy.jsonl`, `messy-hard.jsonl`, and the
+`gate: false` rows of `contradictions.jsonl`) are skipped by `npm run eval`,
 so a new write or query there is refreshed with `EVAL_REFRESH=1 npm run measure` instead.
+The original four golden contradiction cases still refresh via `EVAL_REFRESH=1 npm run eval`.
 
 ## What it measures
 
@@ -96,26 +98,33 @@ only Globex current. The `contra-wrongslot` and `contra-additive-pets` guards ch
 — that a cross-slot or cue-less save does **not** delete an unrelated memory. See `RESULTS.md`
 ("RM-03") for why detection is gated on a correction cue, not raw cosine.
 
-**Reporting metrics (RM-02 / RM-01), distinct from the golden gate.** `eval/metrics.js` has a
+**Reporting metrics (RM-02 / RM-01 / RM-03 measurement seed), distinct from the golden gate.** `eval/metrics.js` has a
 **registry**: a metric is `{ name, compute(results, corpus, opts) -> number }`, plus optional
 `explain` for a breakdown. Builtins today: `recall_at_k` (success@k, default k=5),
 `duplicate_rate` (extras beyond one-per-ground-truth-group / current stored count),
 `extraction_precision` (stored records that match a gold atomic fact and contain no labeled
 noise), `extraction_recall` (gold facts with a matching stored record / gold facts —
-the anti-cheat for vacuous precision), and `mrr` (mean reciprocal rank of the first relevant
-id; misses contribute 0). They are A/B numbers, not pass/fail — `node eval/run.js` still gates only the
-contains/excludes scorecard, and measurement corpora (`kind: "duplicates"` / `"messy"`,
-`gate: false`) are skipped there so a new fixture cannot flip golden. Run them with
-`node eval/measure.js` (reuses `pipeline.js` → `memory-core.js`; field off so rank stays
-cosine). See `RESULTS.md` ("RM-02.a") for the pre-dedup baseline and the pre-declared 50%
-bar, ("RM-02.b") for the measured win at save-time, and ("RM-02.c") for the
-`--dedup-existing` backfill of a pre-02.b store: `duplicate_rate` 0.3182 → 0.0000,
-`recall@5` held at 1.0000. RM-02 is done. See `RESULTS.md` ("RM-01.a") for the
-pre-extraction baseline on `eval/messy` and ("RM-01.b") for the measured win:
-`extraction_precision` 0.2609 → 1.0000, `extraction_recall` 1.0000, `recall@5` held,
+the anti-cheat for vacuous precision), `mrr` (mean reciprocal rank of the first relevant
+id; misses contribute 0), **`staleness_rate`** (RM-03: fraction of labeled current-queries
+whose top-k still surfaces a ground-truth stale value; RM-15 soak: fraction of slot probes
+whose top-k misses the current value — slot_probes win when both shapes are present), and
+**`false_supersession`** (fraction of labeled still-true `keep_values` that were invalidated;
+the anti-cheat so supersession cannot go over-eager). They are A/B numbers, not pass/fail —
+`node eval/run.js` still gates only the contains/excludes scorecard, and measurement corpora
+(`kind: "duplicates"` / `"messy"`, `gate: false`, including the expanded contradiction cases)
+are skipped there so a new fixture cannot flip golden. The original four `contra-*` golden
+cases stay on the 27/31 lock. Run the reporting metrics with `node eval/measure.js` (reuses
+`pipeline.js` → `memory-core.js`; field off so rank stays cosine). See `RESULTS.md` ("RM-02.a")
+for the pre-dedup baseline and the pre-declared 50% bar, ("RM-02.b") for the measured win at
+save-time, and ("RM-02.c") for the `--dedup-existing` backfill of a pre-02.b store:
+`duplicate_rate` 0.3182 → 0.0000, `recall@5` held at 1.0000. RM-02 is done. See `RESULTS.md`
+("RM-01.a") for the pre-extraction baseline on `eval/messy` and ("RM-01.b") for the measured
+win: `extraction_precision` 0.2609 → 1.0000, `extraction_recall` 1.0000, `recall@5` held,
 `pii_refusal_rate` 0 → 1.0000. RM-01.c adds `eval/corpora/messy-hard.jsonl` (implicit
 facts Tier 0 cannot split) and a live Tier 2 A/B (`--extract`); that number is **not**
-the golden gate. See `RESULTS.md` ("RM-01.c").
+the golden gate. See `RESULTS.md` ("RM-01.c"). The contradiction expansion + the two
+RM-03 metrics are the measurement seed for later recall-quality work; see `RESULTS.md`
+("RM-03 measurement seed").
 
 ## Layout
 
@@ -130,7 +139,8 @@ eval/
                          an injectable save/recall, mirroring server.js
   metrics.js             golden scoring (contains / excludes / current_only / per-turn)
                          PLUS the reporting-metric registry (recall_at_k,
-                         duplicate_rate, extraction_precision, extraction_recall, mrr)
+                         duplicate_rate, extraction_precision, extraction_recall, mrr,
+                         staleness_rate, false_supersession)
   run.js                 the golden runner + regression gate
                          (sqlite default = two-sided parity; `--store jsonl` still testable)
   measure.js             reporting-metric runner (A/B; does not touch golden.json)
@@ -158,6 +168,13 @@ eval/
 `excludes` matters as much as `contains` — most memory bugs are *extra wrong stuff*, not
 missing right stuff. `kind:"constraint"` triggers the off/on double-run. A `repeat` array
 (instead of `query`) keeps one store across turns; pair it with `contains_by_turn`.
+
+Contradiction cases that should **not** enter the golden lock add `gate: false` and the
+RM-03 measurement labels (`band`, `current_values`, `stale_values`, `keep_values`).
+`eval/measure.js` scores `staleness_rate` / `false_supersession` on those; `eval/run.js`
+skips them. The original four (`contra-job` / `city` / `wrongslot` / `additive-pets`) stay
+golden. `band` is `cue` / `silent` / `guard` / `buried` / `samename` / `ambiguous` /
+`needs_review` / `numeric` / `negation`.
 
 ### Measurement corpora (`eval/corpora/duplicates.jsonl`)
 

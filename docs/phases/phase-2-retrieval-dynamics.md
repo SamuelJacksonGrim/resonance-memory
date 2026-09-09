@@ -59,12 +59,14 @@ A failed gate keeps the flag off and writes the negative result down. A measured
 
 ### 2.5 Retrieval evaluation ✅ 🔀 — **this is `RM-00`; extend, don't rebuild**
 Already live: JSONL corpora, contains/excludes scorecard, superseded-surfacing, field ROC/TBR,
-golden-set gate, offline/deterministic. Reporting-metric registry (RM-02.a + S1): `recall_at_k`,
-`duplicate_rate`, `mrr`. **Still open:** staleness rate, false-association rate, hub-formation.
-Anything depending on those (the fusion gate first) needs them built.
+golden-set gate, offline/deterministic. Reporting-metric registry (RM-02.a + S1 + RM-03 measurement
+seed): `recall_at_k`, `duplicate_rate`, `mrr`, `staleness_rate`, `false_supersession`. **Still open:**
+false-association rate under fusion, hub-formation. Anything depending on those (the fusion gate
+first) needs the fusion-arm numbers; the contradiction baseline is now computable.
 - [x] recall@k · duplicate rate (reporting metrics, `eval/metrics.js` registry + `eval/measure.js`;
       not the golden gate).
-- [ ] MRR · staleness · false-association rate under fusion · hub-formation metric
+- [x] MRR · staleness_rate · false_supersession (reporting; not the golden gate).
+- [ ] false-association rate under fusion · hub-formation metric
       (degree distribution) · retrieval latency as the graph grows · semantic-only vs. fused
       as a standing A/B.
 - [x] **Corpus realism** (measured 2026-08-22): corpora were clean (4 within-scenario pairs > 0.75,

@@ -8,6 +8,19 @@ stable; sophistication grows in the substrate, not in the API.
 
 ## [Unreleased]
 
+### Added
+- **RM-03 measurement seed: `staleness_rate` + `false_supersession` + ≥50 contradiction cases.**
+  The two reporting metrics RM-03 acceptance and the Phase 2 fusion gate name, which did
+  not exist as computable numbers. `staleness_rate` already had an RM-15 soak shape
+  (slot probe misses the current value); it now also scores contradiction queries
+  (ground-truth stale value still in top-k — 0007 "answers drawn from a superseded
+  fact"). `false_supersession` is new: fraction of labeled still-true `keep_values`
+  that were invalidated (BACKLOG hard-zero). Neither folds into `golden.json`.
+  `eval/corpora/contradictions.jsonl` grows from 4 to 69 cases (original four stay
+  golden; the rest are `gate: false`). Product recall/supersession behaviour is
+  unchanged — this is the baseline later detector slices must beat. See
+  `eval/RESULTS.md` ("RM-03 measurement seed").
+
 ### Changed
 - **Weak-model system prompt rewritten + the copy button fixed.** The optional
   `system-prompt.md` block is now tighter and priority-ordered — recall-before-you-answer

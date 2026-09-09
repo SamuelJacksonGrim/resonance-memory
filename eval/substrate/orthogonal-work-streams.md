@@ -27,8 +27,9 @@ button shipped on `w02-origin-lock` (stacked commits).
 
 3. **RM-03 contradiction expansion.** Cue-gated v1 is shipped. Open:
    negation-flip ("I don't eat meat anymore" without "now"), numeric/date
-   change, ≥50 contradiction cases (backlog: 4 today), `staleness_rate` /
-   `false_supersession` metrics. Files: `record.js` `detectSupersession`,
+   change, ≥50 contradiction cases (measurement seed shipped: 69 cases,
+   `staleness_rate` / `false_supersession` reporting metrics; detector v2 still
+   open). Files: `record.js` `detectSupersession`,
    `eval/corpora/contradictions.jsonl`, `eval/RESULTS.md`. Detection is
    lexical like the entity layer but a different predicate; keep the
    decision in `detectSupersession`, do not add a fifth verb.

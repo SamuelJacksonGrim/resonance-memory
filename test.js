@@ -2405,6 +2405,53 @@ test("duplicates corpus loads with all three RM-02 bands plus queries", () => {
   assert.ok(multi.length >= 3, "several multi-member dup groups");
 });
 
+test("contradictions corpus is ≥50 cases, original four stay golden, new ones do not", () => {
+  const { loadScenarios } = require("./eval/measure.js");
+  const { isGoldenCase } = require("./eval/run.js");
+  const file = path.join(__dirname, "eval", "corpora", "contradictions.jsonl");
+  const lines = fs.readFileSync(file, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  assert.ok(lines.length >= 50, "BACKLOG RM-00: ≥50 contradiction/update cases, got " + lines.length);
+  const scenarios = loadScenarios(file);
+  assert.strictEqual(scenarios.length, lines.length, "every line is a self-contained scenario");
+
+  const goldenIds = ["contra-job", "contra-city", "contra-wrongslot", "contra-additive-pets"];
+  const byId = new Map(lines.map((c) => [c.id, c]));
+  for (const id of goldenIds) {
+    const c = byId.get(id);
+    assert.ok(c, "missing original golden case " + id);
+    assert.strictEqual(c.gate, undefined, id + " must not grow gate:false");
+    assert.ok(isGoldenCase(c), id + " must remain a golden case");
+  }
+
+  const bands = new Set();
+  const ids = new Set();
+  for (const c of lines) {
+    assert.strictEqual(c.kind, "contradiction");
+    assert.ok(Array.isArray(c.writes) && c.writes.length >= 2, c.id + " writes");
+    assert.ok(c.writes.every((w) => typeof w === "string"), c.id + " writes are strings (run.js save(w))");
+    assert.strictEqual(typeof c.query, "string", c.id + " query");
+    assert.ok(c.expect && typeof c.expect === "object", c.id + " expect (schema match)");
+    assert.ok(Array.isArray(c.stale_values), c.id + " stale_values");
+    assert.ok(Array.isArray(c.current_values), c.id + " current_values");
+    assert.ok(Array.isArray(c.keep_values), c.id + " keep_values");
+    assert.ok(c.band, c.id + " band");
+    bands.add(c.band);
+    assert.ok(!ids.has(c.id), "duplicate id " + c.id);
+    ids.add(c.id);
+    if (!goldenIds.includes(c.id)) {
+      assert.strictEqual(c.gate, false, c.id + " is measurement-only (must not flip golden 27/31)");
+      assert.strictEqual(isGoldenCase(c), false, c.id + " must not be a golden case");
+    }
+  }
+  for (const need of ["cue", "silent", "guard", "buried", "samename", "ambiguous", "needs_review", "numeric", "negation"]) {
+    assert.ok(bands.has(need), "corpus missing band " + need);
+  }
+  const nStale = lines.filter((c) => c.stale_values.length).length;
+  const nKeep = lines.filter((c) => c.keep_values.length).length;
+  assert.ok(nStale >= 20, "enough stale-labeled cases to compute staleness_rate, got " + nStale);
+  assert.ok(nKeep >= 15, "enough keep-labeled cases to compute false_supersession, got " + nKeep);
+});
+
 test("extraction_precision on a tiny hand-labeled set with a known answer", () => {
   const results = { cases: [
     { stored: [{ text: "I have a dog named Rex" }], refused: false },
@@ -2791,8 +2838,80 @@ test("staleness_rate math on a tiny labeled fixture", () => {
   assert.strictEqual(expl.n, 2);
   assert.strictEqual(expl.n_stale, 1);
   assert.deepStrictEqual(expl.misses, ["city"]);
+  assert.strictEqual(expl.shape, "slot");
   assert.strictEqual(computeMetric("staleness_rate", { queries: [] }, null), null,
     "no probes → NA, not a fake 0");
+});
+
+test("staleness_rate RM-03 shape: stale value in top-k is stale, even if current is also there", () => {
+  const results = {
+    queries: [
+      { id: "job", ranked_texts: ["Actually I work at Globex now"], stale_values: ["Acme"], current_values: ["Globex"] },
+      { id: "dual", ranked_texts: ["I work at Acme", "I work at Globex"], stale_values: ["Acme"], current_values: ["Globex"] },
+      { id: "guard", ranked_texts: ["I have a dog named Rex"], stale_values: [], keep_values: ["Rex"] },
+    ],
+  };
+  assert.strictEqual(computeMetric("staleness_rate", results, null), 0.5);
+  const expl = explainMetric("staleness_rate", results, null);
+  assert.strictEqual(expl.shape, "contradiction");
+  assert.strictEqual(expl.n, 2, "empty stale_values is unlabeled, not a miss");
+  assert.deepStrictEqual(expl.misses, ["dual"]);
+  assert.strictEqual(computeMetric("staleness_rate", { queries: [{ ranked_texts: ["x"] }] }, null), null);
+});
+
+test("staleness_rate slot_probes win when both shapes are present (RM-15 curve must not move)", () => {
+  const mixed = {
+    slot_probes: [
+      { slot: "job", ranked_texts: ["I work at Globex"], current_value: "Globex" },
+    ],
+    queries: [
+      { id: "dual", ranked_texts: ["I work at Acme"], stale_values: ["Acme"] },
+    ],
+  };
+  assert.strictEqual(computeMetric("staleness_rate", mixed, null), 0,
+    "soak path: current value present → not stale, even if a contradiction query would be");
+  assert.strictEqual(explainMetric("staleness_rate", mixed, null).shape, "slot");
+});
+
+test("false_supersession: a still-true fact with valid_to is 1; keep-both is 0", () => {
+  const wrong = {
+    all_records: [
+      { id: "1", text: "I live in Austin", valid_to: "2026-02-01", superseded_by: "2" },
+      { id: "2", text: "Actually I work at Globex now" },
+    ],
+    keep_values: ["Austin"],
+  };
+  assert.strictEqual(computeMetric("false_supersession", wrong, null), 1);
+  const expl = explainMetric("false_supersession", wrong, null);
+  assert.strictEqual(expl.n, 1);
+  assert.deepStrictEqual(expl.misses, ["Austin"]);
+  assert.ok(expl.of_supersessions > 0);
+
+  const kept = {
+    records: [
+      { id: "1", text: "I have a dog named Rex" },
+      { id: "2", text: "I have a cat named Whiskers" },
+    ],
+  };
+  assert.strictEqual(computeMetric("false_supersession", kept, { keep_values: ["Rex", "Whiskers"] }), 0);
+  assert.strictEqual(computeMetric("false_supersession", { records: [] }, {}), null,
+    "no keep_values → NA, not a fake 0");
+  assert.strictEqual(computeMetric("false_supersession", {
+    records: [{ id: "1", text: "I work at Globex" }],
+  }, { keep_values: ["Austin"] }), null,
+    "keep_value that was never stored is skipped, not a false supersession");
+});
+
+test("false_supersession prefers all_records over current() so a retirement is visible", () => {
+  const results = {
+    records: [{ id: "2", text: "I work at Globex" }],
+    all_records: [
+      { id: "1", text: "I live in Austin", valid_to: "T2", superseded_by: "2" },
+      { id: "2", text: "I work at Globex" },
+    ],
+    keep_values: ["Austin"],
+  };
+  assert.strictEqual(computeMetric("false_supersession", results, null), 1);
 });
 
 test("needle_retention@k math: relevant is the source id", () => {
@@ -2839,7 +2958,7 @@ test("storage_ratio: current / asserts, or / control_n when given", () => {
 test("0011 §7.3 metric names are registered; dream-only ones are NA on an empty control result", () => {
   const names = listMetrics().map((m) => m.name);
   for (const n of [
-    "staleness_rate", "needle_retention@k", "false_merge_rate", "storage_ratio",
+    "staleness_rate", "false_supersession", "needle_retention@k", "false_merge_rate", "storage_ratio",
     "gist_recall@k", "false_generalization_rate", "cluster_precision", "cluster_recall",
     "hub_contamination", "provenance_integrity", "grimoire_hit_rate", "grimoire_crowding",
     "cofire_rate", "near_miss_cofire", "duplicate_rate", "recall_at_k", "mrr",

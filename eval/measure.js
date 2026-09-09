@@ -12,7 +12,8 @@
  * eval/measure.js — reporting metrics (A/B), distinct from the golden gate.
  *
  *   node eval/measure.js                     all measurement corpora, all registered metrics
- *                                           (recall_at_k, duplicate_rate, mrr, extraction_*)
+ *                                           (recall_at_k, duplicate_rate, mrr, extraction_*,
+ *                                            staleness_rate, false_supersession)
  *   node eval/measure.js --corpus duplicates  one file / scenario-id prefix
  *   node eval/measure.js --k 5               recall_at_k's k (default 5)
  *   node eval/measure.js --json              machine-readable (02.b A/B)
@@ -52,14 +53,29 @@ function readJsonl(file) {
 }
 
 function isSelfContainedScenario(c) {
-  return c && Array.isArray(c.writes) && Array.isArray(c.queries);
+  return c && Array.isArray(c.writes) && (Array.isArray(c.queries) || typeof c.query === "string");
 }
 
 function isMeasurementLine(c) {
   if (!c) return false;
-  if (c.kind === "duplicates" || c.kind === "messy" || c.kind === "measure" || c.gate === false) return true;
+  if (c.kind === "duplicates" || c.kind === "messy" || c.kind === "measure" || c.kind === "contradiction" || c.gate === false) return true;
   if (c.role === "write" || c.role === "query" || c.role === "meta") return true;
   return isSelfContainedScenario(c) && !c.expect;
+}
+
+function queriesFromCase(c) {
+  if (Array.isArray(c.queries)) return c.queries;
+  if (typeof c.query !== "string") return [];
+  return [{
+    id: c.id,
+    query: c.query,
+    stale_values: Array.isArray(c.stale_values) ? c.stale_values : [],
+    current_values: Array.isArray(c.current_values) ? c.current_values : [],
+    keep_values: Array.isArray(c.keep_values) ? c.keep_values : [],
+    relevant_facts: Array.isArray(c.current_values) ? c.current_values : null,
+    band: c.band || null,
+    historical: !!c.historical,
+  }];
 }
 
 function loadScenarios(file) {
@@ -74,8 +90,13 @@ function loadScenarios(file) {
         id: c.id,
         kind: c.kind || "measure",
         writes: c.writes,
-        queries: c.queries,
+        queries: queriesFromCase(c),
         note: c.note || "",
+        band: c.band || null,
+        stale_values: Array.isArray(c.stale_values) ? c.stale_values : [],
+        current_values: Array.isArray(c.current_values) ? c.current_values : [],
+        keep_values: Array.isArray(c.keep_values) ? c.keep_values : [],
+        gate: c.gate,
       });
       continue;
     }
@@ -156,9 +177,20 @@ function liveRelevantId(id, records, allRecords) {
   return start;
 }
 
+function textHasValue(text, value) {
+  if (value == null || value === "") return false;
+  return String(text || "").toLowerCase().includes(String(value).toLowerCase());
+}
+
 function resolveRelevant(q, records, groups, saveLog, allRecords, opts) {
   if (Array.isArray(q.relevant_ids) && q.relevant_ids.length) {
     return q.relevant_ids.map(String);
+  }
+  if (Array.isArray(q.current_values) && q.current_values.length) {
+    const ids = (records || [])
+      .filter((r) => q.current_values.some((v) => textHasValue(r.text, v)))
+      .map((r) => String(r.id));
+    if (ids.length) return ids;
   }
   const labeledWrite = Array.isArray(q.relevant_writes) && q.relevant_writes.length;
   const labeledFact = Array.isArray(q.relevant_facts) && q.relevant_facts.length;
@@ -283,22 +315,49 @@ async function runScenario(scenario, opts) {
   for (const q of scenario.queries || []) {
     const output = await mem.recall(q.query, k);
     const ranked = parsePrimaryHits(output);
+    const staleValues = Array.isArray(q.stale_values) && q.stale_values.length
+      ? q.stale_values
+      : (scenario.stale_values || []);
+    const currentValues = Array.isArray(q.current_values) && q.current_values.length
+      ? q.current_values
+      : (scenario.current_values || []);
+    const keepValues = Array.isArray(q.keep_values) && q.keep_values.length
+      ? q.keep_values
+      : (scenario.keep_values || []);
+    const qLabeled = Object.assign({}, q, {
+      stale_values: staleValues,
+      current_values: currentValues,
+      keep_values: keepValues,
+    });
     queries.push({
       id: q.id || q.query,
       query: q.query,
       ranked_ids: ranked.map((h) => String(h.id)),
       ranked_texts: ranked.map((h) => h.text),
-      relevant_ids: resolveRelevant(q, records, groups, saveLog, allRecords, {
+      relevant_ids: resolveRelevant(qLabeled, records, groups, saveLog, allRecords, {
         extractMatch: scenario.extract_match,
       }),
       relevant_groups: q.relevant_groups || null,
       relevant_writes: q.relevant_writes || null,
       relevant_facts: q.relevant_facts || null,
+      stale_values: staleValues,
+      current_values: currentValues,
+      keep_values: keepValues,
+      band: q.band || scenario.band || null,
+      historical: !!q.historical,
       output,
     });
   }
   const recallExplain = explainMetric("recall_at_k", { queries }, scenario, { k });
   const mrrExplain = explainMetric("mrr", { queries }, scenario);
+  const staleExplain = explainMetric("staleness_rate", { queries }, {
+    stale_values: scenario.stale_values,
+    current_values: scenario.current_values,
+    band: scenario.band,
+  }, { k });
+  const falseSsExplain = explainMetric("false_supersession", {
+    records, all_records: allRecords, keep_values: scenario.keep_values,
+  }, { keep_values: scenario.keep_values });
 
   const exactCaught = saveLog.filter((s) => /already remembered/i.test(s.msg || "")).length;
 
@@ -311,6 +370,8 @@ async function runScenario(scenario, opts) {
     duplicate_rate: dupExplain.rate,
     recall_at_k: recallExplain.rate,
     mrr: mrrExplain.mrr,
+    staleness_rate: staleExplain.rate,
+    false_supersession: falseSsExplain.rate,
   };
   if (extractExplain.n_labeled) {
     metrics.extraction_precision = extractExplain.rate;
@@ -320,6 +381,8 @@ async function runScenario(scenario, opts) {
   return {
     id: scenario.id,
     file: scenario.file || null,
+    kind: scenario.kind || null,
+    band: scenario.band || null,
     k, field: fieldEnabled,
     n_writes: writes.length,
     n_stored_current: records.length,
@@ -329,12 +392,68 @@ async function runScenario(scenario, opts) {
     duplicate_rate: dupExplain,
     recall_at_k: recallExplain,
     mrr: mrrExplain,
+    staleness_rate: staleExplain,
+    false_supersession: falseSsExplain,
     extraction_precision: extractExplain.n_labeled ? extractExplain : null,
     extraction_recall: extractExplain.n_labeled ? extractRecallExplain : null,
     queries,
     saveLog,
     groups,
     bands,
+  };
+}
+
+function fmtRate(x) {
+  return x == null || Number.isNaN(x) ? "n/a" : Number(x).toFixed(4);
+}
+
+function poolContradiction(reports) {
+  const rows = (reports || []).filter((r) => r.kind === "contradiction" || (r.file && /contradictions\.jsonl$/.test(r.file)));
+  if (!rows.length) return null;
+  let nStale = 0, nStaleDen = 0, nFalse = 0, nKeep = 0;
+  const byBand = {};
+  const staleMisses = [];
+  const falseMisses = [];
+  for (const r of rows) {
+    const band = r.band || "unbanded";
+    (byBand[band] ||= { n: 0, n_stale: 0, n_stale_den: 0, n_false: 0, n_keep: 0 });
+    byBand[band].n++;
+    const s = r.staleness_rate;
+    if (s && s.n) {
+      nStale += s.n_stale;
+      nStaleDen += s.n;
+      byBand[band].n_stale += s.n_stale;
+      byBand[band].n_stale_den += s.n;
+      if (s.n_stale) staleMisses.push(r.id);
+    }
+    const f = r.false_supersession;
+    if (f && f.n) {
+      nFalse += f.n_false;
+      nKeep += f.n;
+      byBand[band].n_false += f.n_false;
+      byBand[band].n_keep += f.n;
+      if (f.n_false) falseMisses.push(r.id);
+    }
+  }
+  const bandRates = {};
+  for (const [band, b] of Object.entries(byBand)) {
+    bandRates[band] = {
+      n: b.n,
+      staleness_rate: b.n_stale_den ? b.n_stale / b.n_stale_den : null,
+      false_supersession: b.n_keep ? b.n_false / b.n_keep : null,
+    };
+  }
+  return {
+    n_cases: rows.length,
+    staleness_rate: nStaleDen ? nStale / nStaleDen : null,
+    n_stale: nStale,
+    n_stale_den: nStaleDen,
+    false_supersession: nKeep ? nFalse / nKeep : null,
+    n_false: nFalse,
+    n_keep: nKeep,
+    byBand: bandRates,
+    stale_ids: staleMisses,
+    false_ids: falseMisses,
   };
 }
 
@@ -345,7 +464,10 @@ function printHuman(reports, { k }) {
   console.log(line);
   console.log("registered: " + listMetrics().map((m) => m.name).join(", "));
 
-  for (const r of reports) {
+  const contra = reports.filter((r) => r.kind === "contradiction");
+  const other = reports.filter((r) => r.kind !== "contradiction");
+
+  for (const r of other) {
     console.log("\n" + (r.id || "(unnamed)") + (r.file ? "  [" + r.file + "]" : ""));
     console.log("  writes=" + r.n_writes + "  stored_current=" + r.n_stored_current +
       "  groups=" + r.n_groups + "  exact_restatements_caught=" + r.exact_restatements_caught);
@@ -382,6 +504,43 @@ function printHuman(reports, { k }) {
           console.log("    " + gid.padEnd(16) + " " + p.cosine.toFixed(4) + " " + tag);
         }
       }
+    }
+  }
+
+  if (contra.length) {
+    console.log("\n" + line);
+    console.log("CONTRADICTION / SUPERSESSION  (reporting, not gated; " + contra.length + " cases)");
+    for (const r of contra) {
+      const stale = r.staleness_rate && r.staleness_rate.n ? (r.staleness_rate.n_stale ? "STALE" : "ok") : "-";
+      const fs = r.false_supersession && r.false_supersession.n
+        ? (r.false_supersession.n_false ? "FALSE_SS" : "ok")
+        : "-";
+      const rec = r.recall_at_k && r.recall_at_k.n
+        ? (r.recall_at_k.hits ? "hit" : "miss")
+        : "-";
+      console.log("  " + String(r.id || "").padEnd(32) +
+        " band=" + String(r.band || "-").padEnd(12) +
+        " stale=" + String(stale).padEnd(6) +
+        " false_ss=" + String(fs).padEnd(9) +
+        " recall=" + rec);
+    }
+    const pooled = poolContradiction(contra);
+    console.log("  " + line.slice(0, 60));
+    console.log("  staleness_rate       " + fmtRate(pooled.staleness_rate) +
+      "   (" + pooled.n_stale + "/" + pooled.n_stale_den + " labeled current-queries still surface a stale value)");
+    console.log("  false_supersession   " + fmtRate(pooled.false_supersession) +
+      "   (" + pooled.n_false + "/" + pooled.n_keep + " still-true facts wrongly invalidated)");
+    for (const [band, b] of Object.entries(pooled.byBand)) {
+      console.log("    band " + band.padEnd(12) +
+        " n=" + String(b.n).padStart(2) +
+        "  stale=" + fmtRate(b.staleness_rate) +
+        "  false_ss=" + fmtRate(b.false_supersession));
+    }
+    if (pooled.stale_ids.length) {
+      console.log("  stale ids: " + pooled.stale_ids.join(", "));
+    }
+    if (pooled.false_ids.length) {
+      console.log("  false-supersession ids: " + pooled.false_ids.join(", "));
     }
   }
   console.log("\n" + line + "\n");
@@ -443,8 +602,11 @@ async function main(argv) {
       generated: new Date().toISOString(),
       k, field: fieldEnabled,
       metrics: listMetrics().map((m) => ({ name: m.name, description: m.description })),
+      contradictions: poolContradiction(reports),
       scenarios: reports.map((r) => ({
         id: r.id,
+        kind: r.kind,
+        band: r.band,
         n_writes: r.n_writes,
         n_stored_current: r.n_stored_current,
         n_groups: r.n_groups,
@@ -453,6 +615,8 @@ async function main(argv) {
         duplicate_rate: r.duplicate_rate,
         recall_at_k: r.recall_at_k,
         mrr: r.mrr,
+        staleness_rate: r.staleness_rate,
+        false_supersession: r.false_supersession,
         extraction_precision: r.extraction_precision,
         extraction_recall: r.extraction_recall,
         bands: r.bands,
@@ -470,4 +634,5 @@ if (require.main === module) {
 
 module.exports = {
   loadScenarios, loadAllScenarios, runScenario, resolveRelevant, isMeasurementLine,
+  isSelfContainedScenario, queriesFromCase, poolContradiction,
 };

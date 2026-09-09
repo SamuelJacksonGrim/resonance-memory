@@ -805,16 +805,53 @@ function slotProbeList(results, corpus) {
   return [];
 }
 
-function stalenessStats(results, corpus, opts) {
-  const k = opts && opts.k != null ? Number(opts.k) : 5;
-  const probes = slotProbeList(results, corpus);
-  if (!probes.length) {
-    return { n: 0, n_stale: 0, rate: null, misses: [], byProbe: [] };
+function rankedTextsOf(p, k) {
+  if (Array.isArray(p.ranked_texts) && p.ranked_texts.length) {
+    return p.ranked_texts.slice(0, k);
   }
+  if (p.output) {
+    return parsePrimaryHits(p.output).slice(0, k).map((h) => h.text);
+  }
+  return [];
+}
+
+function asValueList(x) {
+  if (x == null) return [];
+  if (Array.isArray(x)) return x.filter((v) => v != null && v !== "");
+  return [x];
+}
+
+function contradictionStaleList(results, corpus) {
+  const queries = asQueryList(results);
+  const corpusStale = corpus ? asValueList(corpus.stale_values) : [];
+  const corpusCurrent = corpus ? asValueList(corpus.current_values) : [];
+  const out = [];
+  for (const q of queries) {
+    const stale = asValueList(q.stale_values != null ? q.stale_values : corpusStale);
+    if (!stale.length) continue;
+    // Historical queries are supposed to surface the old fact (0002).
+    // They are not this metric — tag them historical:true to skip.
+    if (q.historical) continue;
+    out.push({
+      id: q.id || q.query || null,
+      query: q.query,
+      stale_values: stale,
+      current_values: asValueList(q.current_values != null ? q.current_values : corpusCurrent),
+      ranked_texts: q.ranked_texts,
+      ranked_ids: q.ranked_ids,
+      output: q.output,
+      band: q.band || (corpus && corpus.band) || null,
+    });
+  }
+  return out;
+}
+
+function soakStalenessStats(probes, opts) {
+  const k = opts && opts.k != null ? Number(opts.k) : 5;
   const scored = [];
   for (const p of probes) {
     const current = p.current_value != null ? p.current_value : p.value;
-    const rankedTexts = (p.ranked_texts || []).slice(0, k);
+    const rankedTexts = rankedTextsOf(p, k);
     const rankedIds = asIds(p.ranked_ids || p.ranked).slice(0, k);
     const relevant = asIds(p.relevant_ids || p.current_ids);
     let hit = false;
@@ -843,29 +880,187 @@ function stalenessStats(results, corpus, opts) {
     rate: n ? nStale / n : null,
     misses: scored.filter((s) => s.stale).map((s) => s.id),
     byProbe: scored,
+    shape: "slot",
   };
 }
 
+function contradictionStalenessStats(results, corpus, opts) {
+  const k = opts && opts.k != null ? Number(opts.k) : 5;
+  const probes = contradictionStaleList(results, corpus);
+  if (!probes.length) {
+    return { k, n: 0, n_stale: 0, rate: null, misses: [], byProbe: [], shape: "contradiction" };
+  }
+  const scored = [];
+  for (const p of probes) {
+    const rankedTexts = rankedTextsOf(p, k);
+    // 0007: "answers drawn from a superseded fact". Ground-truth stale
+    // values, not store.superseded_by — keying on the system's own
+    // retirement would score 0 by never superseding (the under-eager
+    // cheat staleness_rate exists to catch). Any top-k primary hit
+    // containing a stale value counts, including one labelled
+    // "no longer current": 0002 says a current query must not surface
+    // superseded rows at all.
+    const surfaced = p.stale_values.some((v) => rankedTexts.some((t) => textHasValue(t, v)));
+    scored.push({
+      id: p.id || p.query || null,
+      band: p.band || null,
+      stale: surfaced,
+      stale_values: p.stale_values,
+    });
+  }
+  const n = scored.length;
+  const nStale = scored.filter((s) => s.stale).length;
+  return {
+    k, n, n_stale: nStale,
+    rate: n ? nStale / n : null,
+    misses: scored.filter((s) => s.stale).map((s) => s.id),
+    byProbe: scored,
+    shape: "contradiction",
+  };
+}
+
+function stalenessStats(results, corpus, opts) {
+  // Two input shapes, one name. Soak (0011 §7.3) got here first and
+  // its slot-probe contract is load-bearing — do not reinterpret a
+  // slot_probes payload as an RM-03 contradiction query.
+  //
+  //   slot / soak:        current value MISSING from top-k
+  //   contradiction:      ground-truth stale value PRESENT in top-k
+  //
+  // RM-03 acceptance ("staleness_rate drops ≥70% on eval/contradictions")
+  // is the second shape: 0007 "answers drawn from a superseded fact".
+  // Slot probes win when present so the RM-15 curve does not move.
+  const probes = slotProbeList(results, corpus);
+  if (probes.length) return soakStalenessStats(probes, opts);
+  return contradictionStalenessStats(results, corpus, opts);
+}
+
 /*
- * staleness_rate — RM-15's core curve (0011 §7.3).
+ * staleness_rate — two shapes, one number (lower = better).
  *
- * Among labeled slot probes ("where do I live" / "where do I work" / …),
- * the fraction whose top-k does NOT contain the persona's CURRENT slot
- * value. A superseded city ranking above the current one is a stale hit.
+ * Soak / slot probes (0011 §7.3, landed with RM-15): among labeled
+ * slot probes, the fraction whose top-k does NOT contain the persona's
+ * CURRENT slot value. Unlabeled → skip. No probes → null.
  *
- * Probe is labeled by `current_value` (substring of ranked_texts) and/or
- * `relevant_ids` (current slot record ids). Unlabeled probes skipped.
- * No probes → null (not a 0 that looks like a perfect store).
+ * Contradiction / RM-03 (0007, BACKLOG RM-03): among queries labeled
+ * with `stale_values`, the fraction whose top-k primary hits contain a
+ * ground-truth no-longer-current value. That is "answers drawn from a
+ * superseded fact as if current." Store.superseded_by is deliberately
+ * not the label — a detector that never retires would otherwise ace
+ * this. No labeled stale_values → null (not a fake 0).
  *
- * results shape: { slot_probes: [{ slot, ranked_texts, ranked_ids,
+ * results shape (soak): { slot_probes: [{ slot, ranked_texts, ranked_ids,
  *   current_value, relevant_ids }] } or queries with query_kind:"slot".
+ * results shape (RM-03): { queries: [{ ranked_texts, stale_values,
+ *   current_values?, historical? }] }. corpus.stale_values is the
+ * scenario-level fallback. historical:true queries are skipped.
  */
 register({
   name: "staleness_rate",
   defaults: { k: 5 },
-  description: "Fraction of slot probes whose top-k does not contain the current slot value.",
+  description: "Soak: fraction of slot probes whose top-k misses the current value. RM-03: fraction of labeled recalls whose top-k still surfaces a ground-truth stale value.",
   compute(results, corpus, opts) { return stalenessStats(results, corpus, opts).rate; },
   explain: stalenessStats,
+});
+
+function keepValueList(results, corpus) {
+  if (results && Array.isArray(results.keep_values)) return asValueList(results.keep_values);
+  if (corpus && Array.isArray(corpus.keep_values)) return asValueList(corpus.keep_values);
+  const queries = asQueryList(results);
+  const fromQ = [];
+  for (const q of queries) {
+    for (const v of asValueList(q.keep_values)) fromQ.push(v);
+  }
+  return fromQ;
+}
+
+function recordIsInvalidated(r) {
+  if (!r) return true;
+  if (r.deleted) return true;
+  if (r.valid_to != null) return true;
+  if (r.superseded_by != null) return true;
+  return false;
+}
+
+function falseSupersessionStats(results, corpus) {
+  // Prefer all_records: superseded rows have left current() and that is
+  // exactly the population this metric inspects. Falling through to
+  // records/current() would make every retirement invisible.
+  const records = (results && Array.isArray(results.all_records) && results.all_records.length)
+    ? results.all_records
+    : asRecordList(results);
+  const keepValues = keepValueList(results, corpus);
+  if (!keepValues.length) {
+    return {
+      n: 0, n_false: 0, n_supersessions: 0, n_false_supersessions: 0,
+      rate: null, of_supersessions: null, misses: [], byValue: [],
+    };
+  }
+  const nSupersessions = records.filter((r) => r && (r.valid_to != null || r.superseded_by != null)).length;
+  const scored = [];
+  for (const value of keepValues) {
+    const matched = records.filter((r) => r && textHasValue(r.text, value));
+    if (!matched.length) {
+      // Never stored — extraction drop, not a supersession. Skip; that
+      // is extraction_recall's job, and counting it here would let a
+      // store-nothing cheat look like over-eager retirement.
+      continue;
+    }
+    const stillCurrent = matched.some((r) => !recordIsInvalidated(r));
+    const falseHit = !stillCurrent;
+    scored.push({
+      value,
+      n_matched: matched.length,
+      still_current: stillCurrent,
+      false_supersession: falseHit,
+    });
+  }
+  const n = scored.length;
+  const nFalse = scored.filter((s) => s.false_supersession).length;
+  const nFalseSupersessions = records.filter((r) => {
+    if (!r || (r.valid_to == null && r.superseded_by == null)) return false;
+    return keepValues.some((v) => textHasValue(r.text, v));
+  }).length;
+  return {
+    n, n_false: nFalse,
+    n_supersessions: nSupersessions,
+    n_false_supersessions: nFalseSupersessions,
+    rate: n ? nFalse / n : null,
+    of_supersessions: nSupersessions ? nFalseSupersessions / nSupersessions : (n ? 0 : null),
+    misses: scored.filter((s) => s.false_supersession).map((s) => s.value),
+    byValue: scored,
+  };
+}
+
+/*
+ * false_supersession — RM-03 anti-cheat (0007 / BACKLOG RM-03).
+ *
+ * Among labeled still-true facts (`keep_values`), the fraction that are
+ * no longer current (superseded_by / valid_to / deleted). 0 is the hard
+ * gate: "zero cases where a still-true fact is wrongly invalidated."
+ *
+ * Denominator is must-keep facts, not "all supersessions." A detector
+ * that retires 99 correct updates plus 1 still-true fact must not look
+ * like 0.01. The brief's "fraction of supersessions that were wrong"
+ * is `explain().of_supersessions` (n_false_supersessions / n_supersessions)
+ * so both readouts exist; `compute` returns the BACKLOG hard-zero rate.
+ *
+ * keep_values that match no stored record are skipped (never stored ≠
+ * wrongly retired). No keep_values → null, not a vacuous 0 — update-only
+ * cases contribute to staleness_rate instead. The pair is the cheat
+ * bound: never-supersede aces this and fails staleness; over-eager
+ * aces staleness and fails this.
+ *
+ * results shape: { records: [{ id, text, superseded_by, valid_to,
+ *   deleted? }], keep_values?: [string] }
+ * corpus shape:  { keep_values: [string] } (scenario-level labels).
+ * Query-level keep_values are unioned when records come from measure.js.
+ */
+register({
+  name: "false_supersession",
+  description: "Fraction of labeled still-true facts (keep_values) that were invalidated. Hard-zero for RM-03; unlabeled → null.",
+  compute(results, corpus) { return falseSupersessionStats(results, corpus).rate; },
+  explain: falseSupersessionStats,
 });
 
 function filterNeedleQueries(results, opts) {

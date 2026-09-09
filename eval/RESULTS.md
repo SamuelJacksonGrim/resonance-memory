@@ -201,6 +201,109 @@ it does not delete additive or cross-slot facts. The RM-04 bi-temporal model (`v
 
 ---
 
+# RM-03 measurement seed — staleness_rate, false_supersession, ≥50 contradiction cases
+
+**Date:** 2026-09-09 · **Product behaviour:** unchanged (`memory-core.js` / `record.js` /
+`detectSupersession` / recall ranking untouched). **Embedder:** `text-embedding-nomic-embed-text-v1.5`,
+cache extended for the new writes. **Reproduce:** `node eval/measure.js --corpus contradictions`
+(offline after the cache commit). Golden: `node eval/run.js` → **27/31, no regressions.**
+
+This slice builds the two reporting metrics RM-03's acceptance names and that the Phase 2
+fusion gate lists as prerequisites, plus the contradiction corpus those numbers run on.
+Detection v2 is the *next* slice and must beat these numbers; it is not this slice.
+
+## Definitions (where they came from)
+
+`staleness_rate` already existed as the RM-15 soak slot-probe curve (0011 §7.3): among
+labeled slot probes, the fraction whose top-k does **not** contain the current slot value.
+That shape is unchanged — `slot_probes` still wins when present, so the soak curve does
+not move.
+
+The RM-03 / 0007 shape is different and is what "drops ≥70% on `eval/contradictions`"
+needs to be computable:
+
+> **`staleness_rate` (contradiction):** among queries labeled with `stale_values`, the
+> fraction whose top-k primary hits contain a ground-truth no-longer-current value.
+
+That is 0007's "answers drawn from a superseded fact." Labels are ground truth, not
+`store.superseded_by` — a detector that never retires would otherwise ace this.
+Unlabeled (empty `stale_values`) → skipped. No labeled queries → `null`, not a fake 0.
+
+`false_supersession` is new. 0007: "still-true facts wrongly invalidated | hard gate —
+must be 0." BACKLOG RM-03: "zero cases where a still-true fact is wrongly invalidated."
+The brief also said "fraction of supersessions that were wrong." Those are different
+denominators:
+
+- **`compute` returns `n_wrongly_invalidated / n_keep_values`.** A detector that
+  retires 99 correct updates plus 1 still-true fact must not look like 0.01.
+- **`explain().of_supersessions`** is `n_false_supersessions / n_supersessions`, the
+  brief's phrasing, so both readouts exist.
+
+`keep_values` that match no stored record are skipped (never stored ≠ wrongly retired).
+No `keep_values` → `null` (update-only cases contribute to staleness instead). The pair
+is the cheat bound: never-supersede aces this and fails staleness; over-eager aces
+staleness and fails this.
+
+Neither metric is in `golden.json`. Reporting only.
+
+## Corpus (`eval/corpora/contradictions.jsonl`)
+
+69 cases (was 4). Original four stay golden (`contra-job` / `city` / `wrongslot` /
+`additive-pets`). The other 65 are the same `{id, kind, writes, query, expect}` row
+plus `gate: false` and the measurement labels (`band`, `current_values`,
+`stale_values`, `keep_values`).
+
+| band | n | what it tests |
+|---|---|---|
+| `cue` | 18 | explicit SUPERSEDE_CUE_RE (`actually` / `now` / `moved` / `switched` / …) |
+| `silent` | 14 | same-slot value swap, no cue — v1 documented miss |
+| `guard` | 13 | still-true facts that must not be retired (cross-slot, additive, `used to`) |
+| `buried` | 7 | cue under filler, or a correction with no cue token |
+| `samename` | 5 | two people, same display name; one same-role address pair |
+| `ambiguous` / `needs_review` | 6 | keep both / hypothetical / offer-not-accepted |
+| `numeric` | 4 | time and date changes, with and without a cue |
+| `negation` | 2 | "don't like X anymore" vs silent antonym |
+
+## Baseline (cue-gated v1, this commit)
+
+```
+staleness_rate       0.4889   (22/45 labeled current-queries still surface a stale value)
+false_supersession   0.0256   (1/39 still-true facts wrongly invalidated)
+  band cue          n=18  stale=0.1111
+  band silent       n=14  stale=1.0000
+  band buried       n= 7  stale=0.4286
+  band numeric      n= 4  stale=0.5000
+  band negation     n= 2  stale=0.5000
+  band guard        n=13  false_ss=0.0000
+  band samename     n= 5  false_ss=0.1000
+  band ambiguous    n= 4  false_ss=0.0000
+  band needs_review n= 2  false_ss=0.0000
+```
+
+What this says about current recall, before anyone tunes it:
+
+- **Silent swaps are a complete miss** (14/14 stale). That is the v1 design, now a number:
+  RM-03 "drops ≥70% on eval/contradictions" cannot be claimed off the 4 golden cases
+  (those already pass); the drop has to come from this silent / buried / numeric mass.
+- **The cue gate's precision holds on the guards** (`false_supersession` 0 on guard /
+  ambiguous / needs_review). The one invalidation (1/39) is `contra-samename-same-role`:
+  two "My dentist is Dr Park on {Oak,Pine} Street" rows, which RM-02 mid-band merge
+  collapses. Not `detectSupersession`. Worth knowing: merge, not cue-gated supersession,
+  is what currently retires a still-true same-name-same-role fact.
+- **Cue is not a free 0.** 2/18 cue cases still stale (`contra-cue-dog-rename`,
+  `contra-cue-editor`): the cue fires in the text, but cosine vs the prior fact sits
+  below the 0.535 floor, so argmax-targeting refuses. Same class as the documented
+  "cue + below floor → keep both" guard, except these *should* have been updates.
+- **`correction:` in `SUPERSEDE_CUE_RE` does not match `Correction: `.** Word-boundary
+  after the colon fails (colon and space are both non-word). `contra-numeric-cue-bday`
+  is labeled cue-ish and misses. Do not "fix" the regex in a measurement slice.
+
+RM-03 v2's pre-declared bar, now actually computable: staleness 0.4889 → ≤ 0.1467
+(≥70% drop) on this corpus, and false_supersession stays at 0 on the guard/ambiguous
+keep-set (the 0.0256 merge hit is a separate RM-02 question).
+
+---
+
 # RM-00 field experiment #1 — reciprocal (mutual) kNN
 
 **Date:** 2026-08-01 · same harness. **Scorecard: 20/27 → 21/27**, `noise-schedule [field:on]`

@@ -24,13 +24,17 @@ Build `eval/` with seeded, offline, reproducible scoring.
       `adversarial`, plus `field-noise` / `field-stress`. *(`duplicates` landed with RM-02.a
       as a measurement corpus — skipped by the golden runner. `messy` landed with RM-01.a.
       `temporal` still lands with a later RM-04 expansion.)*
-- [ ] ≥50 contradiction/update cases — **the axis LOCOMO and LongMemEval both under-test.**
-      *(4 today; expand as RM-03 detection matures.)*
+- [x] ≥50 contradiction/update cases — **the axis LOCOMO and LongMemEval both under-test.**
+      *(69 in `eval/corpora/contradictions.jsonl`: the original 4 stay golden; the rest are
+      `gate: false` measurement cases. Cue / silent / guard / buried / same-name /
+      ambiguous / needs_review / numeric / negation. Expand further as RM-03 v2 detection matures.)*
 - [~] Metrics: `recall@k`, `duplicate_rate`, `extraction_precision`,
-      `extraction_recall`, and `mrr` shipped as **reporting** metrics (registry in
-      `eval/metrics.js`; `node eval/measure.js`; not folded into `golden.json`),
-      plus the field-experiment **ROC / TBR** split.
-      *(`staleness_rate`, `false_supersession` still land with RM-03.)*
+      `extraction_recall`, `mrr`, **`staleness_rate`**, and **`false_supersession`** shipped as
+      **reporting** metrics (registry in `eval/metrics.js`; `node eval/measure.js`; not
+      folded into `golden.json`), plus the field-experiment **ROC / TBR** split.
+      *(`staleness_rate` also has the RM-15 soak slot-probe shape; the RM-03 shape is
+      "stale value still in top-k." Neither metric gates yet — they report so a later
+      detector slice can A/B against a recorded baseline.)*
 - [x] Constraint cases run with the field **off and on**; report both and the gap.
 - [x] Repeated cases (`repeat` / `contains_by_turn`) keep one store across turns and report
       `first_hit_turn`, so a constraint that lands by turn 4 isn't scored as a miss.
@@ -252,8 +256,9 @@ negative result is written down (a negative result is a real deliverable here).
 
 **Promotion gate (all four, per `ROADMAP.md`).** Fusion becomes default *only* when: (1) an A/B
 win on the `RM-00` golden set — **the metrics it needs (`MRR`, `staleness_rate`,
-`false_supersession`, `duplicate_rate`) don't exist yet** and building them is a prerequisite
-(they land with the features they test — see `RM-00`); (2) `RM-21` has landed (competition +
+`false_supersession`, `duplicate_rate`) now exist as reporting metrics** (`eval/metrics.js` +
+`eval/measure.js`; `staleness_rate` / `false_supersession` on `eval/contradictions`, not yet
+folded into `golden.json`); (2) `RM-21` has landed (competition +
 normalization must exist before learned weight enters rank, or ranking reinforces what already
 ranked); (3) `RM-16` (poisoning defense) has landed; (4) `DEVELOPERS.md` + `CLAUDE.md` amended
 in the same PR with the measurement that earned it. A failed gate keeps the flag off and writes
