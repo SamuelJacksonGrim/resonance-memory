@@ -32,7 +32,8 @@ const { createCore, cosine } = require("../memory-core.js");
 function createMemory({
   store, embed, fieldEnabled = false, edgesPath, ledgerPath,
   extractEnabled = false, extractCapable, extract, extractTimeoutMs,
-  warmRank = false, warmRankWeight, warmRankSeedK, warmEnabled,
+  warmRank = false, warmRankWeight, warmRankSeedK, warmRankShape, warmRankRrfK,
+  warmEnabled,
 }) {
   // Lazy EdgeStore, exactly as server.js does it, so a field-off run never touches disk.
   // Persistence follows the injected Store (RM-07 slice 5): SqliteStore shares
@@ -60,6 +61,8 @@ function createMemory({
     warmRank: () => !!warmRank,
     warmRankWeight: warmRankWeight != null ? () => Number(warmRankWeight) : undefined,
     warmRankSeedK: warmRankSeedK != null ? () => Number(warmRankSeedK) : undefined,
+    warmRankShape: warmRankShape != null ? () => String(warmRankShape) : undefined,
+    warmRankRrfK: warmRankRrfK != null ? () => Number(warmRankRrfK) : undefined,
   });
   return { save: core.save, recall: core.recall };
 }

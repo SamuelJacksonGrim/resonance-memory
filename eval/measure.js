@@ -23,6 +23,8 @@
  *   node eval/measure.js --extract-timeout N ms (default 45000 for the live A/B)
  *   node eval/measure.js --warm-rank            exploratory activation-in-rank
  *   node eval/measure.js --warm-rank-weight 0.3 combiner weight (default 0.3)
+ *   node eval/measure.js --warm-rank-shape additive|rrf|ranknorm|l1|multiplicative
+ *   node eval/measure.js --rrf-k 60             RRF k (default 60)
  *   node eval/measure.js --include-gate         also score golden corpora via expect.contains
  *
  * Reuses `pipeline.js` → `memory-core.js`. Does not write golden.json, does
@@ -291,6 +293,8 @@ async function runScenario(scenario, opts) {
   const extractEnabled = !!(opts && opts.extractEnabled);
   const warmRank = !!(opts && opts.warmRank);
   const warmRankWeight = opts && opts.warmRankWeight;
+  const warmRankShape = opts && opts.warmRankShape;
+  const warmRankRrfK = opts && opts.warmRankRrfK;
   const { store, file, dir } = freshStore();
   const mem = createMemory({
     store, embed, fieldEnabled, edgesPath: file + ".edges.json",
@@ -298,7 +302,7 @@ async function runScenario(scenario, opts) {
     extractCapable: opts && opts.extractCapable,
     extract: opts && opts.extract,
     extractTimeoutMs: opts && opts.extractTimeoutMs,
-    warmRank, warmRankWeight,
+    warmRank, warmRankWeight, warmRankShape, warmRankRrfK,
   });
 
   const writes = (scenario.writes || []).map((w) => (typeof w === "string" ? { text: w } : w));
@@ -576,6 +580,10 @@ async function main(argv) {
   const wantExtract = args.includes("--extract");
   const wi = args.indexOf("--warm-rank-weight");
   const warmRankWeight = wi >= 0 ? Number(args[wi + 1]) : undefined;
+  const si = args.indexOf("--warm-rank-shape");
+  const warmRankShape = si >= 0 ? args[si + 1] : undefined;
+  const rrfki = args.indexOf("--rrf-k");
+  const warmRankRrfK = rrfki >= 0 ? Number(args[rrfki + 1]) : undefined;
   const ci = args.indexOf("--corpus");
   const filter = ci >= 0 ? args[ci + 1] : null;
   const ki = args.indexOf("--k");
@@ -616,7 +624,7 @@ async function main(argv) {
   const reports = [];
   for (const s of scenarios) {
     reports.push(await runScenario(s, {
-      k, fieldEnabled, bands, warmRank, warmRankWeight,
+      k, fieldEnabled, bands, warmRank, warmRankWeight, warmRankShape, warmRankRrfK,
       extractEnabled, extract: extractFn, extractTimeoutMs,
     }));
   }

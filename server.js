@@ -91,6 +91,8 @@ function envNumber(name, fallback) {
   return Number.isFinite(n) ? n : fallback;
 }
 const ENV_WARM_RANK_WEIGHT = envNumber("RESONANCE_WARM_RANK_WEIGHT", 0.3);
+const ENV_WARM_RANK_SHAPE = String(process.env.RESONANCE_WARM_RANK_SHAPE || "additive").toLowerCase();
+const ENV_WARM_RANK_RRF_K = envNumber("RESONANCE_WARM_RANK_RRF_K", 60);
 function fieldEnabled() {
   try {
     const c = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
@@ -212,6 +214,8 @@ function getWarm() { if (!_warm) _warm = new WarmField(); return _warm; }
 function warmEnabled() { return ENV_WARM; }
 function warmRank() { return ENV_WARM_RANK; }
 function warmRankWeight() { return ENV_WARM_RANK_WEIGHT; }
+function warmRankShape() { return ENV_WARM_RANK_SHAPE; }
+function warmRankRrfK() { return ENV_WARM_RANK_RRF_K; }
 function warmTrace() { return ENV_WARM_TRACE; }
 function warmEdgeCap() { return ENV_WARM_EDGE_CAP; }
 
@@ -251,7 +255,7 @@ async function bootStore() {
   // implementation of save/recall and the RM-00 golden guards that they never diverge.
   core = createCore({
     store, embed, fieldEnabled, getEdgeStore, dedupThresholds, fieldMinSim, constraintGate,
-    warmEnabled, getWarm, warmRank, warmRankWeight,
+    warmEnabled, getWarm, warmRank, warmRankWeight, warmRankShape, warmRankRrfK,
     saveSeed: () => true,          // production: a just-saved fact is warm without a recall
     warmTrace, warmEdgeCap,
     extractEnabled, extractCapable, extract: extractFn,

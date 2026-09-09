@@ -42,12 +42,21 @@
  *                                  unless warmRank is on.
  *                                  Opt out with "0"/"false"/"no".)
  *   warmRank      () -> boolean   (RESONANCE_WARM_RANK; default OFF.
- *                                  Exploratory: cosine + w·spread-activation
- *                                  reorders primary. Flag-off is today's
- *                                  byte-identical cosine. Not the 2.2 gate.)
+ *                                  Exploratory: a combiner reorders primary.
+ *                                  Default shape is additive
+ *                                  (cosine + w·spread-activation). Flag-off
+ *                                  is today's byte-identical cosine. Not
+ *                                  the 2.2 gate.)
  *   warmRankWeight () -> number   (RESONANCE_WARM_RANK_WEIGHT; default 0.3,
  *                                  same cap as Related: maxBonus. Injected
  *                                  so eval cannot inherit a user env.)
+ *   warmRankShape  () -> string   (RESONANCE_WARM_RANK_SHAPE; default
+ *                                  "additive". Research shapes: rrf,
+ *                                  ranknorm, l1, multiplicative. Unknown
+ *                                  → additive. Only consulted when
+ *                                  warmRank is on.)
+ *   warmRankRrfK   () -> number   (RESONANCE_WARM_RANK_RRF_K; default 60,
+ *                                  Cormack/Clarke/Buettcher. RRF only.)
  *   warmRankSeedK  () -> number   (how many cosine hits seed the rank
  *                                  combiner; default K_SEARCH. Tests inject
  *                                  1 so a 3-item store can show a pull.)
@@ -128,6 +137,12 @@ const CONSTRAINT_GATE = process.env.RESONANCE_CONSTRAINT_GATE ? Number(process.e
 // semantic", phase-2). Not tuned against the A/B; a miss at this weight
 // is a real miss, not a missed knob.
 const WARM_RANK_WEIGHT = 0.3;
+// Combiner-shape research (Lane B). Additive is the measured-zero baseline.
+// Other names are exploratory and only run when warmRank is on. Unknown
+// strings fail-open to additive so a typo cannot invent a ranking.
+const WARM_RANK_SHAPE = "additive";
+const FUSE_SHAPES = ["additive", "rrf", "ranknorm", "l1", "multiplicative"];
+const RRF_K = 60;
 
 /*
  * Save-time semantic bind (Phase 0.1). K neighbors above SAVE_TIME_MIN_COS are
@@ -649,15 +664,151 @@ function activationRankBonus(W, id) {
   return extra > 0 ? extra : 0;
 }
 
-function fuseScoredWithActivation(scored, W, weight) {
+function fuseTieBreak(a, b) {
+  return (b.final - a.final) || (b.s - a.s) || String(a.m.id).localeCompare(String(b.m.id));
+}
+
+function resolveFuseShape(shape) {
+  const s = String(shape == null ? WARM_RANK_SHAPE : shape).toLowerCase().trim();
+  for (let i = 0; i < FUSE_SHAPES.length; i++) {
+    if (FUSE_SHAPES[i] === s) return s;
+  }
+  return "additive";
+}
+
+/*
+ * Undirected 1-hop view of a spread adjacency Map. Test-injected graphs are
+ * often one-way (A→B); production activationEdgesFromStore is already
+ * symmetric. Competitive shapes need the undirected neighborhood or a
+ * directed leaf looks isolated on the B side and gets a fake L1 share of 1.
+ */
+function neighborGraph(edges) {
+  const g = new Map();
+  if (!edges || typeof edges.entries !== "function") return g;
+  function add(a, b) {
+    a = String(a); b = String(b);
+    if (!a || !b || a === b) return;
+    if (!g.has(a)) g.set(a, []);
+    if (g.get(a).indexOf(b) < 0) g.get(a).push(b);
+  }
+  for (const [from, list] of edges) {
+    for (const e of list || []) {
+      const to = e && e.id != null ? e.id : e;
+      add(from, to);
+      add(to, from);
+    }
+  }
+  return g;
+}
+
+function neighborhoodIds(id, graph) {
+  const self = String(id);
+  const out = [self];
+  const seen = new Set(out);
+  for (const n of graph.get(self) || []) {
+    if (seen.has(n)) continue;
+    seen.add(n);
+    out.push(n);
+  }
+  return out;
+}
+
+/*
+ * Proto-2.4: node's surplus as a share of (self + 1-hop) surplus.
+ * A uniform 8-node cluster each holding bonus 0.27 gets 1/8; an isolated
+ * leaf next to a cosine-seed (bonus 0) keeps 1. Rank-normalize does NOT
+ * do this — a cluster of tied local-maxima each still score 1.0.
+ */
+function competitiveL1(id, bonusOf, graph) {
+  const self = bonusOf(id);
+  if (!(self > 0)) return 0;
+  const ids = neighborhoodIds(id, graph);
+  let sum = 0;
+  for (let i = 0; i < ids.length; i++) {
+    const b = bonusOf(ids[i]);
+    if (b > 0) sum += b;
+  }
+  return sum > 0 ? self / sum : 0;
+}
+
+/*
+ * Proto-2.3: rank-normalize surplus inside the 1-hop neighborhood.
+ * Local max → 1.0; last of n → 1/n. Ties take the min rank (competition
+ * ranking), so a uniform cluster of hubs all stay at 1.0. That is the
+ * shape the 2.2 brief named; the L1 sibling is what actually damps a
+ * tied cluster.
+ */
+function competitiveRankNorm(id, bonusOf, graph) {
+  const self = bonusOf(id);
+  if (!(self > 0)) return 0;
+  const ids = neighborhoodIds(id, graph);
+  const pool = [];
+  for (let i = 0; i < ids.length; i++) {
+    const b = bonusOf(ids[i]);
+    if (b > 0) pool.push(b);
+  }
+  if (!pool.length) return 0;
+  const rank = 1 + pool.filter((b) => b > self + 1e-12).length;
+  return (pool.length - rank + 1) / pool.length;
+}
+
+function fuseScoredWithActivation(scored, W, weight, opts) {
   const w = Number(weight);
   const ww = Number.isFinite(w) && w > 0 ? w : 0;
-  return (scored || [])
-    .map((x) => {
-      const bonus = activationRankBonus(W, x.m.id);
-      return { m: x.m, s: x.s, bonus, final: x.s + ww * bonus };
-    })
-    .sort((a, b) => (b.final - a.final) || (b.s - a.s) || String(a.m.id).localeCompare(String(b.m.id)));
+  const list = scored || [];
+  const shape = resolveFuseShape(opts && opts.shape);
+  const bonusOf = (id) => activationRankBonus(W, id);
+  const graph = neighborGraph(opts && opts.edges);
+  // Competitive shapes without a graph would treat every spread node as
+  // an isolate (share 1.0) and invent a ranking. Fail-open to additive.
+  const useGraph = (shape === "l1" || shape === "ranknorm") && graph.size > 0;
+
+  if (shape === "rrf") {
+    const kIn = Number(opts && opts.rrfK);
+    const kk = Number.isFinite(kIn) && kIn > 0 ? kIn : RRF_K;
+    const cosOrder = list.map((_, i) => i).sort((i, j) => {
+      const d = list[j].s - list[i].s;
+      if (d) return d;
+      return String(list[i].m.id).localeCompare(String(list[j].m.id));
+    });
+    const cosRank = new Map();
+    for (let r = 0; r < cosOrder.length; r++) {
+      cosRank.set(String(list[cosOrder[r]].m.id), r + 1);
+    }
+    const actItems = [];
+    for (let i = 0; i < list.length; i++) {
+      if (bonusOf(list[i].m.id) > 0) actItems.push(list[i]);
+    }
+    actItems.sort((a, b) => {
+      const d = bonusOf(b.m.id) - bonusOf(a.m.id);
+      if (d) return d;
+      return String(a.m.id).localeCompare(String(b.m.id));
+    });
+    const actRank = new Map();
+    for (let r = 0; r < actItems.length; r++) {
+      actRank.set(String(actItems[r].m.id), r + 1);
+    }
+    return list.map((x) => {
+      const id = String(x.m.id);
+      const bonus = bonusOf(x.m.id);
+      const rc = cosRank.get(id);
+      const ra = actRank.get(id);
+      // An arm that did not retrieve the doc contributes nothing (0003).
+      const final = 1 / (kk + rc) + (ra != null ? ww / (kk + ra) : 0);
+      return { m: x.m, s: x.s, bonus, signal: ra != null ? 1 / (kk + ra) : 0, final };
+    }).sort(fuseTieBreak);
+  }
+
+  return list.map((x) => {
+    const bonus = bonusOf(x.m.id);
+    let signal = bonus;
+    if (useGraph && shape === "l1") signal = competitiveL1(x.m.id, bonusOf, graph);
+    else if (useGraph && shape === "ranknorm") signal = competitiveRankNorm(x.m.id, bonusOf, graph);
+    const final = shape === "multiplicative"
+      ? x.s * (1 + ww * signal)
+      : x.s + ww * signal;
+    return { m: x.m, s: x.s, bonus, signal, final };
+  }).sort(fuseTieBreak);
 }
 
 /*
@@ -678,6 +829,8 @@ function createCore({
   warmEnabled = () => true,
   warmRank = () => false,
   warmRankWeight = () => WARM_RANK_WEIGHT,
+  warmRankShape = () => WARM_RANK_SHAPE,
+  warmRankRrfK = () => RRF_K,
   warmRankSeedK = () => K_SEARCH,
   saveSeed = () => false,
   getWarm,
@@ -754,6 +907,23 @@ function createCore({
   function resolveRankSeedK() {
     const n = Number(warmRankSeedK());
     return Number.isFinite(n) && n > 0 ? Math.trunc(n) : K_SEARCH;
+  }
+
+  function resolveRankShape() {
+    try { return resolveFuseShape(warmRankShape()); } catch { return "additive"; }
+  }
+
+  function resolveRrfK() {
+    const n = Number(warmRankRrfK());
+    return Number.isFinite(n) && n > 0 ? n : RRF_K;
+  }
+
+  function fuseOpts(mems, W) {
+    return {
+      shape: resolveRankShape(),
+      rrfK: resolveRrfK(),
+      edges: edgesFor(mems, W && typeof W.now === "function" ? W.now() : undefined),
+    };
   }
 
   // Internal prime (I1: not a tool). Whole path in try/catch — I3.
@@ -1043,7 +1213,7 @@ function createCore({
             scored.slice(0, seedK).map((x) => ({ id: x.m.id, similarity: x.s })),
             mems
           );
-          fused = fuseScoredWithActivation(scored, W, resolveRankWeight());
+          fused = fuseScoredWithActivation(scored, W, resolveRankWeight(), fuseOpts(mems, W));
           warmSeededForRank = true;
           if (warmTrace()) emitWarmTrace(W, { query, primary: fused.slice(0, k).map((x) => x.m), fused: true });
         } catch { /* I3: keep cosine order */ }
@@ -1066,7 +1236,7 @@ function createCore({
             scored.slice(0, seedK).map((x) => ({ id: x.m.id, similarity: x.s })),
             mems
           );
-          fused = fuseScoredWithActivation(scored, W, resolveRankWeight());
+          fused = fuseScoredWithActivation(scored, W, resolveRankWeight(), fuseOpts(mems, W));
           warmSeededForRank = true;
         } catch { /* I3: keep keyword order */ }
       }
@@ -1242,5 +1412,7 @@ module.exports = {
   DEDUP_HI, DEDUP_LO, readDedupThresholds,
   planDedupExisting, applyDedupExisting, dedupExisting,
   mergeBandPatches, restateSurvivorPatch,
-  WARM_RANK_WEIGHT, activationRankBonus, fuseScoredWithActivation,
+  WARM_RANK_WEIGHT, WARM_RANK_SHAPE, FUSE_SHAPES, RRF_K, K_SEARCH,
+  activationRankBonus, fuseScoredWithActivation, resolveFuseShape,
+  neighborGraph, competitiveL1, competitiveRankNorm,
 };
