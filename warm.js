@@ -131,7 +131,8 @@ function conductance(edge, now, opts) {
   const heb = effectiveHebbian(edge, now, opts || {});
   const posSem = sem > 0 ? sem : 0;
   const posHeb = heb > 0 ? heb : 0;
-  const c = Math.max(posSem, Math.tanh(posHeb));
+  const h = Math.tanh(posHeb);
+  const c = posSem + h - posSem * h;   // EXPERIMENT: noisy-OR (soft-OR), was Math.max(posSem, h) — either carries alone, both corroborate
   if (!Number.isFinite(c) || c <= 0) return 0;
   return c > 1 ? 1 : c;
 }
