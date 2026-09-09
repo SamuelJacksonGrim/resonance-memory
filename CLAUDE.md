@@ -271,7 +271,9 @@ new golden case: `EVAL_REFRESH=1 npm run eval -- --store jsonl`. For a measureme
 
 ### Environment variables
 
-`MEMORY_FILE_PATH`, `RESONANCE_MEMORY_CONFIG`, `EMBED_ENDPOINT`, `EMBED_MODEL`,
+`MEMORY_FILE_PATH` (default `~/.resonance-memory/resonance-memory.jsonl`; a leftover
+`~/.lmstudio/` store is copied there on first start — `BUG-004`; env still wins
+outright), `RESONANCE_MEMORY_CONFIG`, `EMBED_ENDPOINT`, `EMBED_MODEL`,
 `RESONANCE_MEMORY_FIELD` (default field state), `RESONANCE_FIELD_MUTUAL`,
 `RESONANCE_FIELD_KSEARCH`, `RESONANCE_FIELD_MINSIM` (Related: kNN floor, default 0.70), `RESONANCE_CONSTRAINT_GATE`, `RESONANCE_DEDUP_HI`,
 `RESONANCE_DEDUP_LO` (RM-02.b cosine bands; defaults 0.95 / 0.88, live-config

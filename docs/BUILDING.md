@@ -274,8 +274,8 @@ their OS:
    config file.
 4. Restart that app once.
 
-Memories live at `~/.lmstudio/resonance-memory.db` (SQLite default;
-the folder is named for LM Studio even if they don't use it — `BUG-004`).
+Memories live at `~/.resonance-memory/resonance-memory.db` (SQLite default).
+A leftover `~/.lmstudio/` store is copied here on first start (`BUG-004`).
 `--mcp` is what the AI client launches. `--export` / `--import` carry
 the store between machines.
 

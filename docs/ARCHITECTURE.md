@@ -315,7 +315,8 @@ it out. Embeddings are kept until then.
 
 ## 6. Storage and the sidecars
 
-Everything lives beside `MEMORY_FILE_PATH` (default `~/.lmstudio/resonance-memory.jsonl`):
+Everything lives beside `MEMORY_FILE_PATH` (default `~/.resonance-memory/resonance-memory.jsonl`;
+a leftover `~/.lmstudio/` store is copied here on first start — `BUG-004`):
 
 ```
 resonance-memory.db                 SQLite default (slice 4+5): memories +
@@ -552,7 +553,7 @@ All environment variables, read at startup:
 
 | Variable | Default | Effect |
 |---|---|---|
-| `MEMORY_FILE_PATH` | `~/.lmstudio/resonance-memory.jsonl` | the store (sidecars derive from it) |
+| `MEMORY_FILE_PATH` | `~/.resonance-memory/resonance-memory.jsonl` | the store (sidecars derive from it). Unset: auto-copy from the retired `~/.lmstudio/` default if the new location is empty (`BUG-004`). |
 | `RESONANCE_MEMORY_CONFIG` | beside the store | live field / extract-toggle config file |
 | `EMBED_ENDPOINT` | `http://localhost:1234/v1/embeddings` | OpenAI-compatible embeddings endpoint |
 | `EMBED_MODEL` | `text-embedding-nomic-embed-text-v1.5` | embedding model name |

@@ -38,7 +38,8 @@ an opaque `id`.
 ## Store & embeddings
 
 - SQLite is the default backend (RM-07 slice 4). `MEMORY_FILE_PATH` is still a
-  `*.jsonl` path (`~/.lmstudio/resonance-memory.jsonl`); `openStore()` walks it:
+  `*.jsonl` path (`~/.resonance-memory/resonance-memory.jsonl`; a leftover
+  `~/.lmstudio/` store is copied there on first start — `BUG-004`); `openStore()` walks it:
   jsonl pin → JsonlStore; `.db` exists → SqliteStore (leftover JSONL → `.bak`,
   never dual-read); JSONL only → auto-migrate via the 2a protocol then sqlite;
   neither → fresh `.db`. A failed auto-migrate fail-opens to JSONL (store

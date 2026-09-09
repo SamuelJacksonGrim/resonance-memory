@@ -22,9 +22,10 @@ That's it. Your AI can now remember things across conversations —
 and nothing ever leaves your computer.
 
 Your memories live in a file on THIS machine (nothing is uploaded):
-  Windows:  %USERPROFILE%\.lmstudio\resonance-memory.db
-  macOS / Linux:  ~/.lmstudio/resonance-memory.db
-(The folder is named for LM Studio even if you don't use it.)
+  Windows:  %USERPROFILE%\.resonance-memory\resonance-memory.db
+  macOS / Linux:  ~/.resonance-memory/resonance-memory.db
+An older build stored this under ~/.lmstudio/ — first start copies it
+here and leaves the original in place as a backup.
 Export in the app is the backup. To move the store, copy that file
 or use Export / Import.
 

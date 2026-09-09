@@ -433,7 +433,9 @@ Letta's sharpest idea, worth borrowing in shape: consolidate while idle, not on 
       prereleases of `package.json`'s version). Unsigned on purpose.
 - [ ] Code signing / notarization to kill the SmartScreen + Gatekeeper warnings (a real
       adoption tax on an unsigned binary).
-- [ ] Fix the noted default-path wart: data lands in `~/.lmstudio/…` even for Claude-only users.
+- [x] Fix the noted default-path wart: data lands in `~/.lmstudio/…` even for Claude-only users.
+      Default is now `~/.resonance-memory/`; existing `~/.lmstudio/` stores copy-then-verify
+      on first start (`BUG-004`). Signing / notarization remains.
 
 ### `RM-12` — SDKs and a documented local API · **L** · `todo`
 - [x] Bind-address + CSRF/`Origin` lock (**W-02**, shipped before documenting the
@@ -558,7 +560,8 @@ instinct to the whole write path **and** to the writer of the learned signal.)*
 - [x] "Where's my data?" — panel **Your memories** row shows the live file
       (`liveStoreFile`, the `.db` for a new user, not the configured `.jsonl`
       stem). README + uninstall.bat name the default path. Folder-name wart
-      (`BUG-004`, `~/.lmstudio/`) is still RM-11.
+      (`BUG-004`) is fixed: default is `~/.resonance-memory/`, with a
+      copy-then-verify relocate from `~/.lmstudio/`. Signing remains `RM-11`.
 
 ---
 

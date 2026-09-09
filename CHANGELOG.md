@@ -9,6 +9,16 @@ stable; sophistication grows in the substrate, not in the API.
 ## [Unreleased]
 
 ### Changed
+- **BUG-004 — default store is `~/.resonance-memory/`, not `~/.lmstudio/`.**
+  Same home-dotdir convention (including Windows), RM-owned name. On first
+  start, if `MEMORY_FILE_PATH` is unset, the old location has a store, and
+  the new one does not, the store files are **copied** (jsonl / sqlite + WAL
+  + sidecars + config) via a staging dir and an in-flight marker, verified,
+  and the original is left in place as a backup. Both locations occupied:
+  new wins, old untouched. A failed copy wipes dest artifacts and fail-opens
+  to the legacy path so a hiccup cannot hide memories. `MEMORY_FILE_PATH`
+  still wins outright. Not a fifth MCP verb; not the RM-07 JSONL→SQLite
+  `--migrate` (that's a format conversion of a store already at its path).
 - **RM-20 installer / first-run polish.** A stranger's first hour was the
   remaining product tax: Connect was a dead end unless they ran LM Studio or
   Claude Desktop; the unsigned-binary scare sat in `BUILDING.md` instead of
@@ -19,8 +29,9 @@ stable; sophistication grows in the substrate, not in the API.
   Hermes; README + `READ ME FIRST.txt` walk through SmartScreen (**More
   info → Run anyway**) and Gatekeeper (right-click **Open** / `xattr`)
   *before* "launch the binary"; **Your memories** shows the live file and
-  names Export as the backup. One-click Connect is unchanged. Signing and
-  the `~/.lmstudio/` folder wart stay `RM-11` / `BUG-004` / `BUG-005`.
+  names Export as the backup. One-click Connect is unchanged. Signing stays
+  `RM-11` / `BUG-005`. The `~/.lmstudio/` folder wart is `BUG-004` (fixed
+  in this unreleased slice).
 - **Weak-model system prompt rewritten + the copy button fixed.** The optional
   `system-prompt.md` block is now tighter and priority-ordered — recall-before-you-answer
   leads, save-what-lasts and keep-it-clean follow — so a small model that forgets to reach
@@ -482,7 +493,6 @@ First packaged, double-click build. Everything below is the baseline going forwa
   "run anyway" on first launch.
 - The **macOS binary must be built on a Mac** (SEA is per-platform); only the Windows
   build ships today.
-- The data directory currently defaults to `~/.lmstudio/…` even for Claude-only users.
 - The associative field is **off by default** pending validation on a real corpus.
 
 ---

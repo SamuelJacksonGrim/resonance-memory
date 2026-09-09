@@ -64,7 +64,7 @@ const field = require("./field.js");
 const engine = require("./engine.js");
 const { openEdgeStore } = require("./edges.js");
 const { normalize, isCurrent, isVector } = require("./record.js");
-const { openStore, liveStoreFile } = require("./store.js");
+const { openStore, liveStoreFile, resolveStorePath } = require("./store.js");
 const { readFieldMinSim } = require("./memory-core.js");
 const { pairConflictFn, resolveEntities } = require("./entity.js");
 const extract = require("./extract.js");
@@ -76,8 +76,7 @@ function baseDir() {
   try { const sea = require("node:sea"); if (sea.isSea()) return path.dirname(process.execPath); } catch { }
   return __dirname;
 }
-const STORE_PATH = process.env.MEMORY_FILE_PATH ||
-  path.join(process.env.USERPROFILE || process.env.HOME || ".", ".lmstudio", "resonance-memory.jsonl");
+const STORE_PATH = resolveStorePath();
 // Keep runtime state WITH the data (not next to the exe) so the downloaded exe leaves
 // nothing beside itself, and the field on/off setting survives moving the exe.
 const CONFIG_PATH = process.env.RESONANCE_MEMORY_CONFIG ||
@@ -466,7 +465,7 @@ const PAGE = `<!doctype html>
 
     <details class="mcpother" id="cliCmds">
       <summary>Terminal commands</summary>
-      <div class="hint" style="margin:8px 0">These are flags on the same program that opened this page. Paste them in a terminal. They are <b>not</b> MCP tools &mdash; your AI never sees them. There is no top-level <code>--help</code> (that just reopens this panel); each command below accepts <code>--help</code>. Add <code>--json</code> for machine-readable stdout. Default store is <code>MEMORY_FILE_PATH</code>, else <code>~/.lmstudio/resonance-memory.jsonl</code> (SQLite lives beside that as <code>.db</code>).</div>
+      <div class="hint" style="margin:8px 0">These are flags on the same program that opened this page. Paste them in a terminal. They are <b>not</b> MCP tools &mdash; your AI never sees them. There is no top-level <code>--help</code> (that just reopens this panel); each command below accepts <code>--help</code>. Add <code>--json</code> for machine-readable stdout. Default store is <code>MEMORY_FILE_PATH</code>, else <code>~/.resonance-memory/resonance-memory.jsonl</code> (SQLite lives beside that as <code>.db</code>). An existing <code>~/.lmstudio/</code> store is copied here on first start.</div>
 
       <div class="cli-cmd">
         <div class="cname">This panel</div>

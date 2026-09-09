@@ -54,7 +54,7 @@ const readline = require("readline");
 const { Transform } = require("stream");
 const zlib = require("zlib");
 const { ZipReader } = require("./zip.js");
-const { JsonlStore, openStore, resolveStoreBackend, sqlitePathFor } = require("./store.js");
+const { JsonlStore, openStore, resolveStoreBackend, sqlitePathFor, resolveStorePath } = require("./store.js");
 const { normalize, isVector, appendLineDurable } = require("./record.js");
 const {
   openEdgeStore, snapFromJson, SqliteEdgePersist, isSqliteStore,
@@ -66,8 +66,7 @@ function packageVersion() {
 }
 
 function defaultStorePath() {
-  return process.env.MEMORY_FILE_PATH ||
-    path.join(process.env.USERPROFILE || process.env.HOME || ".", ".lmstudio", "resonance-memory.jsonl");
+  return resolveStorePath();
 }
 
 function loadLiveConfig(storePath) {

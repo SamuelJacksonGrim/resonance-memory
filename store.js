@@ -28,6 +28,13 @@
  * construction path. Given MEMORY_FILE_PATH (still a *.jsonl path) and no
  * explicit backend override:
  *
+ * BUG-004: the compiled-in default is ~/.resonance-memory/ (not
+ * ~/.lmstudio/). resolveStorePath() is the one resolver: MEMORY_FILE_PATH
+ * wins; else copy-then-verify from the retired ~/.lmstudio/ location when
+ * dest is empty. Callers (server, panel, CLI defaults) go through it so
+ * export cannot dump an empty new path while memories still sit at the old
+ * one. Location move is NOT the JSONL→SQLite `--migrate` protocol.
+ *
  *   1. RESONANCE_STORE=jsonl (or live-config `store: "jsonl"`) → JsonlStore.
  *      The pin stays — a user can keep JSONL. RESONANCE_STORE=sqlite forces
  *      sqlite (same walk as the default, never a dual-write "switch back").
@@ -55,9 +62,19 @@
  */
 
 const fs = require("fs");
+const os = require("os");
+const path = require("path");
 const {
   writeFileDurable, appendLineDurable, normalize, isCurrent, AccessLog,
 } = require("./record.js");
+
+// BUG-004: the compiled-in default used to be ~/.lmstudio/… even for users
+// who never installed LM Studio. New default is an RM-owned home-dotdir
+// (same convention the rest of the codebase already used on every OS,
+// including Windows — not APPDATA/Library, which would fork the docs and
+// the mover). Filename stays resonance-memory.jsonl so sidecar naming and
+// the RM-07 sqlite sibling (.db) are unchanged. MEMORY_FILE_PATH still
+// wins outright — this block only runs when the env is unset.
 
 // ------------------------------------------------------------------- Store
 // Swappable backend. This one is flat JSONL; a Lantern-backed Store can replace
@@ -224,6 +241,251 @@ function defaultStoreLog(msg) {
   try { console.error(msg); } catch { /* */ }
 }
 
+const LEGACY_STORE_DIR = ".lmstudio";
+const STORE_DIR = ".resonance-memory";
+const STORE_BASENAME = "resonance-memory.jsonl";
+const CONFIG_BASENAME = "resonance-memory.config.json";
+// Marker means dest is an in-flight relocate, not a real store. Next start
+// discards dest copies and retries; the legacy files are never deleted.
+const RELOCATE_MARKER = ".relocating-from-lmstudio";
+const RELOCATE_STAGING = ".relocating-tmp";
+
+function homeDir() {
+  return process.env.USERPROFILE || process.env.HOME || os.homedir() || ".";
+}
+
+function defaultStorePath(home) {
+  return path.join(home || homeDir(), STORE_DIR, STORE_BASENAME);
+}
+
+function legacyLmstudioStorePath(home) {
+  return path.join(home || homeDir(), LEGACY_STORE_DIR, STORE_BASENAME);
+}
+
+function pathIsFile(p) {
+  try { return !!(p && fs.existsSync(p) && fs.statSync(p).isFile()); }
+  catch { return false; }
+}
+
+function pathIsNonemptyFile(p) {
+  try { return !!(p && fs.existsSync(p) && fs.statSync(p).isFile() && fs.statSync(p).size > 0); }
+  catch { return false; }
+}
+
+// Dest "exists" = a store file is already there. Even a 0-byte .db counts:
+// both-exist must not overwrite (the brief). Source needs real bytes so an
+// empty leftover from a crashed create does not look like a store to copy.
+function storeFilesPresent(jsonlPath) {
+  if (!jsonlPath) return false;
+  return pathIsFile(jsonlPath) || pathIsFile(sqlitePathFor(jsonlPath));
+}
+
+function sourceHasStore(jsonlPath) {
+  if (!jsonlPath) return false;
+  return pathIsNonemptyFile(jsonlPath) || pathIsNonemptyFile(sqlitePathFor(jsonlPath));
+}
+
+function relocateCandidates(jsonlPath) {
+  const db = sqlitePathFor(jsonlPath);
+  return [
+    jsonlPath,
+    jsonlPath + ".access.json",
+    jsonlPath + ".edges.json",
+    jsonlPath + ".assoc.json",
+    db,
+    db + "-wal",
+    db + "-shm",
+    db + "-journal",
+    path.join(path.dirname(jsonlPath), CONFIG_BASENAME),
+  ];
+}
+
+function relocateMarkerPath(jsonlPath) {
+  return path.join(path.dirname(jsonlPath), RELOCATE_MARKER);
+}
+
+function relocateStagingPath(jsonlPath) {
+  return path.join(path.dirname(jsonlPath), RELOCATE_STAGING);
+}
+
+function sqlQuotePath(p) {
+  return "'" + String(p).replace(/'/g, "''") + "'";
+}
+
+function sqliteMemoriesCount(dbPath) {
+  const { DatabaseSync } = require("node:sqlite");
+  const db = new DatabaseSync(dbPath, { readOnly: true });
+  try {
+    const row = db.prepare("SELECT COUNT(*) AS n FROM memories").get();
+    return Number(row && row.n || 0);
+  } finally {
+    try { db.close(); } catch { /* */ }
+  }
+}
+
+// Consistent snapshot even if the source is in WAL mode. Dest must not exist.
+// Falls back to copyFile of .db + -wal + -shm when VACUUM INTO cannot run
+// (locked, old sqlite, missing node:sqlite) — then size-match is the verify.
+function tryVacuumInto(srcDb, destDb) {
+  let src = null;
+  try {
+    const { DatabaseSync } = require("node:sqlite");
+    src = new DatabaseSync(srcDb, { readOnly: true });
+    src.exec("VACUUM INTO " + sqlQuotePath(destDb));
+    src.close();
+    src = null;
+    return true;
+  } catch {
+    try { if (src) src.close(); } catch { /* */ }
+    try { if (fs.existsSync(destDb)) fs.unlinkSync(destDb); } catch { /* */ }
+    return false;
+  }
+}
+
+function unlinkIfExists(p) {
+  try { if (p && fs.existsSync(p)) fs.unlinkSync(p); } catch { /* */ }
+}
+
+// ONLY call when the relocate marker is present. Dest with no marker is a
+// real store — both-exist leaves it alone.
+function wipeRelocateArtifacts(destJsonl) {
+  for (const p of relocateCandidates(destJsonl)) unlinkIfExists(p);
+  const staging = relocateStagingPath(destJsonl);
+  try {
+    if (fs.existsSync(staging)) {
+      for (const n of fs.readdirSync(staging)) unlinkIfExists(path.join(staging, n));
+      fs.rmdirSync(staging);
+    }
+  } catch { /* */ }
+  unlinkIfExists(relocateMarkerPath(destJsonl));
+}
+
+function copyFileVerified(src, dest) {
+  fs.copyFileSync(src, dest);
+  const ss = fs.statSync(src).size;
+  const ds = fs.statSync(dest).size;
+  if (ss !== ds) {
+    throw new Error("copy size mismatch for " + path.basename(src) +
+      " (" + ss + " -> " + ds + ")");
+  }
+}
+
+/*
+ * BUG-004 location move. Not the RM-07 `--migrate` JSONL→SQLite protocol —
+ * that is a format conversion of a store that already sits at MEMORY_FILE_PATH.
+ * This copies a *directory* of store files from the retired ~/.lmstudio default
+ * to ~/.resonance-memory/. Safety:
+ *   - never deletes or rewrites the source (copy, then leave as backup)
+ *   - never overwrites a dest that already has a store file
+ *   - marker + staging so a crash mid-copy cannot look like a real dest
+ *     (next start sees the marker, wipes dest copies, retries; source intact)
+ *   - fail-open: a throw wipes dest artifacts and the caller keeps serving source
+ */
+function relocateLegacyStore(srcJsonl, destJsonl, opts) {
+  opts = opts || {};
+  const log = opts.log || defaultStoreLog;
+  const src = path.resolve(srcJsonl);
+  const dest = path.resolve(destJsonl);
+  if (src === dest) return { ok: true, skipped: "same-path" };
+  if (storeFilesPresent(dest) && !pathIsFile(relocateMarkerPath(dest))) {
+    return { ok: true, skipped: "dest-exists" };
+  }
+  if (!sourceHasStore(src)) return { ok: true, skipped: "no-source" };
+
+  const destDir = path.dirname(dest);
+  const staging = relocateStagingPath(dest);
+  const marker = relocateMarkerPath(dest);
+  try {
+    fs.mkdirSync(destDir, { recursive: true });
+    fs.writeFileSync(marker, "in-flight\n", "utf8");
+    fs.mkdirSync(staging, { recursive: true });
+
+    const srcDb = sqlitePathFor(src);
+    const stagingDb = path.join(staging, path.basename(sqlitePathFor(dest)));
+    let vacuumed = false;
+    if (pathIsNonemptyFile(srcDb)) {
+      vacuumed = tryVacuumInto(srcDb, stagingDb);
+      if (vacuumed) {
+        const srcN = sqliteMemoriesCount(srcDb);
+        const destN = sqliteMemoriesCount(stagingDb);
+        if (srcN !== destN) {
+          throw new Error("sqlite count mismatch after VACUUM INTO (" + srcN + " -> " + destN + ")");
+        }
+      }
+    }
+
+    const skip = new Set();
+    if (vacuumed) {
+      skip.add(srcDb);
+      skip.add(srcDb + "-wal");
+      skip.add(srcDb + "-shm");
+      skip.add(srcDb + "-journal");
+    }
+
+    for (const from of relocateCandidates(src)) {
+      if (skip.has(from) || !pathIsFile(from)) continue;
+      copyFileVerified(from, path.join(staging, path.basename(from)));
+    }
+
+    for (const name of fs.readdirSync(staging)) {
+      const from = path.join(staging, name);
+      const to = path.join(destDir, name);
+      if (pathIsFile(to)) throw new Error("promote would overwrite " + to);
+      fs.renameSync(from, to);
+    }
+    try { fs.rmdirSync(staging); } catch { /* leftover empty dir is harmless */ }
+
+    if (pathIsNonemptyFile(sqlitePathFor(src)) && pathIsFile(sqlitePathFor(dest))) {
+      const srcN = sqliteMemoriesCount(srcDb);
+      const destN = sqliteMemoriesCount(sqlitePathFor(dest));
+      if (srcN !== destN) {
+        throw new Error("sqlite count mismatch after promote (" + srcN + " -> " + destN + ")");
+      }
+    }
+    if (pathIsFile(src) && pathIsFile(dest) && fs.statSync(src).size !== fs.statSync(dest).size) {
+      throw new Error("jsonl size mismatch after promote");
+    }
+
+    unlinkIfExists(marker);
+    return { ok: true, from: src, to: dest, vacuumed };
+  } catch (e) {
+    try { wipeRelocateArtifacts(dest); } catch { /* still fail-open */ }
+    log("RESONANCE: legacy-store relocate failed (" + String(e && e.message || e) + ")");
+    return { ok: false, error: e };
+  }
+}
+
+function resolveStorePath(opts) {
+  opts = opts || {};
+  if (process.env.MEMORY_FILE_PATH) return process.env.MEMORY_FILE_PATH;
+  const home = opts.home || homeDir();
+  const dest = defaultStorePath(home);
+  const src = legacyLmstudioStorePath(home);
+  const log = opts.log || defaultStoreLog;
+
+  let marked = false;
+  try { marked = pathIsFile(relocateMarkerPath(dest)); } catch { /* */ }
+  if (marked) {
+    log("RESONANCE: incomplete relocate at " + path.dirname(dest) +
+      "; discarding partial copy (legacy store untouched).");
+    wipeRelocateArtifacts(dest);
+  }
+
+  if (storeFilesPresent(dest)) return dest;
+  if (!sourceHasStore(src)) return dest;
+
+  const result = relocateLegacyStore(src, dest, { log });
+  if (result.ok) {
+    log("RESONANCE: copied memories from " + path.dirname(src) + " to " +
+      path.dirname(dest) + " (legacy files left in place as backup).");
+    return dest;
+  }
+  log("RESONANCE: relocate from " + path.dirname(src) + " failed (" +
+    String(result.error && result.error.message || result.error || "unknown") +
+    "); using the legacy store so your memories stay reachable. Will retry next start.");
+  return src;
+}
+
 async function openStore(file, opts) {
   opts = opts || {};
   const backend = opts.backend || resolveStoreBackend(opts.config);
@@ -299,7 +561,10 @@ async function openStore(file, opts) {
   return withEdges(new SqliteStore(dbPath, { readOnly }));
 }
 
-module.exports = { JsonlStore, openStore, resolveStoreBackend, sqlitePathFor, liveStoreFile };
+module.exports = {
+  JsonlStore, openStore, resolveStoreBackend, sqlitePathFor, liveStoreFile,
+  defaultStorePath, legacyLmstudioStorePath, resolveStorePath, relocateLegacyStore,
+};
 Object.defineProperty(module.exports, "SqliteStore", {
   enumerable: true,
   get() { return require("./store-sqlite.js").SqliteStore; },

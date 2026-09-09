@@ -242,7 +242,7 @@ function releaseNotes(opts) {
   lines.push("");
   lines.push("A page opens at `http://127.0.0.1:9090/`. **Connect** one-clicks LM Studio or Claude Desktop; other MCP clients (Claude Code, Cursor, Continue, Hermes) paste the JSON snippet on that page. Restart the app once.");
   lines.push("");
-  lines.push("Your memories live on this machine at `~/.lmstudio/resonance-memory.db` (Windows: `%USERPROFILE%\\.lmstudio\\resonance-memory.db`). Export in the app is the backup. Nothing is uploaded.");
+  lines.push("Your memories live on this machine at `~/.resonance-memory/resonance-memory.db` (Windows: `%USERPROFILE%\\.resonance-memory\\resonance-memory.db`). A leftover `~/.lmstudio/` store is copied here on first start (the original is left in place). Export in the app is the backup. Nothing is uploaded.");
   lines.push("");
   lines.push("Full notes, including how to build from source: [`docs/BUILDING.md`](" + building + ").");
   lines.push("");

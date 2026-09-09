@@ -628,6 +628,7 @@ section("SqliteStore (RM-07 drop-in) + Store conformance");
 
 const {
   SqliteStore, openStore, resolveStoreBackend, sqlitePathFor, liveStoreFile,
+  defaultStorePath, legacyLmstudioStorePath, resolveStorePath,
 } = require("./store.js");
 const install = require("./install.js");
 
@@ -4110,6 +4111,174 @@ test("install writes selfLaunch, preserves other servers, leaves .bak", () => {
   }
 });
 
+section("BUG-004 default store location + legacy ~/.lmstudio/ relocate");
+
+function withEnv(key, value, fn) {
+  const prev = process.env[key];
+  const had = Object.prototype.hasOwnProperty.call(process.env, key);
+  try {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+    return fn();
+  } finally {
+    if (!had) delete process.env[key];
+    else process.env[key] = prev;
+  }
+}
+
+function fakeHome(name) {
+  const home = tmp("bug004-" + (name || Math.random().toString(36).slice(2)));
+  fs.mkdirSync(home, { recursive: true });
+  return home;
+}
+
+function writeLegacyJsonl(home, text) {
+  const jsonl = legacyLmstudioStorePath(home);
+  fs.mkdirSync(path.dirname(jsonl), { recursive: true });
+  fs.writeFileSync(jsonl, text, "utf8");
+  return jsonl;
+}
+
+test("compiled-in default is ~/.resonance-memory/, not ~/.lmstudio/", () => {
+  const home = fakeHome("shape");
+  const neu = defaultStorePath(home);
+  const old = legacyLmstudioStorePath(home);
+  assert.ok(neu.indexOf(".resonance-memory") >= 0, "new dir is RM-owned");
+  assert.ok(neu.indexOf(".lmstudio") < 0, "new default must not sit under .lmstudio");
+  assert.ok(old.indexOf(".lmstudio") >= 0, "legacy path stays findable for relocate");
+  assert.strictEqual(path.basename(neu), "resonance-memory.jsonl");
+  assert.strictEqual(path.basename(old), "resonance-memory.jsonl");
+});
+
+test("old-exists / new-absent → copied; source left intact (jsonl)", () => {
+  withEnv("MEMORY_FILE_PATH", undefined, () => {
+    const home = fakeHome("copy-jsonl");
+    const body = '{"id":1,"text":"keep me"}\n';
+    const src = writeLegacyJsonl(home, body);
+    fs.writeFileSync(src + ".access.json", '{"1":3}\n', "utf8");
+    fs.writeFileSync(path.join(path.dirname(src), "resonance-memory.config.json"),
+      '{"field":true}\n', "utf8");
+    const logs = [];
+    const resolved = resolveStorePath({ home, log: (m) => logs.push(m) });
+    const dest = defaultStorePath(home);
+    assert.strictEqual(resolved, dest, "resolver returns the new default");
+    assert.strictEqual(fs.readFileSync(dest, "utf8"), body, "jsonl bytes match");
+    assert.ok(fs.existsSync(src), "source jsonl is NOT deleted");
+    assert.strictEqual(fs.readFileSync(src, "utf8"), body, "source jsonl bytes unchanged");
+    assert.ok(fs.existsSync(dest + ".access.json"), "access sidecar copied");
+    assert.strictEqual(
+      fs.readFileSync(path.join(path.dirname(dest), "resonance-memory.config.json"), "utf8"),
+      '{"field":true}\n',
+      "live config copied so the field toggle survives"
+    );
+    assert.ok(!fs.existsSync(path.join(path.dirname(dest), ".relocating-from-lmstudio")),
+      "marker removed after success");
+    assert.ok(logs.some((m) => /copied memories/.test(m)), "stderr names the copy");
+  });
+});
+
+test("both-exist → new wins, old untouched (no overwrite)", () => {
+  withEnv("MEMORY_FILE_PATH", undefined, () => {
+    const home = fakeHome("both");
+    const src = writeLegacyJsonl(home, '{"id":1,"text":"legacy"}\n');
+    const dest = defaultStorePath(home);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.writeFileSync(dest, '{"id":2,"text":"already at new"}\n', "utf8");
+    const resolved = resolveStorePath({ home, log() {} });
+    assert.strictEqual(resolved, dest);
+    assert.strictEqual(fs.readFileSync(dest, "utf8"), '{"id":2,"text":"already at new"}\n',
+      "dest must not be overwritten");
+    assert.strictEqual(fs.readFileSync(src, "utf8"), '{"id":1,"text":"legacy"}\n',
+      "source must not be touched");
+  });
+});
+
+test("MEMORY_FILE_PATH wins: no relocate, even when a legacy store exists", () => {
+  const home = fakeHome("env");
+  const src = writeLegacyJsonl(home, '{"id":1,"text":"legacy"}\n');
+  const pinned = path.join(home, "pinned", "mem.jsonl");
+  fs.mkdirSync(path.dirname(pinned), { recursive: true });
+  fs.writeFileSync(pinned, '{"id":9,"text":"pinned"}\n', "utf8");
+  withEnv("MEMORY_FILE_PATH", pinned, () => {
+    const resolved = resolveStorePath({ home, log() {} });
+    assert.strictEqual(resolved, pinned, "env override is the path");
+    assert.ok(!fs.existsSync(defaultStorePath(home)), "must not copy into the new default");
+    assert.strictEqual(fs.readFileSync(src, "utf8"), '{"id":1,"text":"legacy"}\n');
+  });
+});
+
+test("neither exists → new default path, no files created (new user)", () => {
+  withEnv("MEMORY_FILE_PATH", undefined, () => {
+    const home = fakeHome("fresh");
+    const resolved = resolveStorePath({ home, log() {} });
+    assert.strictEqual(resolved, defaultStorePath(home));
+    assert.ok(!fs.existsSync(resolved), "resolver must not mkdir/create a store");
+    assert.ok(!fs.existsSync(path.dirname(resolved)), "do not create the dest dir until a real write");
+  });
+});
+
+test("failed relocate fail-opens to legacy; dest left empty so next start retries", () => {
+  withEnv("MEMORY_FILE_PATH", undefined, () => {
+    const home = fakeHome("failopen");
+    const src = writeLegacyJsonl(home, '{"id":1,"text":"legacy"}\n');
+    // A file where the dest directory should be: mkdir of destDir throws.
+    const destDir = path.dirname(defaultStorePath(home));
+    fs.writeFileSync(destDir, "not-a-directory", "utf8");
+    const logs = [];
+    const resolved = resolveStorePath({ home, log: (m) => logs.push(m) });
+    assert.strictEqual(resolved, src, "fail-open keeps serving the legacy store");
+    assert.strictEqual(fs.readFileSync(src, "utf8"), '{"id":1,"text":"legacy"}\n',
+      "source still intact");
+    assert.ok(logs.some((m) => /failed|using the legacy store/.test(m)));
+  });
+});
+
+test("incomplete relocate (marker present) is discarded and retried from source", () => {
+  withEnv("MEMORY_FILE_PATH", undefined, () => {
+    const home = fakeHome("marker");
+    const src = writeLegacyJsonl(home, '{"id":1,"text":"real"}\n');
+    const dest = defaultStorePath(home);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.writeFileSync(dest, '{"id":0,"text":"torn copy"}\n', "utf8");
+    fs.writeFileSync(path.join(path.dirname(dest), ".relocating-from-lmstudio"), "in-flight\n");
+    const resolved = resolveStorePath({ home, log() {} });
+    assert.strictEqual(resolved, dest);
+    assert.strictEqual(fs.readFileSync(dest, "utf8"), '{"id":1,"text":"real"}\n',
+      "torn dest was wiped and recopied from source");
+    assert.strictEqual(fs.readFileSync(src, "utf8"), '{"id":1,"text":"real"}\n');
+    assert.ok(!fs.existsSync(path.join(path.dirname(dest), ".relocating-from-lmstudio")));
+  });
+});
+
+if (sqliteAvailable()) {
+  test("old-exists / new-absent copies a sqlite store (row count verified; source kept)", () => {
+    withEnv("MEMORY_FILE_PATH", undefined, () => {
+      const home = fakeHome("copy-sqlite");
+      const srcJsonl = legacyLmstudioStorePath(home);
+      const srcDb = sqlitePathFor(srcJsonl);
+      fs.mkdirSync(path.dirname(srcDb), { recursive: true });
+      const s = new SqliteStore(srcDb);
+      s.add(normalize({ id: 7, text: "sqlite keep me", embedding: [1, 0] }));
+      s.add(normalize({ id: 8, text: "also keep", embedding: [0, 1] }));
+      s.close();
+      const resolved = resolveStorePath({ home, log() {} });
+      const destDb = sqlitePathFor(defaultStorePath(home));
+      assert.strictEqual(resolved, defaultStorePath(home));
+      assert.ok(fs.existsSync(destDb), "dest .db exists");
+      const dest = new SqliteStore(destDb, { readOnly: true });
+      try {
+        const recs = dest.all();
+        assert.strictEqual(recs.length, 2);
+        assert.strictEqual(recs.find((r) => r.id === 7).text, "sqlite keep me");
+      } finally { dest.close(); }
+      const src = new SqliteStore(srcDb, { readOnly: true });
+      try {
+        assert.strictEqual(src.all().length, 2, "source sqlite still has both rows");
+      } finally { src.close(); }
+    });
+  });
+}
+
 test("liveStoreFile names the .db a new sqlite user actually gets (not the jsonl stem)", () => {
   const dir = tmp("live-store-" + Math.random().toString(36).slice(2));
   fs.mkdirSync(dir, { recursive: true });
@@ -4134,12 +4303,15 @@ test("README + READ ME FIRST put SmartScreen/Gatekeeper in the first-run path", 
   assert.ok(/More info/.test(readme) && /Run anyway/.test(readme), "README names the SmartScreen clicks");
   assert.ok(/Right-click/.test(readme) && /Open Anyway/.test(readme), "README names the Gatekeeper clicks, not just BUILDING.md");
   assert.ok(/resonance-memory\.db/.test(readme), "README names the live sqlite file");
+  assert.ok(/Default:.*\.resonance-memory/.test(readme), "README default path is the RM-owned dir (BUG-004)");
   assert.ok(/first thing worth doing/i.test(readme), "README still names the first chat action");
   assert.ok(/Claude Code/.test(readme) && /Hermes/.test(readme), "README Connect step names the other-MCP path");
   assert.ok(/More info/.test(first) && /Run anyway/.test(first), "READ ME FIRST prepares them for SmartScreen before double-click");
   assert.ok(/resonance-memory\.db/.test(first), "READ ME FIRST names where the data lives");
+  assert.ok(/\.resonance-memory/.test(first), "READ ME FIRST names the RM-owned data dir (BUG-004)");
   const bat = fs.readFileSync(path.join(__dirname, "uninstall.bat"), "utf8");
   assert.ok(/resonance-memory\.db/.test(bat), "uninstall.bat points at the sqlite default, not only the jsonl stem");
+  assert.ok(/\\.resonance-memory\\/.test(bat), "uninstall.bat points at the new default, not only .lmstudio");
 });
 
 test("panel page source ships embedder selector + /api/embedder (not a browser test)", () => {
