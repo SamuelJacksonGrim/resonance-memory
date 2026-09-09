@@ -9,13 +9,24 @@ Co-authored-by: Ember <emberkindled@gmail.com>
 **Question (pre-declared):** should Phase 1 spreading-activation enter the *primary*
 recall ranking (behind the `RESONANCE_WARM_RANK` flag), or stay observable-only?
 
-**Answer: CUT it from primary rank.** Keep the flag off, do not promote it to the
-Phase 2.2 gate. This is the *pre-declared cut* firing, not a judgment call — see the
-criterion below. The reason is **structural, not a tuning miss**, and all three research
-lanes trisect the same wall.
+**Answer: cut activation from *primary rank* — under the current contract.** Keep the flag
+off, do not promote it to the Phase 2.2 gate. This is the *pre-declared cut* firing on that
+one objective (enter the top-5 at a safe weight), not a judgment call — see the criterion
+below.
 
-This is not "activation is worthless." It is "activation does not belong in *ordering*;
-it belongs in *discovery* (I3)." The constructive redirect is at the bottom.
+**Say exactly what this earns, and no more.** The claim the data supports is narrow:
+
+> Phase 1 activation, at its **current signal magnitude, spread semantics, and safe
+> weight**, does not earn authority over primary semantic ordering without unacceptable hub
+> contamination.
+
+It does **not** establish that "activation doesn't belong in ordering," nor that its home
+*is* discovery. Those are architectural *assignments* the experiment did not make — see
+[What this does **not** establish](#what-this-does-not-establish). The tell is in the data
+below: L1 @ w=1.0 puts the apex at #1 and the hub *out*. A mechanism that can do that is
+carrying real relational signal; what failed is competing with cosine at a *safe* weight,
+not the mechanism's right to exist. The constructive next test (H4), pre-registered with a
+falsifier, is at the bottom.
 
 ---
 
@@ -67,24 +78,66 @@ exactly this as *not a win*: "a mean lift of +3 that still misses top-5 is not a
   cases where degree-normalization damps the dense cluster. But the right shape at a
   *safe* weight still cannot close a 0.20–0.28 cosine gap (its bump is ~0.15). Additive
   is worse: it can produce a +2 tail nudge while leaving hub contamination at 1.0.
-- **Lane A (pool):** the surplus-only rule + a safe weight means single-turn primary
-  rank *cannot* show activation's value by construction. A target inside the seed radius
-  gets bonus 0; a target outside it gets a bump too small to enter the window without a
-  weight that re-promotes hubs. Activation's payoff can only appear **cross-turn** and
-  **in discovery**, not in single-turn ordering.
+- **Lane A (pool):** at a *safe* weight, a single-turn primary-rank objective can't show
+  activation's value here — a target inside the seed radius gets bonus 0 (surplus-only), a
+  target outside it gets a bump too small to enter the window without a weight that
+  re-promotes hubs. This bounds the *ranking-at-safe-weight* contract; it does not bound
+  activation's value on other contracts (discovery, cross-turn persistence), which are
+  untested.
 
-## The constructive redirect (what to build instead)
+## What this does **not** establish
+
+The three lanes killed real hypotheses (reachability; additive/RRF/ranknorm as the fix;
+tuning the weight). They did **not** establish where activation belongs. Two distinctions
+the ranking readout is blind to:
+
+- **H1a ≠ H1b (do not average them).** *Associative* leftover (H1a: a residual trace on a
+  semantically distant leaf, ~0.06–0.15 of signal) and *direct* leftover (H1b: the apex
+  itself carries near-full residual activation) are **different phenomena**. H1a asks a weak
+  trace to overpower a large cosine gap — no, not safely, unsurprising. H1b is **working-
+  state persistence** — closer to recency than association — and was never given its own
+  ranking contract. "Activation is X" collapses two mechanisms that need not share
+  semantics.
+- **Four axes, not one score.** The campaign is pulling apart signals that
+  `final = cosine + activation` flattens: **cosine** = *what is this*; **association** =
+  *what is connected to this*; **activation** = *what is recently salient*; **L1** =
+  *how much of this activation is meaningful vs its local neighborhood*. These are not
+  redundant. Collapsing them into one additive score may simply be the wrong abstraction —
+  that is the durable finding to carry forward, above any single verdict.
+
+## What to do next
 
 1. **Keep activation observable-only** (`RESONANCE_WARM_RANK` stays off, not promoted to
-   2.2). This is now a *measured* decision, not caution.
-2. **Bank L1-share as the Phase 2.4 normalization candidate.** It is the only shape that
-   inverts hub→apex; when 2.2/2.3 land it is the damping to reach for. It earned that
-   much even though it did not earn primary rank.
-3. **Spend the Phase 1 slice on discovery, not ordering (I3-clean).** The unbuilt H4
-   path — feed leftover cross-turn warmth into `Related:` *breadth* — is where the
-   mechanism can pay off without touching primary cosine or the invariant. Today
-   `Related:` is `field.js` kNN only; WarmField is never consulted. That is the next
-   experiment, and it is safe by construction (additive discovery, never reorders).
+   2.2). Measured, not caution. **Do not** keep tuning w = 0.31 / 0.35 / 0.4 — that is the
+   trap the campaign was built to avoid.
+2. **Bank L1-share as a Phase 2.4 normalization *candidate*** — a strong candidate, not a
+   solved mechanism. It is the only shape that inverts hub→apex, and that survived the real
+   pool. When 2.2/2.3 land it is the damping to reach for.
+3. **Run H4 next — pre-registered (below).** Reframed from "can activation improve Related?"
+   to the cleaner architectural test: *does cross-turn residual activation improve
+   associative **discovery** without corrupting semantic **ordering**?* I3 gives the exact
+   boundary: primary stays cosine-sovereign; activated + associated candidates may enter the
+   `Related:` set only. Today `field.js` is kNN-only; WarmField is never consulted.
+
+## H4 pre-registration (write the falsifier before the run)
+
+Same discipline in reverse — so a 4% Related bump can't be back-read into "discovery is
+activation's home." Measure per case, stratified, offline/deterministic:
+
+**H4 EARNS adoption iff *all* hold:**
+1. Warm `Related:` surfaces correct targets that cold `Related:` **missed**, at a meaningful
+   rate (not noise).
+2. Those surfaced targets are genuine **associative** targets — **not** items plain kNN
+   already returns (the load-bearing falsifier: new discovery vs. duplicate of the neighbor
+   set).
+3. Unrelated warm topics do **not** intrude into `Related:` (the cheat detector).
+4. Hubs do **not** dominate the newly surfaced candidates.
+5. The effect survives **held-out** cases and ≥1 different graph shape / corpus.
+
+**H4 is CUT iff:** the activated candidates are overwhelmingly things kNN already finds, or
+the apparent gain is mainly generic recency / hub effect. If H4 *also* produces nothing,
+then activation has been tested as ranking, association, **and** cross-turn discovery and
+failed all three contracts — *that* would justify retiring the mechanism. We are not there.
 
 ## Reproduce
 
