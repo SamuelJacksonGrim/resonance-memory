@@ -613,6 +613,32 @@ readout the decision criterion is looking at.
 
 ---
 
+## Combiner-shape research (Lane B; exploratory; not a ship)
+
+**Date:** 2026-09-09 · **Flag:** `RESONANCE_WARM_RANK` default **off**, default
+shape **additive**. **Golden:** 27/31 unchanged. **Reproduce:**
+`node eval/combiner-research.js`. Full write-up: [`../combiner-research.md`](../combiner-research.md).
+
+The A/B above asked whether activation-in-rank helps. This slice asked whether
+the *additive combiner* was why it didn't, and whether RRF / rank-normalize /
+L1-share / multiplicative would lift an apex without promoting a hub.
+
+**Verdict: (b).** L1 neighborhood share (proto-2.4) is the only shape that
+inverts hub-promotion into apex-rescue on a constructed discriminator
+(additive `w = 1` → hub@1; L1 `w = 1` → apex@1, hub out). At the locked
+`w = 0.3` it is hub-safe and still cannot close diabetic (gap 0.238 vs L1
+bump 0.153; would need `w ≈ 0.47`, not taken). Rank-normalize (the named
+proto-2.3) awards 1.0 to every tied local-max and **hub-promotes at the
+safe weight**. RRF k = 60 does the same. Vegetarian is a seed (rank 10,
+bonus 0) — no surplus combiner can move it. Heights is a razor-margin
+existence proof for L1 at `w = 0.3` (gap 0.284, share 1.0, bump 0.300).
+
+Recommended shape to take to Lane A's multi-turn/weak-recall corpus: **`l1`**,
+flag still off, `w` still 0.3. Do not promote. Do not retune `w` to buy
+diabetic.
+
+---
+
 ## Phase 0.1 — save-time bind cost sweep (2026-09-05)
 
 Pre-declared p95 budget **250 ms** (written in `eval/save-time-cost.js` before any

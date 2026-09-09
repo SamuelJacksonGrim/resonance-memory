@@ -22,6 +22,17 @@ stable; sophistication grows in the substrate, not in the API.
   Design, hypothesis critique (H1–H10), and the two-sided decision
   criterion: `eval/testpool-design.md`. Flag-off default and the 27/31
   golden are untouched.
+- **Combiner-shape research (Lane B, flag-off).** The additive activation-in-rank
+  A/B measured a zero at `w = 0.3` and hub-promotion at `w = 1.0`. Behind the
+  same `RESONANCE_WARM_RANK` flag, `RESONANCE_WARM_RANK_SHAPE` now selects
+  `additive` (default) / `rrf` / `ranknorm` / `l1` / `multiplicative`. Verdict
+  is **(b)**: L1 neighborhood share (proto-2.4) is the only shape that inverts
+  hub-promotion into apex-rescue on a constructed discriminator, but it does
+  not close the diabetic gap at the locked safe weight (0.238 vs bump 0.153).
+  Rank-normalize (named proto-2.3) does *not* damp a uniform cluster — it
+  hub-promotes at `w = 0.3`. Recommended shape for Lane A's corpus: `l1`,
+  still flag-off. Harness: `node eval/combiner-research.js`. Report:
+  `combiner-research.md`.
 - **Exploratory activation-in-rank (`RESONANCE_WARM_RANK`, default off).** Phase 1
   activation can enter primary rank behind a flag: `final = cosine + 0.3 ·
   spread-activation` (weight = Related: `maxBonus`, not tuned). Flag-off is

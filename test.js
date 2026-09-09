@@ -3503,10 +3503,13 @@ const {
   bindSaveTimeNeighbors, SAVE_TIME_K, SAVE_TIME_MIN_COS, FIELD_MINSIM,
   DEDUP_HI, DEDUP_LO, readDedupThresholds,
   dedupExisting,
-  WARM_RANK_WEIGHT, activationRankBonus, fuseScoredWithActivation,
+  WARM_RANK_WEIGHT, WARM_RANK_SHAPE, FUSE_SHAPES,
+  activationRankBonus, fuseScoredWithActivation, resolveFuseShape,
+  neighborGraph, competitiveL1, competitiveRankNorm,
 } = require("./memory-core.js");
 const { runMeasure: runActivationMeasure, format: formatActivationMeasure } =
   require("./eval/substrate/activation-measure.js");
+const combinerResearch = require("./eval/combiner-research.js");
 
 function chainEdges(pairs) {
   const m = new Map();
@@ -3790,6 +3793,77 @@ test("activationRankBonus ignores this-turn cosine seeds (no double-count)", () 
   );
   assert.strictEqual(fused[0].m.id, "A", "seeded cosine still leads");
   assert.ok(fused[1].final > 0.4, "B's fused score includes the spread bonus");
+});
+
+test("resolveFuseShape fails open to additive (unknown / empty / default)", () => {
+  assert.strictEqual(WARM_RANK_SHAPE, "additive");
+  assert.strictEqual(resolveFuseShape("additive"), "additive");
+  assert.strictEqual(resolveFuseShape("RRF"), "rrf");
+  assert.strictEqual(resolveFuseShape("l1"), "l1");
+  assert.strictEqual(resolveFuseShape("ranknorm"), "ranknorm");
+  assert.strictEqual(resolveFuseShape("multiplicative"), "multiplicative");
+  assert.strictEqual(resolveFuseShape("nope"), "additive");
+  assert.strictEqual(resolveFuseShape(""), "additive");
+  assert.strictEqual(resolveFuseShape(null), "additive");
+  assert.ok(FUSE_SHAPES.indexOf("additive") === 0, "additive is the baseline name");
+});
+
+test("competitive L1 damps a uniform cluster; rank-normalize does not", () => {
+  // Isolated leaf next to a cosine-seed (bonus 0) vs an 8-node cluster of
+  // equal surplus. This is the constructed apex-vs-hub neighborhood.
+  const bonus = new Map([
+    ["apex", 0.36], ["bridge", 0],
+    ["hub", 0.315],
+    ["c1", 0.315], ["c2", 0.315], ["c3", 0.315],
+    ["c4", 0.315], ["c5", 0.315], ["c6", 0.315], ["c7", 0.315],
+    ["seed", 0],
+  ]);
+  const bonusOf = (id) => bonus.get(String(id)) || 0;
+  const edges = new Map([
+    ["apex", [{ id: "bridge", sim: 1 }]],
+    ["hub", ["c1", "c2", "c3", "c4", "c5", "c6", "c7", "seed"].map((id) => ({ id, sim: 0.9 }))],
+  ]);
+  const g = neighborGraph(edges);
+  assert.ok(Math.abs(competitiveL1("apex", bonusOf, g) - 1) < 1e-12, "isolate share is 1");
+  const hubL1 = competitiveL1("hub", bonusOf, g);
+  assert.ok(Math.abs(hubL1 - 1 / 8) < 1e-12, "uniform 8-node cluster share is 1/8, got " + hubL1);
+  assert.strictEqual(competitiveRankNorm("apex", bonusOf, g), 1, "isolate is local max");
+  assert.strictEqual(competitiveRankNorm("hub", bonusOf, g), 1,
+    "tied cluster winner still rank-normalizes to 1 — 2.3 does not damp a uniform hub");
+});
+
+test("RRF: activation-#1 at cosine-rank 14 beats a hub only at small k", () => {
+  const scored = [];
+  for (let i = 1; i <= 14; i++) scored.push({ m: { id: "c" + i, text: "c" + i }, s: 1 - i * 0.01 });
+  scored[5].m.id = "hub";     // cosine rank 6
+  scored[13].m.id = "apex";   // cosine rank 14
+  const W = {
+    get(id) {
+      if (String(id) === "apex") return 0.36;
+      if (String(id) === "hub") return 0.315;
+      return 0;
+    },
+    similarity() { return null; },
+  };
+  const k60 = fuseScoredWithActivation(scored, W, 1.0, { shape: "rrf", rrfK: 60 });
+  const k1 = fuseScoredWithActivation(scored, W, 1.0, { shape: "rrf", rrfK: 1 });
+  const idx = (fused, id) => fused.findIndex((x) => String(x.m.id) === id);
+  assert.ok(idx(k60, "hub") < idx(k60, "apex"), "k=60: hub still ahead of apex (scale-free but cosine rank wins)");
+  assert.ok(idx(k1, "apex") < idx(k1, "hub"), "k=1: activation-#1 (apex) outranks the hub");
+});
+
+test("unknown shape and missing graph fail-open to additive", () => {
+  const W = new WarmField({ hops: 1, now: () => 1_000_000 });
+  W.seedFromRetrieval([{ id: "A", similarity: 0.8 }]);
+  W.spread(chainEdges([["A", "B", 1.0]]));
+  const scored = [{ m: { id: "A" }, s: 0.8 }, { m: { id: "B" }, s: 0.4 }];
+  const add = fuseScoredWithActivation(scored, W, 0.3);
+  const unknown = fuseScoredWithActivation(scored, W, 0.3, { shape: "not-a-shape" });
+  assert.strictEqual(unknown[0].m.id, add[0].m.id);
+  assert.ok(Math.abs(unknown[1].final - add[1].final) < 1e-12);
+  const noGraph = fuseScoredWithActivation(scored, W, 1.0, { shape: "l1" });
+  assert.ok(Math.abs(noGraph[1].final - (0.4 + W.get("B"))) < 1e-12,
+    "l1 without edges must not invent share=1.0; falls back to raw bonus");
 });
 
 // ------------------------------------------------ RM-11 cross-platform SEA (helpers only; no 90MB inject)
@@ -7700,6 +7774,52 @@ async function asyncTests() {
     });
     const got = await on.recall("alpha", 2);
     assert.strictEqual(got, expected, "cosine output survives a rank-path throw");
+  });
+
+  await atest("combiner research: constructed case distinguishes hub-promotion from apex-rescue", async () => {
+    const snap = await combinerResearch.snapshotConstructed();
+    try {
+      const addSafe = combinerResearch.apexHubOutcome(
+        combinerResearch.fuseSnapshot(snap, "additive", 0.3), snap, 5
+      );
+      const addHot = combinerResearch.apexHubOutcome(
+        combinerResearch.fuseSnapshot(snap, "additive", 1.0), snap, 5
+      );
+      const l1Safe = combinerResearch.apexHubOutcome(
+        combinerResearch.fuseSnapshot(snap, "l1", 0.3), snap, 5
+      );
+      const l1Hot = combinerResearch.apexHubOutcome(
+        combinerResearch.fuseSnapshot(snap, "l1", 1.0), snap, 5
+      );
+      const rankSafe = combinerResearch.apexHubOutcome(
+        combinerResearch.fuseSnapshot(snap, "ranknorm", 0.3), snap, 5
+      );
+      const rankHot = combinerResearch.apexHubOutcome(
+        combinerResearch.fuseSnapshot(snap, "ranknorm", 1.0), snap, 5
+      );
+      assert.strictEqual(addSafe.verdict, "neither",
+        "additive w=0.3 must not reorder: gap is larger than 0.3·bonus (got " + addSafe.verdict + ")");
+      assert.strictEqual(addHot.verdict, "hub",
+        "additive w=1.0 promotes the Friday hub, not the diabetic apex (got " + addHot.verdict + ")");
+      assert.strictEqual(l1Safe.verdict, "neither",
+        "l1 at the locked 0.3 weight still cannot close the cosine gap (got " + l1Safe.verdict + ")");
+      assert.strictEqual(l1Hot.verdict, "apex",
+        "l1 w=1.0 is the proto-2.4 that inverts hub-promotion into apex-rescue (got " + l1Hot.verdict + ")");
+      assert.ok(rankSafe.verdict === "hub" || rankSafe.verdict === "both-hub-ahead",
+        "rank-normalize at w=0.3 already hub-promotes (tied local-max scores 1.0; got " + rankSafe.verdict + ")");
+      assert.ok(rankHot.verdict === "hub" || rankHot.verdict === "both-hub-ahead",
+        "rank-normalize still prefers the uniform cluster hub (got " + rankHot.verdict + ")");
+    } finally {
+      try { require("fs").rmSync(snap.dir, { recursive: true, force: true }); } catch { /* temp */ }
+    }
+
+    const liveAdd = await combinerResearch.recallConstructed("additive", 1.0);
+    const liveL1 = await combinerResearch.recallConstructed("l1", 1.0);
+    const has = (hits, text) => hits.some((h) => h.text === text);
+    assert.ok(has(liveAdd.hits, combinerResearch.HUB_TEXT), "live additive w=1 pulls the hub");
+    assert.ok(!has(liveAdd.hits, combinerResearch.APEX_TEXT), "live additive w=1 does not pull the apex");
+    assert.ok(has(liveL1.hits, combinerResearch.APEX_TEXT), "live l1 w=1 pulls the apex");
+    assert.ok(!has(liveL1.hits, combinerResearch.HUB_TEXT), "live l1 w=1 does not pull the hub");
   });
 
   // ------------------------------------------------ Slice C: EdgeStore on the live path

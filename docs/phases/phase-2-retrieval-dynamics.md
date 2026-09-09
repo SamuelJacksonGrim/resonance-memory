@@ -30,10 +30,16 @@ real gate rather than an argument.
 - [ ] Then **behind a flag, off by default** (`RM-05`, [[0003-hybrid-retrieval]]): evaluate RRF
       *and* multiplicative gating; prefer a model stable across score-scale changes; Hebbian must
       never fully override semantic; **degrade to pure cosine** when field/ledger is unavailable (I3).
-      An **exploratory** combiner (`RESONANCE_WARM_RANK`, `cosine + 0.3 · spread-activation`)
-      exists so the question "does activation-in-rank help at all?" can be measured without
-      building 2.3/2.4 first. It is **not** this gate and must not be promoted on that A/B
-      alone. Scorecard: `eval/ab-warm-rank.js` / `eval/RESULTS.md`.
+      An **exploratory** combiner (`RESONANCE_WARM_RANK`, default shape
+      `cosine + 0.3 · spread-activation`) exists so the question "does
+      activation-in-rank help at all?" can be measured without building 2.3/2.4
+      first. Lane B (`combiner-research.md`, `eval/combiner-research.js`) compared
+      additive / RRF / rank-normalize / L1-share / multiplicative: additive is
+      confirmed hub-promoting at `w = 1`; L1 is the only shape that inverts
+      apex-vs-hub on a constructed discriminator; nothing closes diabetic at the
+      locked `w = 0.3`. It is **not** this gate and must not be promoted on that
+      A/B alone. Scorecard: `eval/ab-warm-rank.js` / `eval/RESULTS.md` /
+      `combiner-research.md`.
 
 ### The promotion gate ⛔ — fusion becomes default **only when all four hold**
 1. [ ] **A/B win on the golden set** — recall@k + MRR up, false-association + staleness not worse.
