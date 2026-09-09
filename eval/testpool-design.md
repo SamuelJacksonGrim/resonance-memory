@@ -264,23 +264,23 @@ not average.
 
 ### H4 — activation's real value is improving Related: breadth, not reordering primary
 
-**Plausible, and not a current capability.** Related: today is
-`field.js` kNN + constraint rescue. WarmField is not consulted.
-H4 is a *proposal for where to spend the signal*, not a
-measurement of existing code. `related_rescue_rate` is the
-hook: field-on already aces it on the rescue cases (that is
-the golden ROC). If a later slice appends warm nodes into
-Related:, the metric moves. If it does not move with
-activation-in-Related off, H4 is a story about a mechanism
-that does not exist yet.
+**Run.** `RESONANCE_WARM_RELATED` (default off) + `warm_related_discovery`.
+Report: `h4-related-discovery.md`. Reproduce: `node eval/h4-related-run.js`.
+
+**H4 (this mechanism, this contract) failed.** Leftover
+spread-activation dumped into `Related:` via persist-net 1-hop
+to this-turn seeds is a hub dump, not H1a association. On the
+typed-constraint pool, cold `Related:` already has the apex
+(13/15 at product k=5) — leftover adds hub filler, not targets.
+On the non-constraint window, `new_vs_dup` = 1 when the leaf
+appears, but unrelated-warm and hub-warm also “find” it, and
+Koneko lands in the same appendix. Flag stays off.
 
 The honest reading of the current system: **Related: already
-does the single-turn job H4 wants activation to do.** Spending
-engineering on activation-in-rank to duplicate a working
-additive block is the thing the zero A/B warned against.
-Spending it on *cross-turn* Related: (leftover nodes appear
-in the appendix of turn 2) is a different, cheaper experiment
-than fusion.
+does the single-turn job for typed constraints.** Cross-turn
+leftover-dump is not the associative home. Next node is a
+tighter via (leftover retrieval-seed ∩ this-turn seeds, cap 1)
+or H6 (does the host attend to `Related:`), not another dump.
 
 ### What was missing from the starting set
 

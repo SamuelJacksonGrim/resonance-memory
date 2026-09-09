@@ -76,6 +76,7 @@ const ENV_FIELD = ["1", "true", "yes"].includes(String(process.env.RESONANCE_MEM
 // promotion. "on"/"1"/"true"/"yes" enable it; anything else is off.
 const ENV_WARM = !["0", "false", "no"].includes(String(process.env.RESONANCE_WARM_FIELD || "1").toLowerCase());
 const ENV_WARM_RANK = ["1", "true", "yes", "on"].includes(String(process.env.RESONANCE_WARM_RANK || "").toLowerCase());
+const ENV_WARM_RELATED = ["1", "true", "yes", "on"].includes(String(process.env.RESONANCE_WARM_RELATED || "").toLowerCase());
 const ENV_WARM_TRACE = ["1", "true", "yes"].includes(String(process.env.RESONANCE_WARM_TRACE || "").toLowerCase());
 function envInt(name, fallback) {
   const raw = process.env[name];
@@ -91,6 +92,7 @@ function envNumber(name, fallback) {
   return Number.isFinite(n) ? n : fallback;
 }
 const ENV_WARM_RANK_WEIGHT = envNumber("RESONANCE_WARM_RANK_WEIGHT", 0.3);
+const ENV_WARM_RELATED_FLOOR = envNumber("RESONANCE_WARM_RELATED_FLOOR", 0.05);
 function fieldEnabled() {
   try {
     const c = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
@@ -211,6 +213,8 @@ let _warm = null;
 function getWarm() { if (!_warm) _warm = new WarmField(); return _warm; }
 function warmEnabled() { return ENV_WARM; }
 function warmRank() { return ENV_WARM_RANK; }
+function warmRelated() { return ENV_WARM_RELATED; }
+function warmRelatedFloor() { return ENV_WARM_RELATED_FLOOR; }
 function warmRankWeight() { return ENV_WARM_RANK_WEIGHT; }
 function warmTrace() { return ENV_WARM_TRACE; }
 function warmEdgeCap() { return ENV_WARM_EDGE_CAP; }
@@ -251,7 +255,7 @@ async function bootStore() {
   // implementation of save/recall and the RM-00 golden guards that they never diverge.
   core = createCore({
     store, embed, fieldEnabled, getEdgeStore, dedupThresholds, fieldMinSim, constraintGate,
-    warmEnabled, getWarm, warmRank, warmRankWeight,
+    warmEnabled, getWarm, warmRank, warmRelated, warmRelatedFloor, warmRankWeight,
     saveSeed: () => true,          // production: a just-saved fact is warm without a recall
     warmTrace, warmEdgeCap,
     extractEnabled, extractCapable, extract: extractFn,

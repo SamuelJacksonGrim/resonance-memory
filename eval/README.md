@@ -23,6 +23,8 @@ npm run measure -- --json    # machine-readable (the 02.b A/B compares this)
 node eval/ab-warm-rank.js    # exploratory activation-in-rank A/B (flag ON vs OFF; not the golden)
 node eval/measure.js --corpus cross-turn --warm-rank
                              # leftover-warmth pool (carryover_lift / hub / bind)
+node eval/h4-related-run.js  # H4 leftover → Related: (measured no; not the golden)
+node eval/measure.js --corpus h4-related --field --warm-related
 npm run scale                # S1 needle-in-haystack at 1k/10k/50k/100k (live embed first run)
 npm run soak                 # RM-15 control curve (0011 §7.3; field-on, no dream)
 ```
@@ -78,7 +80,7 @@ the diff. The two-step ritual is a feature: fixtures stay honest and reviewable.
 
 Measurement corpora (`duplicates.jsonl`, `messy.jsonl`, `messy-hard.jsonl`, the
 `gate: false` rows of `contradictions.jsonl`, and the activation pool
-`cross-turn.jsonl` / `weak-recall.jsonl` / `hub-vs-apex.jsonl`) are skipped by `npm run eval`,
+`cross-turn.jsonl` / `weak-recall.jsonl` / `hub-vs-apex.jsonl` / `h4-related.jsonl`) are skipped by `npm run eval`,
 so a new write or query there is refreshed with `EVAL_REFRESH=1 npm run measure` instead.
 The original four golden contradiction cases still refresh via `EVAL_REFRESH=1 npm run eval`.
 

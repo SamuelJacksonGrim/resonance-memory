@@ -31,7 +31,8 @@ Build `eval/` with seeded, offline, reproducible scoring.
 - [~] Metrics: `recall@k`, `duplicate_rate`, `extraction_precision`,
       `extraction_recall`, `mrr`, **`staleness_rate`**, **`false_supersession`**,
       **`carryover_lift`**, **`rank_hub_contamination`**, **`graph_bind_rate`**,
-      and **`related_rescue_rate`** shipped as
+      **`related_rescue_rate`**, and **`warm_related_discovery`** (H4
+      new-vs-duplicate) shipped as
       **reporting** metrics (registry in `eval/metrics.js`; `node eval/measure.js`; not
       folded into `golden.json`), plus the field-experiment **ROC / TBR** split.
       *(`staleness_rate` also has the RM-15 soak slot-probe shape; the RM-03 shape is

@@ -366,6 +366,26 @@ class WarmField {
     return out;
   }
 
+  // H4: leftover at the START of a recall, before this-turn seed.
+  // `similarity == null` is spread-activated (H1a leaf). A number is
+  // a retrieval seed (H1b / last-hit recency). Reading does not
+  // evict; get() is the path that drops below-floor nodes (I6).
+  leftoverEntries() {
+    const now = this.now();
+    const out = [];
+    for (const [id, n] of this.nodes) {
+      const v = this.effective(n, now);
+      if (v >= this.floor) {
+        out.push({
+          id,
+          activation: v,
+          similarity: n && n.similarity != null ? n.similarity : null,
+        });
+      }
+    }
+    return out;
+  }
+
   _evictCap() {
     if (this.nodes.size <= this.cap) return;
     const now = this.now();

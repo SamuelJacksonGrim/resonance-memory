@@ -1905,8 +1905,9 @@ function relatedRescueStats(results, corpus, opts) {
  * related_rescue_rate — fraction of labeled probes whose apex appears in
  * the Related: block and NOT in primary top-k. H4's number: discovery
  * already doing the job rank is being asked to do. Field-off → 0 (no
- * Related: block). Activation-into-Related is not built yet; the metric
- * is ready when a later slice appends warm nodes there.
+ * Related: block). H4 leftover-into-Related is `warm_related_discovery`
+ * (paired cold/warm Related: lists); this metric is the single-turn
+ * field-on rescue rate.
  */
 register({
   name: "related_rescue_rate",
@@ -1914,6 +1915,128 @@ register({
   description: "Fraction of labeled probes whose relevant id is in Related: and not in primary top-k. H4 readout.",
   compute(results, corpus, opts) { return relatedRescueStats(results, corpus, opts).rate; },
   explain: relatedRescueStats,
+});
+
+function warmRelatedDiscoveryStats(results, corpus, opts) {
+  // H4 new-vs-duplicate. Requires paired cold_related_ids / warm_related_ids
+  // on probe queries (measure.js writes those for --field vs --field
+  // --warm-related on the same store). Unlabeled / unpaired → null, not a
+  // fake 0 — that would look like "no discoveries" on a corpus that never
+  // ran the pair.
+  //
+  //   discovery  = target in (warm Related: \ cold Related:) AND not in
+  //                primary top-k. The thing H4 is for.
+  //   duplicate  = target in cold Related: AND warm Related:. kNN/rescue
+  //                already had it; leftover added nothing.
+  //   intrusion  = a labeled unrelated leftover id in warm Related:.
+  //   hub share  = of ids in (warm \ cold), how many are labeled hubs.
+  const k = opts && opts.k != null ? Number(opts.k) : 5;
+  const queries = asQueryList(results).filter((q) => {
+    if (!isProbeQuery(q)) return false;
+    if (!asIds(q.relevant_ids || q.relevant).length) return false;
+    return Array.isArray(q.cold_related_ids) && Array.isArray(q.warm_related_ids);
+  });
+  if (!queries.length) {
+    return {
+      k, n: 0, rate: null, discovery_rate: null, new_vs_dup: null,
+      intrusion_rate: null, hub_share_of_new: null,
+      unrelated_target_lift: null,
+      n_cold_miss: 0, n_discovery: 0, n_duplicate_target: 0,
+      n_warm_hit: 0, n_intrusion: 0, n_new: 0, n_new_hub: 0,
+      n_unrelated: 0, n_unrelated_target_lift: 0,
+      byQuery: [],
+    };
+  }
+  const corpusHubs = asIds((results && results.hub_ids) || (corpus && corpus.hub_ids) || []);
+  const scored = [];
+  for (const q of queries) {
+    const relevant = new Set(asIds(q.relevant_ids || q.relevant));
+    const hubs = new Set(asIds(q.hub_ids || q.hubs || []).concat(corpusHubs));
+    const intrusion = new Set(asIds(q.intrusion_ids || q.intrusions || []));
+    const coldR = new Set(asIds(q.cold_related_ids));
+    const warmR = new Set(asIds(q.warm_related_ids));
+    const primary = asIds(q.ranked_ids || q.warm_ranked_ids || q.ranked).slice(0, k);
+    const newIds = [...warmR].filter((id) => !coldR.has(id));
+    const targetInPrimary = [...relevant].some((id) => primary.includes(id));
+    const targetInCold = [...relevant].some((id) => coldR.has(id));
+    const targetInWarm = [...relevant].some((id) => warmR.has(id));
+    const targetNew = [...relevant].some((id) => warmR.has(id) && !coldR.has(id));
+    const coldMiss = !targetInCold && !targetInPrimary;
+    const newHubs = newIds.filter((id) => hubs.has(id));
+    const warmIntrusion = [...warmR].filter((id) => intrusion.has(id));
+    scored.push({
+      id: q.id || q.query || null,
+      subset: q.subset || (q.query_kind) || null,
+      band: q.band || null,
+      held_out: !!(q.held_out),
+      shape: q.shape || null,
+      target_in_primary: targetInPrimary,
+      target_in_cold: targetInCold,
+      target_in_warm: targetInWarm,
+      discovery: !!(coldMiss && targetNew),
+      duplicate: !!(targetInCold && targetInWarm),
+      cold_miss: coldMiss,
+      n_new: newIds.length,
+      n_new_hub: newHubs.length,
+      n_warm_intrusion: warmIntrusion.length,
+      new_ids: newIds,
+      new_hub_ids: newHubs,
+      warm_intrusion_ids: warmIntrusion,
+    });
+  }
+  const n = scored.length;
+  const nColdMiss = scored.filter((s) => s.cold_miss).length;
+  const nDiscovery = scored.filter((s) => s.discovery).length;
+  const nDup = scored.filter((s) => s.duplicate).length;
+  const nWarmHit = scored.filter((s) => s.target_in_warm && !s.target_in_primary).length;
+  const nIntrusion = scored.filter((s) => s.n_warm_intrusion > 0).length;
+  const nNew = scored.reduce((s, x) => s + x.n_new, 0);
+  const nNewHub = scored.reduce((s, x) => s + x.n_new_hub, 0);
+  const nNewTarget = scored.filter((s) => s.target_in_warm && !s.target_in_cold && !s.target_in_primary).length;
+  const unrelated = scored.filter((s) => s.subset === "unrelated-control");
+  const nUnrelatedLift = unrelated.filter((s) => s.discovery).length;
+  return {
+    k, n,
+    n_cold_miss: nColdMiss,
+    n_discovery: nDiscovery,
+    n_duplicate_target: nDup,
+    n_warm_hit: nWarmHit,
+    n_new_target: nNewTarget,
+    n_intrusion: nIntrusion,
+    n_new: nNew,
+    n_new_hub: nNewHub,
+    discovery_rate: nColdMiss ? nDiscovery / nColdMiss : null,
+    new_vs_dup: nWarmHit ? nNewTarget / nWarmHit : null,
+    intrusion_rate: n ? nIntrusion / n : null,
+    n_unrelated: unrelated.length,
+    n_unrelated_target_lift: nUnrelatedLift,
+    unrelated_target_lift: unrelated.length ? nUnrelatedLift / unrelated.length : null,
+    hub_share_of_new: nNew ? nNewHub / nNew : (nNew === 0 ? 0 : null),
+    rate: nColdMiss ? nDiscovery / nColdMiss : null,
+    byQuery: scored,
+  };
+}
+
+/*
+ * warm_related_discovery — H4's number. Of probes whose apex is in
+ * neither primary top-k nor cold Related:, the fraction where leftover
+ * activation put it in warm Related:.
+ *
+ *     discovery_rate = n_discovery / n_cold_miss
+ *
+ * `explain()` also reports the load-bearing falsifier (new-vs-duplicate:
+ * of Related:-only warm hits, how many were absent from cold Related:),
+ * intrusion_rate (labeled unrelated leftover in warm Related:), and
+ * hub_share_of_new (of ids in warm\cold, how many are labeled hubs).
+ *
+ * Paired `cold_related_ids` / `warm_related_ids` required. NA otherwise.
+ */
+register({
+  name: "warm_related_discovery",
+  defaults: { k: 5 },
+  description: "Fraction of cold-Related:-miss probes whose leftover activation put the target in warm Related:. NA without paired cold/warm Related: lists.",
+  compute(results, corpus, opts) { return warmRelatedDiscoveryStats(results, corpus, opts).rate; },
+  explain: warmRelatedDiscoveryStats,
 });
 
 module.exports = {
@@ -1925,4 +2048,5 @@ module.exports = {
   firstRelevantRank,
   iou, matchClusters, survivorId,
   isRankScoredQuery,
+  warmRelatedDiscoveryStats,
 };
