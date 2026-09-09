@@ -2962,6 +2962,7 @@ test("0011 §7.3 metric names are registered; dream-only ones are NA on an empty
     "gist_recall@k", "false_generalization_rate", "cluster_precision", "cluster_recall",
     "hub_contamination", "provenance_integrity", "grimoire_hit_rate", "grimoire_crowding",
     "cofire_rate", "near_miss_cofire", "duplicate_rate", "recall_at_k", "mrr",
+    "carryover_lift", "rank_hub_contamination", "graph_bind_rate", "related_rescue_rate",
   ]) {
     assert.ok(names.includes(n), "missing metric " + n);
   }
@@ -2976,6 +2977,133 @@ test("0011 §7.3 metric names are registered; dream-only ones are NA on an empty
   assert.strictEqual(computeMetric("grimoire_crowding", empty, null), null);
   assert.strictEqual(computeMetric("cofire_rate", empty, null), null);
   assert.strictEqual(computeMetric("near_miss_cofire", empty, null), null);
+  assert.strictEqual(computeMetric("carryover_lift", empty, null), null);
+  assert.strictEqual(computeMetric("rank_hub_contamination", empty, null), null);
+  assert.strictEqual(computeMetric("graph_bind_rate", empty, null), null);
+  assert.strictEqual(computeMetric("related_rescue_rate", empty, null), null);
+});
+
+test("recall_at_k skips score:false warm turns (cross-turn seed is not the probe)", () => {
+  const mixed = { queries: [
+    { id: "warm", score: false, ranked_ids: ["apex"], relevant_ids: ["apex"] },
+    { id: "probe", ranked_ids: ["hub", "x"], relevant_ids: ["apex"] },
+  ] };
+  assert.strictEqual(explainMetric("recall_at_k", mixed, null, { k: 5 }).n, 1);
+  assert.strictEqual(computeMetric("recall_at_k", mixed, null, { k: 5 }), 0);
+});
+
+test("carryover_lift is mean (cold_rank - warm_rank); miss scores |list|+1", () => {
+  const results = { queries: [
+    { id: "lifted", relevant_ids: ["apex"],
+      cold_ranked_ids: ["h1", "h2", "h3", "apex"],
+      warm_ranked_ids: ["apex", "h1", "h2", "h3"] },          // 4 → 1, lift +3
+    { id: "entered", relevant_ids: ["apex"],
+      cold_ranked_ids: ["h1", "h2", "h3"],
+      warm_ranked_ids: ["h1", "apex", "h2"] },                // miss(4) → 2, lift +2
+    { id: "warm-seed", score: false, relevant_ids: ["bridge"],
+      cold_ranked_ids: ["bridge"], warm_ranked_ids: ["bridge"] },
+  ] };
+  const expl = explainMetric("carryover_lift", results, null, { k: 5 });
+  assert.strictEqual(expl.n, 2);
+  assert.strictEqual(expl.mean_lift, 2.5);
+  assert.strictEqual(expl.n_improved, 2);
+  assert.strictEqual(expl.n_entered_window, 1);
+  assert.strictEqual(computeMetric("carryover_lift", results, null), 2.5);
+  assert.strictEqual(computeMetric("carryover_lift", { queries: [] }, null), null);
+});
+
+test("rank_hub_contamination is hub-in-topk without apex, not any-hub", () => {
+  const results = { queries: [
+    { id: "contam", ranked_ids: ["hub", "x", "y"], relevant_ids: ["apex"], hub_ids: ["hub"] },
+    { id: "rescued", ranked_ids: ["apex", "hub"], relevant_ids: ["apex"], hub_ids: ["hub"] },
+    { id: "clean", ranked_ids: ["apex", "z"], relevant_ids: ["apex"], hub_ids: ["hub"] },
+  ] };
+  const expl = explainMetric("rank_hub_contamination", results, null, { k: 5 });
+  assert.strictEqual(expl.n, 3);
+  assert.strictEqual(expl.n_contaminated, 1);
+  assert.strictEqual(expl.rate, 1 / 3);
+  assert.deepStrictEqual(expl.misses, ["contam"]);
+  assert.strictEqual(computeMetric("rank_hub_contamination", { queries: [] }, null), null);
+});
+
+test("graph_bind_rate is present/labeled apex-bridge pairs; NA without pairs", () => {
+  const results = { bind_pairs: [
+    { apex: "a1", bridge: "b1", present: true },
+    { apex: "a2", bridge: "b2", present: false },
+  ] };
+  assert.strictEqual(computeMetric("graph_bind_rate", results, null), 0.5);
+  assert.strictEqual(explainMetric("graph_bind_rate", results, null).n_present, 1);
+  assert.strictEqual(computeMetric("graph_bind_rate", {}, null), null);
+});
+
+test("related_rescue_rate counts Related:-only apex, not primary hits", () => {
+  const { parseRelatedHits } = require("./eval/metrics.js");
+  const out = "1. [id hub] Friday standup\n2. [id x] parking\n\nRelated:\n- [id apex] I'm diabetic";
+  assert.strictEqual(parseRelatedHits(out).length, 1);
+  assert.strictEqual(parseRelatedHits(out)[0].id, "apex");
+  const rescued = { queries: [
+    { id: "r", ranked_ids: ["hub", "x"], related_ids: ["apex"], relevant_ids: ["apex"], output: out },
+    { id: "p", ranked_ids: ["apex"], related_ids: [], relevant_ids: ["apex"] },
+  ] };
+  const expl = explainMetric("related_rescue_rate", rescued, null, { k: 5 });
+  assert.strictEqual(expl.n, 2);
+  assert.strictEqual(expl.n_rescued, 1);
+  assert.strictEqual(expl.n_primary, 1);
+  assert.strictEqual(expl.rate, 0.5);
+});
+
+test("activation test-pool corpora load, are not golden, and have the three shapes", () => {
+  const { loadScenarios } = require("./eval/measure.js");
+  const { isGoldenCase } = require("./eval/run.js");
+  const xt = loadScenarios(path.join(__dirname, "eval", "corpora", "cross-turn.jsonl"));
+  const wr = loadScenarios(path.join(__dirname, "eval", "corpora", "weak-recall.jsonl"));
+  const hub = loadScenarios(path.join(__dirname, "eval", "corpora", "hub-vs-apex.jsonl"));
+  assert.ok(xt.length >= 10, "cross-turn needs the headline multi-turn pool, got " + xt.length);
+  assert.ok(wr.length >= 6, "weak-recall subset, got " + wr.length);
+  assert.ok(hub.length >= 4, "hub-vs-apex subset, got " + hub.length);
+
+  const xtIds = new Set();
+  for (const s of xt) {
+    assert.strictEqual(s.kind, "cross_turn");
+    assert.strictEqual(s.gate, false);
+    assert.ok(!isGoldenCase(Object.assign({}, s, { expect: { contains: ["x"] }, query: "q", gate: undefined })),
+      s.id + " must not be golden even if someone adds expect");
+    assert.ok(!xtIds.has(s.id), "dup " + s.id);
+    xtIds.add(s.id);
+    assert.ok(s.queries.some((q) => q.role === "warm" || q.query_kind === "warm"), s.id + " needs a warm turn");
+    assert.ok(s.queries.some((q) => q.role === "probe" || q.query_kind === "probe"), s.id + " needs a probe");
+    const probe = s.queries.find((q) => q.role === "probe");
+    assert.ok(probe && Array.isArray(probe.relevant_writes) && probe.relevant_writes.length, s.id + " probe labeled");
+    const roles = new Set(s.writes.filter((w) => w && w.role).map((w) => w.role));
+    assert.ok(roles.has("apex"), s.id + " needs an apex write");
+  }
+  assert.ok(xtIds.has("xt-diabetic-assoc-hostile") && xtIds.has("xt-diabetic-unrelated") &&
+    xtIds.has("xt-diabetic-hubwarm") && xtIds.has("xt-diabetic-direct-hostile"),
+    "must include assoc / direct / unrelated-control / hub-warm-attack");
+  assert.ok(xt.some((s) => s.band === "bind-friendly") && xt.some((s) => s.band === "bind-hostile") &&
+    xt.some((s) => s.band === "bind-late"),
+    "H3 stratification: bind-friendly, bind-hostile, and bind-late (hubs first, apex last)");
+
+  for (const s of wr) {
+    assert.strictEqual(s.kind, "weak_recall");
+    assert.strictEqual(s.gate, false);
+    assert.ok(s.queries.length >= 1, s.id);
+    assert.ok(s.queries.every((q) => q.role !== "warm"), s.id + " this-turn baseline has no warm turn");
+    assert.ok(s.writes.length > 5, s.id + " store must be larger than k so recall@5 is not trivial");
+  }
+  const wrIds = new Set(wr.map((s) => s.id));
+  assert.ok(wrIds.has("wr-diabetic-potluck") && wrIds.has("wr-heights-drinks"),
+    "weak-recall must include the diabetic and heights shapes");
+
+  let nHubLabeled = 0;
+  for (const s of hub) {
+    assert.strictEqual(s.kind, "hub_vs_apex");
+    assert.strictEqual(s.gate, false);
+    const probes = s.queries.filter((q) => q.role !== "warm");
+    assert.ok(probes.some((q) => Array.isArray(q.hub_writes) && q.hub_writes.length), s.id + " needs hub_writes");
+    nHubLabeled++;
+  }
+  assert.ok(nHubLabeled >= 4);
 });
 
 test("cluster_precision/recall Hungarian match at IoU ≥ 0.5", () => {
@@ -3536,6 +3664,20 @@ test("pruned Phase 0 edge does not transmit", () => {
   W.spread(activationEdgesFromStore(store, [{ id: "A" }, { id: "B" }], { now: when }),
     { live: ["A", "B"] });
   assert.strictEqual(W.get("B"), 0);
+});
+
+test("seedFromRetrieval does not wipe leftover warmth on disjoint ids", () => {
+  // H1 depends on this: turn-2 cosine seeds overwrite their own nodes and
+  // thisTurn, but a leaf warmed by turn-1 spread must still be get()-able.
+  const W = new WarmField({ hops: 1, halfLife: 1e9 });
+  W.seed(["bridge"], 0.9);
+  W.spread(chainEdges([["bridge", "apex", 0.8]]));
+  const leftover = W.get("apex");
+  assert.ok(leftover > 0, "spread reached the leaf");
+  W.seedFromRetrieval([{ id: "hub", similarity: 0.7 }]);
+  assert.ok(Math.abs(W.get("apex") - leftover) < 1e-12, "disjoint seed must not dump leftover E");
+  assert.strictEqual(W.similarity("apex"), null);
+  assert.ok(W.get("hub") > 0);
 });
 
 test("seedFromRetrieval keeps similarity and activation separate", () => {
@@ -6105,6 +6247,36 @@ async function asyncTests() {
       "every query resolved to a stored id via group text (merge must keep an original text)");
     assert.ok(r.extraction_precision == null,
       "duplicates writes have no gold_facts; extraction_precision is not a duplicates number");
+  });
+
+  await atest("cross-turn runner writes paired cold/warm ranks and skips scoring the warm turn", async () => {
+    const { runScenario } = require("./eval/measure.js");
+    const r = await runScenario({
+      id: "xt-schema-smoke",
+      kind: "cross_turn",
+      gate: false,
+      writes: [
+        { id: "apex", role: "apex", text: "I have a cat named Koneko" },
+        { id: "bridge", role: "bridge", text: "My name is Samuel" },
+        { id: "ctrl", role: "control", text: "I live in Texas" },
+        { id: "tea", role: "control", text: "I prefer tea over coffee" },
+      ],
+      queries: [
+        { id: "warm", role: "warm", query_kind: "warm", query: "what is my cat's name",
+          relevant_writes: ["apex"], score: false },
+        { id: "probe", role: "probe", query_kind: "probe", query: "do I like coffee or tea better",
+          relevant_writes: ["tea"], score: true },
+      ],
+    }, { k: 5, warmRank: true });
+    const probe = r.queries.find((q) => q.id === "probe");
+    const warm = r.queries.find((q) => q.id === "warm");
+    assert.ok(probe && warm, "both turns present");
+    assert.strictEqual(warm.score, false);
+    assert.ok(Array.isArray(probe.cold_ranked_ids) && probe.cold_ranked_ids.length, "cold ranking");
+    assert.ok(Array.isArray(probe.warm_ranked_ids) && probe.warm_ranked_ids.length, "warm ranking");
+    assert.ok(r.carryover_lift && r.carryover_lift.n === 1, "carryover scores the probe only");
+    assert.strictEqual(r.recall_at_k.n, 1, "warm turn is not a recall@k query");
+    assert.ok(r.metrics.carryover_lift != null);
   });
 
   await atest("messy-hard corpus: Tier 0 baseline is low (cached embed, no LLM)", async () => {

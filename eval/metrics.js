@@ -161,11 +161,20 @@ function firstRelevantRank(ranked, relevant) {
   return null;
 }
 
+function isRankScoredQuery(q) {
+  if (!q) return false;
+  // Warm turns in a cross-turn case seed the field; they are not the
+  // probe the A/B is scoring. `score: false` is the explicit skip.
+  if (q.score === false) return false;
+  return true;
+}
+
 function recallAtKStats(results, corpus, opts) {
   const k = opts && opts.k != null ? Number(opts.k) : 5;
   const queries = asQueryList(results);
   const scored = [];
   for (const q of queries) {
+    if (!isRankScoredQuery(q)) continue;
     const relevant = asIds(q.relevant_ids || q.relevant);
     if (!relevant.length) continue;          // unlabeled: not part of the metric
     const ranked = asIds(q.ranked_ids || q.ranked).slice(0, k);
@@ -195,6 +204,7 @@ function mrrStats(results, corpus, opts) {
   const kCap = opts && opts.k != null ? Number(opts.k) : null;
   const scored = [];
   for (const q of queries) {
+    if (!isRankScoredQuery(q)) continue;
     const relevant = q.relevant_ids || q.relevant;
     if (!asIds(relevant).length) continue;
     let ranked = q.ranked_ids || q.ranked;
@@ -721,6 +731,22 @@ function parsePrimaryHits(output) {
   const re = /\[id\s+(\S+)\]\s*(.*)$/gm;
   let m;
   while ((m = re.exec(primary))) hits.push({ id: m[1], text: m[2].trim() });
+  return hits;
+}
+
+/*
+ * Related: block from the same OUTPUT STRING. Discovery only (I9) — never
+ * mixed into ranked_ids. Used by related_rescue_rate so H4 ("activation's
+ * value is Related: breadth, not primary reorder") has a number.
+ */
+function parseRelatedHits(output) {
+  const parts = String(output || "").split(/related:/i);
+  if (parts.length < 2) return [];
+  const rel = parts.slice(1).join("Related:");
+  const hits = [];
+  const re = /\[id\s+(\S+)\]\s*(.*)$/gm;
+  let m;
+  while ((m = re.exec(rel))) hits.push({ id: m[1], text: m[2].trim() });
   return hits;
 }
 
@@ -1629,12 +1655,274 @@ register({
   explain: nearMissCofireStats,
 });
 
+function isProbeQuery(q) {
+  if (!isRankScoredQuery(q)) return false;
+  const kind = queryKindOf(q) || q.role || "probe";
+  return kind !== "warm";
+}
+
+function missRankOf(ranked) {
+  const n = asIds(ranked).length;
+  return n + 1;
+}
+
+function carryoverLiftStats(results, corpus, opts) {
+  // Cross-turn carry-over: did leftover warmth from turn 1 move the
+  // turn-2 target up the list vs the same probe on a fresh WarmField?
+  //
+  //   lift = rank_cold − rank_warm     (positive = warmth helped)
+  //
+  // Rank is 1-based. A miss (relevant id absent from that list) scores
+  // as |list|+1 so a cold-miss / warm-hit is a real lift, not a skip.
+  // Unlabeled probes and warm-seed turns are skipped. No paired
+  // cold_ranked_ids+warm_ranked_ids → null (not a fake 0 — that would
+  // look like "activation did nothing" on a corpus that never ran the
+  // pair).
+  //
+  // This is a diagnostic of RANK ORDER, not of windowed recall@k. A
+  // mean lift of +3 that still misses top-5 is not "activation earns
+  // rank"; recall_at_k on the same probes is the product number. See
+  // eval/testpool-design.md.
+  const queries = asQueryList(results).filter((q) => {
+    if (!isProbeQuery(q)) return false;
+    if (!asIds(q.relevant_ids || q.relevant).length) return false;
+    return Array.isArray(q.cold_ranked_ids) && Array.isArray(q.warm_ranked_ids);
+  });
+  if (!queries.length) {
+    return {
+      n: 0, mean_lift: null, rate: null,
+      n_improved: 0, n_worsened: 0, n_unchanged: 0,
+      n_entered_window: 0, misses: [], byQuery: [],
+    };
+  }
+  const kWin = opts && opts.k != null ? Number(opts.k) : 5;
+  const scored = [];
+  for (const q of queries) {
+    const relevant = q.relevant_ids || q.relevant;
+    const coldRank = firstRelevantRank(q.cold_ranked_ids, relevant);
+    const warmRank = firstRelevantRank(q.warm_ranked_ids, relevant);
+    const c = coldRank != null ? coldRank : missRankOf(q.cold_ranked_ids);
+    const w = warmRank != null ? warmRank : missRankOf(q.warm_ranked_ids);
+    const lift = c - w;
+    const coldIn = coldRank != null && coldRank <= kWin;
+    const warmIn = warmRank != null && warmRank <= kWin;
+    scored.push({
+      id: q.id || q.query || null,
+      cold_rank: coldRank,
+      warm_rank: warmRank,
+      lift,
+      improved: lift > 0,
+      worsened: lift < 0,
+      entered_window: !coldIn && warmIn,
+      left_window: coldIn && !warmIn,
+    });
+  }
+  const mean = scored.reduce((s, x) => s + x.lift, 0) / scored.length;
+  return {
+    n: scored.length,
+    mean_lift: mean,
+    rate: mean,
+    n_improved: scored.filter((s) => s.improved).length,
+    n_worsened: scored.filter((s) => s.worsened).length,
+    n_unchanged: scored.filter((s) => s.lift === 0).length,
+    n_entered_window: scored.filter((s) => s.entered_window).length,
+    n_left_window: scored.filter((s) => s.left_window).length,
+    misses: scored.filter((s) => s.warm_rank == null).map((s) => s.id),
+    byQuery: scored,
+  };
+}
+
+/*
+ * carryover_lift — mean rank improvement of a turn-2 probe after a turn-1
+ * warm, vs the same probe on a cold WarmField.
+ *
+ *     lift = (1/Q) * Σ (rank_cold − rank_warm)
+ *
+ * Positive = leftover warmth moved the target up. Zero = the signal the
+ * one-query-per-store A/B already measured. Negative = warmth hurt.
+ * Requires paired `cold_ranked_ids` / `warm_ranked_ids` on probe queries
+ * (eval/measure.js writes those for kind:cross_turn). Warm-seed turns
+ * (`score: false`) are skipped.
+ *
+ * Stratify on graph_bind_rate: a zero here with bind_present=0 is H3
+ * (leaf unreachable), not H1 (activation useless). Do not pool them.
+ */
+register({
+  name: "carryover_lift",
+  defaults: { k: 5 },
+  description: "Mean rank_cold − rank_warm on paired cross-turn probes (positive = leftover warmth helped). NA without cold/warm rankings.",
+  compute(results, corpus, opts) { return carryoverLiftStats(results, corpus, opts).rate; },
+  explain: carryoverLiftStats,
+});
+
+function rankHubContaminationStats(results, corpus, opts) {
+  // Rank-level hub vs apex. Distinct from the Op B cluster metric
+  // `hub_contamination` (predicted clusters glued by a hub node). This
+  // one is the w=1.0 failure: Friday/office hubs enter top-k and the
+  // diabetic/heights leaf does not.
+  //
+  // A query is labeled iff it has both relevant_ids (apex) and hub_ids.
+  // contaminated = any hub in top-k AND no apex in top-k.
+  const k = opts && opts.k != null ? Number(opts.k) : 5;
+  const corpusHubs = asIds((results && results.hub_ids) || (corpus && corpus.hub_ids) || []);
+  const queries = asQueryList(results).filter(isProbeQuery);
+  const scored = [];
+  for (const q of queries) {
+    const relevant = asIds(q.relevant_ids || q.relevant);
+    const hubs = asIds(q.hub_ids || q.hubs || []).concat(corpusHubs);
+    if (!relevant.length || !hubs.length) continue;
+    const ranked = asIds(q.ranked_ids || q.warm_ranked_ids || q.ranked).slice(0, k);
+    const apexHit = relevant.some((id) => ranked.includes(id));
+    const hubHits = ranked.filter((id) => hubs.includes(id));
+    const contaminated = hubHits.length > 0 && !apexHit;
+    scored.push({
+      id: q.id || q.query || null,
+      apex_hit: apexHit,
+      n_hub_slots: hubHits.length,
+      hub_ids_in_topk: hubHits,
+      contaminated,
+    });
+  }
+  if (!scored.length) {
+    return {
+      k, n: 0, n_contaminated: 0, rate: null,
+      n_apex_hit: 0, n_hub_in_topk: 0, mean_hub_slots: null,
+      misses: [], byQuery: [],
+    };
+  }
+  const nBad = scored.filter((s) => s.contaminated).length;
+  const nHub = scored.filter((s) => s.n_hub_slots > 0).length;
+  const nApex = scored.filter((s) => s.apex_hit).length;
+  const meanSlots = scored.reduce((s, x) => s + x.n_hub_slots, 0) / scored.length;
+  return {
+    k, n: scored.length, n_contaminated: nBad,
+    rate: nBad / scored.length,
+    n_apex_hit: nApex,
+    n_hub_in_topk: nHub,
+    mean_hub_slots: meanSlots,
+    misses: scored.filter((s) => s.contaminated).map((s) => s.id),
+    byQuery: scored,
+  };
+}
+
+/*
+ * rank_hub_contamination — fraction of apex+hub-labeled probes whose
+ * top-k contains a labeled hub and does NOT contain the apex.
+ *
+ * That is the discrimination failure the w=1.0 A/B already showed on
+ * field-rescue (Friday/office promoted, diabetic still missing). A
+ * combiner that lifts the apex AND a hub is mixed, not this metric —
+ * hub-without-apex is the catch.
+ *
+ * Distinct from `hub_contamination` (Op B / cluster-glue). Do not
+ * overload: soak's cluster metric stays NA without predicted clusters.
+ *
+ * results shape: { queries: [{ ranked_ids, relevant_ids, hub_ids }] }
+ */
+register({
+  name: "rank_hub_contamination",
+  defaults: { k: 5 },
+  description: "Fraction of apex+hub-labeled probes whose top-k contains a hub and not the apex. NA without hub_ids.",
+  compute(results, corpus, opts) { return rankHubContaminationStats(results, corpus, opts).rate; },
+  explain: rankHubContaminationStats,
+});
+
+function graphBindStats(results, corpus) {
+  const pairs = (results && Array.isArray(results.bind_pairs) && results.bind_pairs.length)
+    ? results.bind_pairs
+    : (corpus && Array.isArray(corpus.bind_pairs) ? corpus.bind_pairs : []);
+  if (!pairs.length) {
+    return { n: 0, n_present: 0, rate: null, byPair: [], reason: "no labeled apex-bridge pairs" };
+  }
+  const byPair = [];
+  let nPresent = 0;
+  for (const p of pairs) {
+    const present = !!(p && p.present);
+    if (present) nPresent++;
+    byPair.push({
+      apex: p && (p.apex || p.apex_id) || null,
+      bridge: p && (p.bridge || p.bridge_id) || null,
+      present,
+    });
+  }
+  return {
+    n: pairs.length,
+    n_present: nPresent,
+    rate: nPresent / pairs.length,
+    byPair,
+  };
+}
+
+/*
+ * graph_bind_rate — fraction of labeled apex↔bridge pairs that have a
+ * save-time EdgeStore row after the writes. H3's readout: if this is 0,
+ * spread cannot reach the leaf and a carryover_lift of 0 is not evidence
+ * against H1. Stratify; do not average bound and unbound cases.
+ */
+register({
+  name: "graph_bind_rate",
+  description: "Fraction of labeled apex-bridge pairs with a save-time edge. NA without bind_pairs. H3 stratification, not a recall number.",
+  compute(results, corpus) { return graphBindStats(results, corpus).rate; },
+  explain: graphBindStats,
+});
+
+function relatedRescueStats(results, corpus, opts) {
+  const k = opts && opts.k != null ? Number(opts.k) : 5;
+  const queries = asQueryList(results).filter((q) => {
+    if (!isProbeQuery(q)) return false;
+    return asIds(q.relevant_ids || q.relevant).length > 0;
+  });
+  if (!queries.length) {
+    return { k, n: 0, n_rescued: 0, n_primary: 0, rate: null, byQuery: [] };
+  }
+  const scored = [];
+  for (const q of queries) {
+    const relevant = new Set(asIds(q.relevant_ids || q.relevant));
+    const primary = asIds(q.ranked_ids || q.ranked).slice(0, k);
+    let related = asIds(q.related_ids || q.related);
+    if (!related.length && q.output) related = parseRelatedHits(q.output).map((h) => String(h.id));
+    const inPrimary = primary.some((id) => relevant.has(id));
+    const inRelated = related.some((id) => relevant.has(id));
+    scored.push({
+      id: q.id || q.query || null,
+      in_primary: inPrimary,
+      in_related: inRelated,
+      rescued: inRelated && !inPrimary,
+    });
+  }
+  const nRescued = scored.filter((s) => s.rescued).length;
+  return {
+    k, n: scored.length,
+    n_rescued: nRescued,
+    n_primary: scored.filter((s) => s.in_primary).length,
+    n_related: scored.filter((s) => s.in_related).length,
+    rate: nRescued / scored.length,
+    byQuery: scored,
+  };
+}
+
+/*
+ * related_rescue_rate — fraction of labeled probes whose apex appears in
+ * the Related: block and NOT in primary top-k. H4's number: discovery
+ * already doing the job rank is being asked to do. Field-off → 0 (no
+ * Related: block). Activation-into-Related is not built yet; the metric
+ * is ready when a later slice appends warm nodes there.
+ */
+register({
+  name: "related_rescue_rate",
+  defaults: { k: 5 },
+  description: "Fraction of labeled probes whose relevant id is in Related: and not in primary top-k. H4 readout.",
+  compute(results, corpus, opts) { return relatedRescueStats(results, corpus, opts).rate; },
+  explain: relatedRescueStats,
+});
+
 module.exports = {
   scoreSingle, scoreRepeat, containsAll, fieldSignals,
   register, getMetric, listMetrics, computeMetric, explainMetric, computeAll,
-  makeRecallAtK, groupsFromWrites, parsePrimaryHits,
+  makeRecallAtK, groupsFromWrites, parsePrimaryHits, parseRelatedHits,
   normFact, isCorrectStored, isSaveRefusal,
   COVER_MAX_WORDS, coverScore,
   firstRelevantRank,
   iou, matchClusters, survivorId,
+  isRankScoredQuery,
 };

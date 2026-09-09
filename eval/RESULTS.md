@@ -593,6 +593,24 @@ low-semantic edges (field-on multi-turn, not save-time semantic), or a
 combiner willing to close gaps ≫ 0.06 — which is the override 2.2 said
 it would not do without 2.3/2.4.
 
+That two-turn corpus now exists: `eval/corpora/cross-turn.jsonl` plus
+`weak-recall.jsonl` / `hub-vs-apex.jsonl`, with `carryover_lift` and
+`rank_hub_contamination` as reporting metrics. It is not a re-run of
+this A/B; it is the pool a later attempt has to win on. Decision
+criterion (two-sided, including "cut it"): `eval/testpool-design.md`.
+`node eval/ab-warm-rank.js` includes the new files.
+
+Sanity that the pool is not vacuous (`node eval/measure.js --corpus
+cross-turn --warm-rank`, w=0.3, not a search): **no probe entered
+top-5** (`n_entered_window` 0 on every case). Hostile diabetic sits
+around rank 20–25; hubs occupy the window (`rank_hub_contamination`
+1.0). `xt-veg-assoc-late-hostile` is the H3 exhibit:
+`graph_bind_rate` 0 (hubs written first, vegetarian last). Bind on
+early-save hostile lists is often 1 — incremental K=5 binds the leaf
+before the crowd arrives. Negative lifts exist (celiac −5, sober −7):
+leftover can hurt. None of that is a 2.2 decision; it is the
+readout the decision criterion is looking at.
+
 ---
 
 ## Phase 0.1 — save-time bind cost sweep (2026-09-05)

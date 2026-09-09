@@ -24,10 +24,13 @@
  *   node eval/measure.js --warm-rank            exploratory activation-in-rank
  *   node eval/measure.js --warm-rank-weight 0.3 combiner weight (default 0.3)
  *   node eval/measure.js --include-gate         also score golden corpora via expect.contains
+ *   node eval/measure.js --corpus cross-turn --warm-rank
+ *                                           leftover-warmth pool (carryover_lift)
  *
  * Reuses `pipeline.js` → `memory-core.js`. Does not write golden.json, does
  * not change product behaviour. Measurement corpora (`kind: "duplicates"` /
- * `kind: "messy"` / `gate: false`) are skipped by `eval/run.js` so this
+ * `kind: "messy"` / `kind: "cross_turn"` / `"weak_recall"` / `"hub_vs_apex"` /
+ * `gate: false`) are skipped by `eval/run.js` so this
  * cannot flip the gate.
  *
  * Levers that will shift (write-path, warm-field, fusion) belong HERE as
@@ -44,12 +47,13 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { JsonlStore } = require("../store.js");
+const { openEdgeStore } = require("../edges.js");
 const { createMemory, cosine } = require("./pipeline.js");
 const { embed } = require("./embed-cache.js");
 const extract = require("../extract.js");
 const {
   computeMetric, explainMetric, listMetrics, groupsFromWrites, parsePrimaryHits,
-  isSaveRefusal, normFact, isCorrectStored,
+  parseRelatedHits, isSaveRefusal, normFact, isCorrectStored,
 } = require("./metrics.js");
 
 const CORPORA = path.join(__dirname, "corpora");
@@ -59,31 +63,50 @@ function readJsonl(file) {
 }
 
 function isSelfContainedScenario(c) {
-  return c && Array.isArray(c.writes) && (Array.isArray(c.queries) || typeof c.query === "string");
+  return c && Array.isArray(c.writes) && (
+    Array.isArray(c.queries) || Array.isArray(c.turns) || typeof c.query === "string"
+  );
 }
 
 function isMeasurementLine(c) {
   if (!c) return false;
-  if (c.kind === "duplicates" || c.kind === "messy" || c.kind === "measure" || c.kind === "contradiction" || c.gate === false) return true;
+  if (c.kind === "duplicates" || c.kind === "messy" || c.kind === "measure" ||
+      c.kind === "contradiction" || c.kind === "cross_turn" ||
+      c.kind === "weak_recall" || c.kind === "hub_vs_apex" || c.gate === false) return true;
   if (c.role === "write" || c.role === "query" || c.role === "meta") return true;
   return isSelfContainedScenario(c) && !c.expect;
 }
 
+function normalizeTurn(t) {
+  if (!t || typeof t !== "object") return t;
+  const role = t.role || t.query_kind || "probe";
+  const query_kind = t.query_kind || role;
+  const score = t.score != null ? !!t.score : (role !== "warm");
+  return Object.assign({}, t, { role, query_kind, score });
+}
+
 function queriesFromCase(c) {
-  if (Array.isArray(c.queries)) return c.queries;
+  if (Array.isArray(c.turns)) return c.turns.map(normalizeTurn);
+  if (Array.isArray(c.queries)) return c.queries.map(normalizeTurn);
   if (typeof c.query !== "string") return [];
-  return [{
+  return [normalizeTurn({
     id: c.id,
     query: c.query,
+    role: "probe",
+    query_kind: "probe",
     stale_values: Array.isArray(c.stale_values) ? c.stale_values : [],
     current_values: Array.isArray(c.current_values) ? c.current_values : [],
     keep_values: Array.isArray(c.keep_values) ? c.keep_values : [],
     relevant_facts: Array.isArray(c.current_values) ? c.current_values : null,
+    relevant_writes: c.relevant_writes,
+    relevant_texts: c.relevant_texts,
+    hub_writes: c.hub_writes,
+    hub_texts: c.hub_texts,
     contains: (c.expect && Array.isArray(c.expect.contains)) ? c.expect.contains : [],
     excludes: (c.expect && Array.isArray(c.expect.excludes)) ? c.expect.excludes : [],
     band: c.band || null,
     historical: !!c.historical,
-  }];
+  })];
 }
 
 function loadScenarios(file) {
@@ -101,6 +124,10 @@ function loadScenarios(file) {
         queries: queriesFromCase(c),
         note: c.note || "",
         band: c.band || null,
+        subset: c.subset || null,
+        apex_writes: c.apex_writes || null,
+        bridge_writes: c.bridge_writes || null,
+        hub_writes: c.hub_writes || null,
         stale_values: Array.isArray(c.stale_values) ? c.stale_values : [],
         current_values: Array.isArray(c.current_values) ? c.current_values : [],
         keep_values: Array.isArray(c.keep_values) ? c.keep_values : [],
@@ -268,6 +295,91 @@ function asStoredText(r) {
   return typeof r === "string" ? r : (r && r.text != null ? String(r.text) : "");
 }
 
+function writeIdsOfRole(writes, role) {
+  return (writes || [])
+    .filter((w) => w && typeof w === "object" && w.role === role && w.id != null)
+    .map((w) => String(w.id));
+}
+
+function storedIdsForWriteLabels(labels, saveLog) {
+  if (!Array.isArray(labels) || !labels.length) return [];
+  const wanted = new Set(labels.map(String));
+  const ids = [];
+  for (const entry of saveLog || []) {
+    if (!wanted.has(String(entry.id))) continue;
+    for (const r of entry.stored || []) {
+      if (r && r.id != null) ids.push(String(r.id));
+    }
+  }
+  return [...new Set(ids)];
+}
+
+function storedIdsForTexts(texts, records) {
+  if (!Array.isArray(texts) || !texts.length) return [];
+  const ids = [];
+  for (const rec of records || []) {
+    if (texts.some((t) => textHasValue(rec.text, t) || normFact(rec.text) === normFact(t))) {
+      ids.push(String(rec.id));
+    }
+  }
+  return [...new Set(ids)];
+}
+
+function resolveHubIds(q, records, saveLog, scenario) {
+  if (Array.isArray(q.hub_ids) && q.hub_ids.length) return q.hub_ids.map(String);
+  const fromWrites = storedIdsForWriteLabels(
+    [].concat(q.hub_writes || [], (scenario && scenario.hub_writes) || []),
+    saveLog
+  );
+  const fromTexts = storedIdsForTexts(q.hub_texts || [], records);
+  const fromRole = storedIdsForWriteLabels(writeIdsOfRole(scenario && scenario.writes, "hub"), saveLog);
+  return [...new Set(fromWrites.concat(fromTexts, fromRole))];
+}
+
+function labeledPairWrites(scenario) {
+  const writes = (scenario && scenario.writes) || [];
+  const apex = Array.isArray(scenario.apex_writes) && scenario.apex_writes.length
+    ? scenario.apex_writes.map(String)
+    : writeIdsOfRole(writes, "apex");
+  const bridge = Array.isArray(scenario.bridge_writes) && scenario.bridge_writes.length
+    ? scenario.bridge_writes.map(String)
+    : writeIdsOfRole(writes, "bridge");
+  return { apex, bridge };
+}
+
+function inspectBindPairs(edgeStore, saveLog, scenario) {
+  const { apex, bridge } = labeledPairWrites(scenario);
+  if (!apex.length || !bridge.length) return [];
+  const apexIds = storedIdsForWriteLabels(apex, saveLog);
+  const bridgeIds = storedIdsForWriteLabels(bridge, saveLog);
+  const pairs = [];
+  for (const a of apexIds) {
+    for (const b of bridgeIds) {
+      if (a === b) continue;
+      let present = false;
+      try {
+        const e = edgeStore && typeof edgeStore.get === "function" ? edgeStore.get(a, b) : null;
+        present = !!(e && !e.pruned_at);
+      } catch { present = false; }
+      pairs.push({ apex: a, bridge: b, present });
+    }
+  }
+  return pairs;
+}
+
+async function recallRanked(mem, query, kFull) {
+  const output = await mem.recall(query, kFull);
+  const ranked = parsePrimaryHits(output);
+  const related = parseRelatedHits(output);
+  return {
+    output,
+    ranked_ids: ranked.map((h) => String(h.id)),
+    ranked_texts: ranked.map((h) => h.text),
+    related_ids: related.map((h) => String(h.id)),
+    related_texts: related.map((h) => h.text),
+  };
+}
+
 async function pairwiseCosines(groups) {
   const out = {};
   for (const [gid, texts] of Object.entries(groups)) {
@@ -331,10 +443,29 @@ async function runScenario(scenario, opts) {
   const extractExplain = explainMetric("extraction_precision", { cases: saveLog }, { cases: writes });
   const extractRecallExplain = explainMetric("extraction_recall", { cases: saveLog }, { cases: writes });
 
-  const queries = [];
-  for (const q of scenario.queries || []) {
-    const output = await mem.recall(q.query, k);
-    const ranked = parsePrimaryHits(output);
+  const scenarioQueries = scenario.queries || [];
+  const hasWarmTurn = scenarioQueries.some((q) => q && (q.role === "warm" || q.query_kind === "warm"));
+  const needsFullRank = hasWarmTurn ||
+    scenario.kind === "cross_turn" || scenario.kind === "weak_recall" ||
+    scenario.kind === "hub_vs_apex";
+  const kFull = needsFullRank ? Math.max(k, records.length || 0) : k;
+
+  let edgeStore = null;
+  try { edgeStore = openEdgeStore({ store, file: file + ".edges.json" }); } catch { edgeStore = null; }
+  const bind_pairs = inspectBindPairs(edgeStore, saveLog, scenario);
+
+  function makeMem() {
+    return createMemory({
+      store, embed, fieldEnabled, edgesPath: file + ".edges.json",
+      extractEnabled,
+      extractCapable: opts && opts.extractCapable,
+      extract: opts && opts.extract,
+      extractTimeoutMs: opts && opts.extractTimeoutMs,
+      warmRank, warmRankWeight,
+    });
+  }
+
+  function packQuery(q, hit, extras) {
     const staleValues = Array.isArray(q.stale_values) && q.stale_values.length
       ? q.stale_values
       : (scenario.stale_values || []);
@@ -349,14 +480,20 @@ async function runScenario(scenario, opts) {
       current_values: currentValues,
       keep_values: keepValues,
     });
-    queries.push({
+    return Object.assign({
       id: q.id || q.query,
       query: q.query,
-      ranked_ids: ranked.map((h) => String(h.id)),
-      ranked_texts: ranked.map((h) => h.text),
+      role: q.role || q.query_kind || "probe",
+      query_kind: q.query_kind || q.role || "probe",
+      score: q.score !== false,
+      ranked_ids: hit.ranked_ids,
+      ranked_texts: hit.ranked_texts,
+      related_ids: hit.related_ids || [],
+      related_texts: hit.related_texts || [],
       relevant_ids: resolveRelevant(qLabeled, records, groups, saveLog, allRecords, {
         extractMatch: scenario.extract_match,
       }),
+      hub_ids: resolveHubIds(q, records, saveLog, scenario),
       relevant_groups: q.relevant_groups || null,
       relevant_writes: q.relevant_writes || null,
       relevant_facts: q.relevant_facts || null,
@@ -365,8 +502,42 @@ async function runScenario(scenario, opts) {
       keep_values: keepValues,
       band: q.band || scenario.band || null,
       historical: !!q.historical,
-      output,
-    });
+      output: hit.output,
+    }, extras || {});
+  }
+
+  const queries = [];
+  if (hasWarmTurn) {
+    // Paired run: one core sees only the probe (this-turn activation),
+    // another core runs warm turns then the probe (leftover + this-turn).
+    // Do not reuse `mem` — save() may have touched its WarmField.
+    const coldMem = makeMem();
+    const warmMem = makeMem();
+    const warmTurns = scenarioQueries.filter((q) => q.role === "warm" || q.query_kind === "warm");
+    const probes = scenarioQueries.filter((q) => q.role !== "warm" && q.query_kind !== "warm");
+    for (const q of warmTurns) {
+      const hit = await recallRanked(warmMem, q.query, kFull);
+      queries.push(packQuery(q, hit, { score: false }));
+    }
+    for (const q of probes) {
+      const cold = await recallRanked(coldMem, q.query, kFull);
+      const warm = await recallRanked(warmMem, q.query, kFull);
+      queries.push(packQuery(q, warm, {
+        cold_ranked_ids: cold.ranked_ids,
+        cold_ranked_texts: cold.ranked_texts,
+        cold_output: cold.output,
+        warm_ranked_ids: warm.ranked_ids,
+        warm_ranked_texts: warm.ranked_texts,
+        ranked_ids: warm.ranked_ids,
+        ranked_texts: warm.ranked_texts,
+        output: warm.output,
+      }));
+    }
+  } else {
+    for (const q of scenarioQueries) {
+      const hit = await recallRanked(mem, q.query, kFull);
+      queries.push(packQuery(q, hit));
+    }
   }
   const recallExplain = explainMetric("recall_at_k", { queries }, scenario, { k });
   const mrrExplain = explainMetric("mrr", { queries }, scenario);
@@ -378,6 +549,10 @@ async function runScenario(scenario, opts) {
   const falseSsExplain = explainMetric("false_supersession", {
     records, all_records: allRecords, keep_values: scenario.keep_values,
   }, { keep_values: scenario.keep_values });
+  const carryExplain = explainMetric("carryover_lift", { queries }, scenario, { k });
+  const hubExplain = explainMetric("rank_hub_contamination", { queries }, scenario, { k });
+  const bindExplain = explainMetric("graph_bind_rate", { bind_pairs }, scenario);
+  const relatedExplain = explainMetric("related_rescue_rate", { queries }, scenario, { k });
 
   const exactCaught = saveLog.filter((s) => /already remembered/i.test(s.msg || "")).length;
 
@@ -392,6 +567,10 @@ async function runScenario(scenario, opts) {
     mrr: mrrExplain.mrr,
     staleness_rate: staleExplain.rate,
     false_supersession: falseSsExplain.rate,
+    carryover_lift: carryExplain.rate,
+    rank_hub_contamination: hubExplain.rate,
+    graph_bind_rate: bindExplain.rate,
+    related_rescue_rate: relatedExplain.rate,
   };
   if (extractExplain.n_labeled) {
     metrics.extraction_precision = extractExplain.rate;
@@ -403,6 +582,7 @@ async function runScenario(scenario, opts) {
     file: scenario.file || null,
     kind: scenario.kind || null,
     band: scenario.band || null,
+    subset: scenario.subset || null,
     k, field: fieldEnabled, warm_rank: warmRank,
     n_writes: writes.length,
     n_stored_current: records.length,
@@ -414,8 +594,13 @@ async function runScenario(scenario, opts) {
     mrr: mrrExplain,
     staleness_rate: staleExplain,
     false_supersession: falseSsExplain,
+    carryover_lift: carryExplain,
+    rank_hub_contamination: hubExplain,
+    graph_bind_rate: bindExplain,
+    related_rescue_rate: relatedExplain,
     extraction_precision: extractExplain.n_labeled ? extractExplain : null,
     extraction_recall: extractExplain.n_labeled ? extractRecallExplain : null,
+    bind_pairs,
     queries,
     saveLog,
     groups,
@@ -504,6 +689,30 @@ function printHuman(reports, { k }) {
     console.log("  mrr              " + r.metrics.mrr.toFixed(4) +
       "   (mean rank " + meanR + ", median " + medR +
       ", missed=" + (r.mrr ? r.mrr.n_missed : "?") + ")");
+    if (r.carryover_lift && r.carryover_lift.n) {
+      const c = r.carryover_lift;
+      console.log("  carryover_lift   " + fmtRate(c.mean_lift) +
+        "   (n=" + c.n + " improved=" + c.n_improved +
+        " worsened=" + c.n_worsened +
+        " entered@k=" + c.n_entered_window + ")");
+    }
+    if (r.rank_hub_contamination && r.rank_hub_contamination.n) {
+      const h = r.rank_hub_contamination;
+      console.log("  rank_hub_contam  " + fmtRate(h.rate) +
+        "   (" + h.n_contaminated + "/" + h.n +
+        " hub-without-apex; mean_hub_slots=" + fmtRate(h.mean_hub_slots) + ")");
+    }
+    if (r.graph_bind_rate && r.graph_bind_rate.n) {
+      const b = r.graph_bind_rate;
+      console.log("  graph_bind_rate  " + fmtRate(b.rate) +
+        "   (" + b.n_present + "/" + b.n + " apex-bridge edges present)");
+    }
+    if (r.related_rescue_rate && r.related_rescue_rate.n) {
+      const rel = r.related_rescue_rate;
+      console.log("  related_rescue   " + fmtRate(rel.rate) +
+        "   (" + rel.n_rescued + "/" + rel.n +
+        " Related:-only; primary=" + rel.n_primary + ")");
+    }
     if (r.extraction_precision) {
       const e = r.extraction_precision;
       console.log("  extraction_precision " + e.rate.toFixed(4) +
@@ -641,8 +850,13 @@ async function main(argv) {
         mrr: r.mrr,
         staleness_rate: r.staleness_rate,
         false_supersession: r.false_supersession,
+        carryover_lift: r.carryover_lift,
+        rank_hub_contamination: r.rank_hub_contamination,
+        graph_bind_rate: r.graph_bind_rate,
+        related_rescue_rate: r.related_rescue_rate,
         extraction_precision: r.extraction_precision,
         extraction_recall: r.extraction_recall,
+        bind_pairs: r.bind_pairs,
         bands: r.bands,
         misses: r.recall_at_k.misses,
       })),

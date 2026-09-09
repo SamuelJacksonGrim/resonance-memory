@@ -123,7 +123,8 @@ async function runCase(c, fieldOn, storeKind) {
 // and a write-object line would crash save(w) (objects have no .trim).
 function isGoldenCase(c) {
   if (!c || c.gate === false) return false;
-  if (c.kind === "duplicates" || c.kind === "messy" || c.kind === "measure") return false;
+  if (c.kind === "duplicates" || c.kind === "messy" || c.kind === "measure" ||
+      c.kind === "cross_turn" || c.kind === "weak_recall" || c.kind === "hub_vs_apex") return false;
   return !!(c.expect && (c.query || c.repeat));
 }
 

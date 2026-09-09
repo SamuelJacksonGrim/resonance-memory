@@ -37,6 +37,9 @@ const FILES = [
   "field-stress.jsonl",
   "adversarial.jsonl",
   "contradictions.jsonl",
+  "cross-turn.jsonl",
+  "weak-recall.jsonl",
+  "hub-vs-apex.jsonl",
 ];
 
 function fmt(x) {
@@ -55,7 +58,10 @@ function poolFile(reports) {
   let mrrSum = 0, mrrN = 0;
   let nStale = 0, nStaleDen = 0;
   let nFalse = 0, nKeep = 0;
-  const missesOff = [];
+  let liftSum = 0, liftN = 0, liftImproved = 0, liftEntered = 0;
+  let hubBad = 0, hubN = 0;
+  let bindYes = 0, bindN = 0;
+  let relYes = 0, relN = 0;
   for (const r of reports || []) {
     const rec = r.recall_at_k;
     if (rec && rec.n) {
@@ -77,6 +83,28 @@ function poolFile(reports) {
       nFalse += f.n_false;
       nKeep += f.n;
     }
+    const c = r.carryover_lift;
+    if (c && c.n) {
+      liftSum += c.mean_lift * c.n;
+      liftN += c.n;
+      liftImproved += c.n_improved || 0;
+      liftEntered += c.n_entered_window || 0;
+    }
+    const h = r.rank_hub_contamination;
+    if (h && h.n) {
+      hubBad += h.n_contaminated;
+      hubN += h.n;
+    }
+    const b = r.graph_bind_rate;
+    if (b && b.n) {
+      bindYes += b.n_present;
+      bindN += b.n;
+    }
+    const rel = r.related_rescue_rate;
+    if (rel && rel.n) {
+      relYes += rel.n_rescued;
+      relN += rel.n;
+    }
   }
   return {
     n_scenarios: (reports || []).length,
@@ -91,6 +119,18 @@ function poolFile(reports) {
     false_supersession: nKeep ? nFalse / nKeep : null,
     n_false: nFalse,
     n_keep: nKeep,
+    carryover_lift: liftN ? liftSum / liftN : null,
+    carryover_n: liftN,
+    carryover_improved: liftImproved,
+    carryover_entered: liftEntered,
+    rank_hub_contamination: hubN ? hubBad / hubN : null,
+    hub_n: hubN,
+    hub_bad: hubBad,
+    graph_bind_rate: bindN ? bindYes / bindN : null,
+    bind_n: bindN,
+    bind_yes: bindYes,
+    related_rescue_rate: relN ? relYes / relN : null,
+    related_n: relN,
   };
 }
 
@@ -116,6 +156,24 @@ function printArm(label, pooled) {
     console.log("    false_supersession " + fmt(pooled.false_supersession) +
       "   (" + pooled.n_false + "/" + pooled.n_keep + ")");
   }
+  if (pooled.carryover_n) {
+    console.log("    carryover_lift     " + fmt(pooled.carryover_lift) +
+      "   (n=" + pooled.carryover_n +
+      " improved=" + pooled.carryover_improved +
+      " entered@k=" + pooled.carryover_entered + ")");
+  }
+  if (pooled.hub_n) {
+    console.log("    rank_hub_contam    " + fmt(pooled.rank_hub_contamination) +
+      "   (" + pooled.hub_bad + "/" + pooled.hub_n + " hub-without-apex)");
+  }
+  if (pooled.bind_n) {
+    console.log("    graph_bind_rate    " + fmt(pooled.graph_bind_rate) +
+      "   (" + pooled.bind_yes + "/" + pooled.bind_n + ")");
+  }
+  if (pooled.related_n) {
+    console.log("    related_rescue     " + fmt(pooled.related_rescue_rate) +
+      "   (n=" + pooled.related_n + ")");
+  }
 }
 
 function printDelta(offP, onP) {
@@ -128,6 +186,14 @@ function printDelta(offP, onP) {
   }
   if (offP.n_keep || onP.n_keep) {
     console.log("    false_supersession " + delta(onP.false_supersession, offP.false_supersession) +
+      "   (lower is better)");
+  }
+  if (offP.carryover_n || onP.carryover_n) {
+    console.log("    carryover_lift     " + delta(onP.carryover_lift, offP.carryover_lift) +
+      "   (higher is better)");
+  }
+  if (offP.hub_n || onP.hub_n) {
+    console.log("    rank_hub_contam    " + delta(onP.rank_hub_contamination, offP.rank_hub_contamination) +
       "   (lower is better)");
   }
 }

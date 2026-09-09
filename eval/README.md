@@ -21,6 +21,8 @@ npm run measure              # reporting metrics (A/B): recall@k, duplicate_rate
 npm run measure -- --bands   # also print pairwise cosine within each dup group
 npm run measure -- --json    # machine-readable (the 02.b A/B compares this)
 node eval/ab-warm-rank.js    # exploratory activation-in-rank A/B (flag ON vs OFF; not the golden)
+node eval/measure.js --corpus cross-turn --warm-rank
+                             # leftover-warmth pool (carryover_lift / hub / bind)
 npm run scale                # S1 needle-in-haystack at 1k/10k/50k/100k (live embed first run)
 npm run soak                 # RM-15 control curve (0011 §7.3; field-on, no dream)
 ```
@@ -74,8 +76,9 @@ $env:EVAL_REFRESH=1; npm run measure; Remove-Item Env:EVAL_REFRESH
 That hits a live LM Studio (`/v1/embeddings` on :1234), grows the cache, and you commit
 the diff. The two-step ritual is a feature: fixtures stay honest and reviewable.
 
-Measurement corpora (`duplicates.jsonl`, `messy.jsonl`, `messy-hard.jsonl`, and the
-`gate: false` rows of `contradictions.jsonl`) are skipped by `npm run eval`,
+Measurement corpora (`duplicates.jsonl`, `messy.jsonl`, `messy-hard.jsonl`, the
+`gate: false` rows of `contradictions.jsonl`, and the activation pool
+`cross-turn.jsonl` / `weak-recall.jsonl` / `hub-vs-apex.jsonl`) are skipped by `npm run eval`,
 so a new write or query there is refreshed with `EVAL_REFRESH=1 npm run measure` instead.
 The original four golden contradiction cases still refresh via `EVAL_REFRESH=1 npm run eval`.
 
@@ -108,9 +111,14 @@ noise), `extraction_recall` (gold facts with a matching stored record / gold fac
 the anti-cheat for vacuous precision), `mrr` (mean reciprocal rank of the first relevant
 id; misses contribute 0), **`staleness_rate`** (RM-03: fraction of labeled current-queries
 whose top-k still surfaces a ground-truth stale value; RM-15 soak: fraction of slot probes
-whose top-k misses the current value — slot_probes win when both shapes are present), and
+whose top-k misses the current value — slot_probes win when both shapes are present),
 **`false_supersession`** (fraction of labeled still-true `keep_values` that were invalidated;
-the anti-cheat so supersession cannot go over-eager). They are A/B numbers, not pass/fail —
+the anti-cheat so supersession cannot go over-eager), and the activation-pool metrics
+**`carryover_lift`** (mean rank_cold − rank_warm on a paired cross-turn probe),
+**`rank_hub_contamination`** (hub in top-k without the apex — not the Op B cluster
+metric), **`graph_bind_rate`** (labeled apex↔bridge pair present in the save-time
+edge table), **`related_rescue_rate`** (apex in Related: and not in primary). See
+[`testpool-design.md`](testpool-design.md). They are A/B numbers, not pass/fail —
 `node eval/run.js` still gates only the contains/excludes scorecard, and measurement corpora
 (`kind: "duplicates"` / `"messy"`, `gate: false`, including the expanded contradiction cases)
 are skipped there so a new fixture cannot flip golden. The original four `contra-*` golden
@@ -145,6 +153,9 @@ eval/
   run.js                 the golden runner + regression gate
                          (sqlite default = two-sided parity; `--store jsonl` still testable)
   measure.js             reporting-metric runner (A/B; does not touch golden.json)
+  testpool-design.md     activation-pool contract: corpus shapes, carryover
+                         metric, hypothesis critique, two-sided decision
+                         criterion (Lanes B/C measure against this)
   golden.json            last accepted scorecard (written by --accept)
   save-time-cost.js      Phase 0.1 cost sweep (neighbor-scan + EdgeStore.save p50/p95/p99
                          at N=100/1k/10k/50k/100k). Pre-declares the p95 budget that
@@ -281,6 +292,26 @@ $env:EVAL_REFRESH=1; node eval/soak/run.js --embed-only; Remove-Item Env:EVAL_RE
 ```
 
 See [`soak/README.md`](soak/README.md) for the 4.0 control numbers.
+
+### Activation test pool (`cross-turn.jsonl` / `weak-recall.jsonl` / `hub-vs-apex.jsonl`)
+
+The one-query-per-store A/B cannot test leftover warmth. These three
+measurement corpora can. A case is a *sequence of turns against one store*,
+scored on the later turn (`turns: [{role:"warm"}, {role:"probe"}]`).
+`eval/measure.js` runs a cold probe (fresh WarmField) and a warm probe
+(turn 1 then turn 2) so `carryover_lift` is defined. Weak-recall is the
+this-turn baseline (no warm turn, target genuinely low-cosine). Hub-vs-apex
+labels Friday/office distractors so a combiner that promotes hubs without
+the leaf is caught.
+
+Not golden. Flag-off default preserved. Design, hypothesis critique, and
+the two-sided "earns rank / cut it" criterion:
+[`testpool-design.md`](testpool-design.md).
+
+```powershell
+node eval/measure.js --corpus cross-turn --warm-rank
+node eval/ab-warm-rank.js
+```
 
 ---
 

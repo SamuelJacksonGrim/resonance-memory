@@ -9,6 +9,19 @@ stable; sophistication grows in the substrate, not in the API.
 ## [Unreleased]
 
 ### Added
+- **Activation test pool (cross-turn / weak-recall / hub-vs-apex).** The
+  one-query-per-store A/B could not test leftover warmth — the thing
+  activation is for. Three measurement corpora (`eval/corpora/cross-turn.jsonl`,
+  `weak-recall.jsonl`, `hub-vs-apex.jsonl`, all `gate: false`) plus four
+  reporting metrics: `carryover_lift` (mean rank_cold − rank_warm on a
+  paired probe), `rank_hub_contamination` (hub in top-k without the apex;
+  distinct from Op B cluster `hub_contamination`), `graph_bind_rate` (H3
+  stratification: did save-time K=5 actually bind the apex↔bridge pair),
+  `related_rescue_rate` (H4: apex in Related: not primary). Schema: a case
+  is a sequence of turns against one store, scored on the later turn.
+  Design, hypothesis critique (H1–H10), and the two-sided decision
+  criterion: `eval/testpool-design.md`. Flag-off default and the 27/31
+  golden are untouched.
 - **Exploratory activation-in-rank (`RESONANCE_WARM_RANK`, default off).** Phase 1
   activation can enter primary rank behind a flag: `final = cosine + 0.3 ·
   spread-activation` (weight = Related: `maxBonus`, not tuned). Flag-off is

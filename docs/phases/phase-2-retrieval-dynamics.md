@@ -73,6 +73,10 @@ first) needs the fusion-arm numbers; the contradiction baseline is now computabl
 - [ ] false-association rate under fusion · hub-formation metric
       (degree distribution) · retrieval latency as the graph grows · semantic-only vs. fused
       as a standing A/B.
+- [x] **Activation test pool** (cross-turn / weak-recall / hub-vs-apex) + reporting
+      metrics `carryover_lift`, `rank_hub_contamination`, `graph_bind_rate`,
+      `related_rescue_rate`. Not the 2.2 gate; the pool the gate has to win on.
+      Decision criterion: [`eval/testpool-design.md`](../../eval/testpool-design.md).
 - [x] **Corpus realism** (measured 2026-08-22): corpora were clean (4 within-scenario pairs > 0.75,
       top 0.818) — competition/normalization tuned here are not fitting duplicate bloat; the risk
       runs the other way (real stores carry duplicates until `RM-02`). Duplicate-heavy corpus:

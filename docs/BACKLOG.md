@@ -29,12 +29,16 @@ Build `eval/` with seeded, offline, reproducible scoring.
       `gate: false` measurement cases. Cue / silent / guard / buried / same-name /
       ambiguous / needs_review / numeric / negation. Expand further as RM-03 v2 detection matures.)*
 - [~] Metrics: `recall@k`, `duplicate_rate`, `extraction_precision`,
-      `extraction_recall`, `mrr`, **`staleness_rate`**, and **`false_supersession`** shipped as
+      `extraction_recall`, `mrr`, **`staleness_rate`**, **`false_supersession`**,
+      **`carryover_lift`**, **`rank_hub_contamination`**, **`graph_bind_rate`**,
+      and **`related_rescue_rate`** shipped as
       **reporting** metrics (registry in `eval/metrics.js`; `node eval/measure.js`; not
       folded into `golden.json`), plus the field-experiment **ROC / TBR** split.
       *(`staleness_rate` also has the RM-15 soak slot-probe shape; the RM-03 shape is
-      "stale value still in top-k." Neither metric gates yet — they report so a later
-      detector slice can A/B against a recorded baseline.)*
+      "stale value still in top-k." Activation-pool metrics live on
+      `eval/corpora/cross-turn.jsonl` / `weak-recall.jsonl` / `hub-vs-apex.jsonl`;
+      see `eval/testpool-design.md`. None of these gate — they report so a later
+      slice can A/B against a recorded baseline.)*
 - [x] Constraint cases run with the field **off and on**; report both and the gap.
 - [x] Repeated cases (`repeat` / `contains_by_turn`) keep one store across turns and report
       `first_hit_turn`, so a constraint that lands by turn 4 isn't scored as a miss.
