@@ -4034,6 +4034,115 @@ test("panel page source ships MCP snippet + live store path (RM-20 polish)", () 
   assert.ok(/Export is the backup/.test(src), "backup path is named next to the file");
 });
 
+test("demo-seed.jsonl is a small sharp set that shows RM's wins", () => {
+  // Failure: first-launch demo is a keyword pile, or a dump, or the builder
+  // drifted from the tracked seed (forgot to re-embed). The graph is the
+  // stranger's first impression — it has to actually demonstrate cosine,
+  // supersession, and a silent associative bridge.
+  const src = fs.readFileSync(path.join(__dirname, "build-demo-seed.js"), "utf8");
+  const recs = fs.readFileSync(path.join(__dirname, "demo-seed.jsonl"), "utf8")
+    .split("\n").filter(Boolean)
+    .map((l) => normalize(JSON.parse(l)));
+  assert.ok(recs.length >= 16 && recs.length <= 28,
+    "small sharp set, not a dump: " + recs.length);
+  assert.ok(src.includes("supersedePatches"),
+    "builder uses the live helper, not a forked supersession");
+
+  const superseded = recs.filter((r) => r.superseded_by != null);
+  assert.strictEqual(superseded.length, 1, "exactly one corrected fact");
+  assert.ok(superseded[0].valid_to, "isCurrent keys off valid_to, not only superseded_by");
+  assert.ok(!isCurrent(superseded[0]), "old itch.io date is history");
+  const successor = recs.find((r) => r.id === superseded[0].superseded_by);
+  assert.ok(successor && isCurrent(successor), "correction is the current row");
+  assert.ok(/itch\.io/.test(superseded[0].text) && /itch\.io/.test(successor.text));
+  assert.ok(/next month/.test(superseded[0].text));
+  assert.ok(/slipped|next quarter/.test(successor.text));
+  assert.strictEqual(successor.supersedes, superseded[0].id);
+
+  const coltraneGame = recs.find((r) => /detective is named Coltrane/i.test(r.text));
+  assert.ok(coltraneGame, "game names Coltrane");
+  assert.ok(!/jazz/i.test(coltraneGame.text),
+    "associative pull: the game memory must not restate jazz");
+  const coltraneJazz = recs.find((r) => /Blue Train/i.test(r.text));
+  assert.ok(coltraneJazz && /jazz/i.test(coltraneJazz.text));
+  assert.ok(!/Nightfall/i.test(coltraneJazz.text),
+    "associative pull: the vinyl memory must not restate Nightfall");
+
+  const kindOfBlue = recs.find((r) => /Kind of Blue/i.test(r.text));
+  assert.ok(kindOfBlue, "semantic-over-keyword beat");
+  assert.ok(!/jazz/i.test(kindOfBlue.text) && !/debug/i.test(kindOfBlue.text),
+    "Kind of Blue must be findable by meaning, not the words jazz/debug");
+
+  assert.ok(recs.some((r) => /river path/i.test(r.text) && !/Nightfall/i.test(r.text)),
+    "running memory does not restate the game");
+  assert.ok(recs.some((r) => /Biscuit/i.test(r.text) && /Nightfall/i.test(r.text)),
+    "one explicit game↔dog bridge so the constellation still has a thick readable link");
+
+  for (const r of recs) {
+    assert.ok(src.includes(r.text), "builder still owns the text of id " + r.id);
+    assert.ok(Array.isArray(r.embedding) && r.embedding.length >= 256,
+      "pre-embedded so the demo graph lights up with no endpoint");
+  }
+});
+
+test("panel license explainer claims match LICENSING.md (not invented)", () => {
+  // Failure: the stranger-facing page states a permission the license does
+  // not grant, or forgets the dual-license / §13 catch that LICENSING.md states.
+  const licensing = fs.readFileSync(path.join(__dirname, "LICENSING.md"), "utf8");
+  const notice = fs.readFileSync(path.join(__dirname, "NOTICE"), "utf8");
+  const src = fs.readFileSync(path.join(__dirname, "panel.js"), "utf8");
+  const readme = fs.readFileSync(path.join(__dirname, "README.md"), "utf8");
+  const start = src.indexOf('id="licenseFaq"');
+  assert.ok(start >= 0, "closed-by-default details, matching Terminal commands");
+  const end = src.indexOf("</details>", start);
+  assert.ok(end > start);
+  const section = src.slice(start, end);
+
+  assert.ok(/What can I ship \/ license\?/.test(src), "section is named for the stranger's question");
+  assert.ok(/dual-licensed/i.test(licensing) && /dual-licensed/i.test(notice));
+  assert.ok(/dual-licensed/i.test(section), "panel states the actual model");
+
+  assert.ok(/AGPL-3\.0/.test(licensing) && /AGPL-3\.0/.test(section));
+  assert.ok(/use, run, modify, fork/i.test(section));
+  assert.ok(/If the AGPL works for you, you owe nothing/.test(licensing));
+  assert.ok(/If the AGPL works for you, you owe nothing/.test(section));
+
+  assert.ok(/complete corresponding source/i.test(licensing));
+  assert.ok(/complete corresponding source/i.test(section),
+    "quote LICENSING.md's duty; do not invent a weaker one");
+  assert.ok(/at no charge/i.test(section));
+  assert.ok(/combined\/derivative work/.test(licensing));
+  assert.ok(/combined\/derivative work/.test(section));
+  assert.ok(/&sect;13|§13/.test(section), "names AGPL §13");
+  assert.ok(/SaaS product, an API, or a hosted\s+service/.test(licensing));
+  assert.ok(/SaaS product, an API, or a hosted service/.test(section));
+
+  assert.ok(/paid commercial license/i.test(licensing) && /paid commercial license/i.test(section));
+  const email = "collectiveaifamily@gmail.com";
+  assert.ok(licensing.includes(email));
+  assert.ok(section.includes(email), "commercial contact is the one LICENSING.md names");
+  assert.ok(/Commercial license/.test(section) && /Resonance Memory/.test(section));
+  assert.ok(/quoted per engagement/i.test(licensing) && /quoted per engagement/i.test(section));
+  assert.ok(/LICENSING\.md/.test(section), "points at the authority rather than paraphrasing the rest");
+  assert.ok(/not a contract/i.test(section));
+  assert.ok(/not itself a contract/i.test(licensing));
+
+  assert.ok(!/\bMIT\b/.test(section), "must not claim a permissive license RM is not under");
+  assert.ok(!/public domain/i.test(section));
+  assert.ok(!/\bApache-2\.0\b/.test(section), "Apache is the embedder, not RM");
+
+  const licHead = readme.split("## License")[1] || "";
+  assert.ok(/dual-licensed/i.test(licHead), "GitHub README states the actual model");
+  assert.ok(/LICENSING\.md/.test(licHead));
+  assert.ok(/AGPL-3\.0/.test(licHead));
+  assert.ok(licHead.includes(email));
+  assert.ok(/complete corresponding source/i.test(licHead));
+
+  const landing = fs.readFileSync(path.join(__dirname, "docs", "index.html"), "utf8");
+  assert.ok(/dual-licensed/i.test(landing), "landing page states the actual model");
+  assert.ok(/LICENSING\.md/.test(landing), "landing points at LICENSING.md, not a paraphrase-only footer");
+});
+
 test("panel page source ships a Terminal commands reference of real entry.js flags", () => {
   // Failure: a stranger looking for --export has to read source, or we
   // document a flag entry.js does not dispatch (or skip a real one).
@@ -5330,6 +5439,8 @@ async function asyncTests() {
         assert.ok(page.includes("Export my memories"));
         assert.ok(/read-only/i.test(page));
         assert.ok(page.includes("Terminal commands"), "CLI reference is on the served page");
+        assert.ok(page.includes("What can I ship / license?"), "license explainer is on the served page");
+        assert.ok(page.includes("collectiveaifamily@gmail.com"), "commercial contact is on the served page");
         assert.ok(page.includes("--dedup-existing"), "a maintenance flag the buttons don't cover is listed");
         assert.ok(page.includes("entry.js"), "dev prefix is node + entry.js (cliPrefix ran), not panel.js --export");
         const prev = await (await fetch(panel.url + "/api/export")).json();

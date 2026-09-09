@@ -40,6 +40,24 @@ stable; sophistication grows in the substrate, not in the API.
   handing over the "paste the block below…" intro too).
 
 ### Added
+- **What can I ship / license?** A closed-by-default panel section (same
+  `details` grain as Terminal commands; the panel is still one card) plus
+  the README License section, answering the stranger's question from the
+  actual `LICENSE` / `LICENSING.md` / `NOTICE`: dual-licensed AGPL-3.0
+  (free to use/run/modify/fork/redistribute) **or** a paid commercial
+  license; AGPL **§13** network copyleft (modified version offered as a
+  network service → complete corresponding source, at no charge, including
+  the combined/derivative work); commercial contact
+  `collectiveaifamily@gmail.com`. The panel is an explainer, not a
+  contract — nuance points at `LICENSING.md` rather than inventing a
+  permission. Landing page (`docs/index.html`) matches.
+- **Demo-seed refresh.** The synthetic first-launch graph (Alex Rivera /
+  Nightfall) now demonstrates the three things RM wins on, without
+  bloating: a corrected itch.io date kept as a dimmed superseded row
+  (`supersedePatches`, not a fork), a Coltrane detective ↔ Blue Train
+  vinyl pair that does not restate each other's cluster, and "Kind of
+  Blue when the problem isn't a typing problem" (semantic, not the
+  words jazz/debug). Still 100% synthetic; still view-only.
 - **Terminal commands on the control panel.** A closed-by-default
   reference lists every flag `entry.js` actually dispatches (`--mcp`,
   `--install` / `--uninstall`, `--export` / `--export-jsonl`, `--import`,
