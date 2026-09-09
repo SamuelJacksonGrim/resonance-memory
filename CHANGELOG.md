@@ -9,6 +9,18 @@ stable; sophistication grows in the substrate, not in the API.
 ## [Unreleased]
 
 ### Changed
+- **RM-20 installer / first-run polish.** A stranger's first hour was the
+  remaining product tax: Connect was a dead end unless they ran LM Studio or
+  Claude Desktop; the unsigned-binary scare sat in `BUILDING.md` instead of
+  the 60-second path; the live store file was buried under "Removing it?"
+  and named the configured `.jsonl` stem, not the SQLite `.db` a new user
+  actually gets. The panel now ships a copy-paste MCP snippet (same
+  `selfLaunch()` Connect writes) for Claude Code / Cursor / Continue /
+  Hermes; README + `READ ME FIRST.txt` walk through SmartScreen (**More
+  info → Run anyway**) and Gatekeeper (right-click **Open** / `xattr`)
+  *before* "launch the binary"; **Your memories** shows the live file and
+  names Export as the backup. One-click Connect is unchanged. Signing and
+  the `~/.lmstudio/` folder wart stay `RM-11` / `BUG-004` / `BUG-005`.
 - **Weak-model system prompt rewritten + the copy button fixed.** The optional
   `system-prompt.md` block is now tighter and priority-ordered — recall-before-you-answer
   leads, save-what-lasts and keep-it-clean follow — so a small model that forgets to reach

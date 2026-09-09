@@ -26,7 +26,10 @@
  *   - draws the association graph (your memories, or a synthetic demo),
  *   - first-run empty-store nudge (RM-20): when the user store has zero
  *     current memories, offer a starter prompt and a "connected but never
- *     saved" hint. Not an MCP tool.
+ *     saved" hint. Connect one-clicks LM Studio / Claude Desktop; other MCP
+ *     clients get a copy-paste snippet (same command/args Connect writes).
+ *     The live store file is shown on the page (not buried in uninstall copy).
+ *     Not an MCP tool.
  *   - exports YOUR store as a zip (RM-07 slice 2c; shells export-memory.js, never
  *     demo-seed.jsonl; not an MCP tool — a model that can dump the store is an
  *     exfil path),
@@ -56,7 +59,7 @@ const field = require("./field.js");
 const engine = require("./engine.js");
 const { openEdgeStore } = require("./edges.js");
 const { normalize, isCurrent, isVector } = require("./record.js");
-const { openStore } = require("./store.js");
+const { openStore, liveStoreFile } = require("./store.js");
 const { readFieldMinSim } = require("./memory-core.js");
 const { pairConflictFn, resolveEntities } = require("./entity.js");
 const extract = require("./extract.js");
@@ -307,6 +310,15 @@ const PAGE = `<!doctype html>
   .firstrun .label { margin-bottom: 4px; }
   .firstrun .hint { margin: 0 0 8px; color: #5b4a20; }
   .firstrun button { margin-top: 2px; }
+  details.mcpother { margin: 8px 0 12px; padding: 10px 14px; border-radius: 12px;
+    background: #f7f8fa; border: 1px solid rgba(0,0,0,.05); }
+  details.mcpother summary { cursor: pointer; font-weight: 600; font-size: 13px; }
+  pre.mcp { font-family: ui-monospace, Consolas, monospace; font-size: 11.5px;
+    background: #fff; padding: 10px 12px; border-radius: 8px; overflow: auto;
+    white-space: pre-wrap; word-break: break-all; margin: 8px 0;
+    border: 1px solid rgba(0,0,0,.06); }
+  .datapath { font-family: ui-monospace, Consolas, monospace; font-size: 11.5px;
+    background: rgba(0,0,0,.06); padding: 1px 5px; border-radius: 5px; word-break: break-all; }
   @media (prefers-color-scheme: dark) {
     body { background: #16181c; color: #e6e8eb; }
     .card { background: #1f2227; border-color: rgba(255,255,255,.07); box-shadow: 0 12px 40px rgba(0,0,0,.4); }
@@ -328,6 +340,9 @@ const PAGE = `<!doctype html>
     .toast code { background: rgba(255,255,255,.08); }
     .firstrun { background: #3a2f12; border-color: rgba(240,198,116,.25); }
     .firstrun .hint { color: #f0c674; }
+    details.mcpother { background: #171a1e; border-color: rgba(255,255,255,.06); }
+    pre.mcp { background: #1f2227; border-color: rgba(255,255,255,.08); }
+    .datapath { background: rgba(255,255,255,.08); }
   }
 </style></head>
 <body>
@@ -336,6 +351,15 @@ const PAGE = `<!doctype html>
     <p class="sub">A local memory for your AI. Nothing leaves this machine.</p>
 
     <div id="clients" class="clients sec"></div>
+    <details class="mcpother" id="mcpOther">
+      <summary>Using Claude Code, Cursor, Continue, Hermes, or another MCP app?</summary>
+      <div class="hint" style="margin:8px 0">One-click Connect above covers LM Studio and Claude Desktop. For everything else, paste this into the app's MCP config (same command the Connect button writes). Then restart that app.</div>
+      <pre class="mcp" id="mcpJson"></pre>
+      <button type="button" id="mcpCopy">Copy JSON</button>
+      <span id="mcpCopyMsg" class="hint" style="margin-left:8px"></span>
+      <div class="hint" style="margin-top:10px"><b>Claude Code CLI:</b> <code id="mcpClaudeCli" class="datapath"></code></div>
+      <div class="hint" style="margin-top:6px"><b>Hermes:</b> same command and args, but YAML under <code>mcp_servers</code> (not <code>mcpServers</code>) in <code>~/.hermes/config.yaml</code>.</div>
+    </details>
 
     <div id="firstRun" class="firstrun" hidden>
       <div class="label" id="firstRunTitle">Nothing saved yet</div>
@@ -379,7 +403,7 @@ const PAGE = `<!doctype html>
     <div class="row" id="exportRow" style="margin-top:10px">
       <div>
         <div class="label">Your memories</div>
-        <div class="hint">Download a zip of everything stored on this machine, or restore one from another machine. Nothing is sent anywhere.</div>
+        <div class="hint">They live on this machine at <code id="dataPath" class="datapath">&hellip;</code> &mdash; Export is the backup; nothing is sent anywhere. To move them, copy that file (and the small <code>resonance-memory.config.json</code> beside it) or use Export / Import.</div>
         <div id="exportToast" class="toast" hidden></div>
         <div id="importToast" class="toast" hidden></div>
         <div id="exportBusy" class="busy-note" hidden>Exporting&hellip; (this can take a minute at large N)</div>
@@ -419,7 +443,7 @@ const PAGE = `<!doctype html>
 
     <div class="foot">
       <div><b>For weaker models</b> that forget to save or recall: <a href="#" id="spBtn">copy a ready-made system prompt</a> and paste it into your app's system-prompt box. <span id="spMsg"></span></div>
-      <div style="margin-top:11px"><b>Removing it?</b> Click <b>Disconnect</b> next to each app above, then delete <code>resonance-memory.exe</code> &mdash; that's the whole app. Your memories live at <code id="storePath">&hellip;</code> and stay put unless you delete that file too. SQLite is one <code>.db</code> (facts, access counts, and learned associations). A JSONL pin still has the small <code>.edges.json</code> / <code>.access.json</code> companions beside it (and a leftover <code>.assoc.json</code> if an older build wrote one).</div>
+      <div style="margin-top:11px"><b>Removing it?</b> Click <b>Disconnect</b> next to each app above, then delete <code>resonance-memory.exe</code> &mdash; that's the whole app. Your memories live at <code id="storePath">&hellip;</code> and stay put unless you delete that file too. SQLite (the default) is one <code>.db</code>. A JSONL pin still has the small <code>.edges.json</code> / <code>.access.json</code> companions beside the <code>.jsonl</code> (and a leftover <code>.assoc.json</code> if an older build wrote one).</div>
       <div style="margin-top:11px">The field and extraction switches apply instantly &mdash; no restart. This panel closes itself a few seconds after you close the tab.</div>
     </div>
   </div>
@@ -463,6 +487,7 @@ const PAGE = `<!doctype html>
   </div>
 <script>
   var RM_PANEL_TOKEN = ${JSON.stringify(PANEL_TOKEN)};
+  var MCP_SNIPPET = ${JSON.stringify(install.mcpSnippet())};
   (function(){
     var nativeFetch = window.fetch.bind(window);
     window.fetch = function(url, opts){
@@ -536,7 +561,13 @@ const PAGE = `<!doctype html>
     var s = await (await fetch('/api/state')).json();
     tog.checked = s.field;
     renderExtract(s);
-    if(s.store){ var sp = document.getElementById('storePath'); if(sp) sp.textContent = s.store; }
+    var live = s.store_live || s.store;
+    if(live){
+      ['storePath','dataPath'].forEach(function(id){
+        var el = document.getElementById(id);
+        if(el) el.textContent = live;
+      });
+    }
     firstRunMemories = typeof s.memories === 'number' ? s.memories : null;
     renderFirstRun();
     loadEmbedder();
@@ -917,8 +948,13 @@ const PAGE = `<!doctype html>
       var btn = c.installed ? '<button data-id="'+c.id+'" data-act="disconnect">Disconnect</button>'
         : (c.present ? '<button class="primary" data-id="'+c.id+'" data-act="connect">Connect</button>' : '');
       return '<div class="client"><div><div class="cname">'+c.name+'</div>'+status+'</div>'+btn+'</div>';
-    }).join('') + '<div class="hint" style="margin-bottom:4px">After connecting, restart that app once so it loads your memory.</div>';
+    }).join('') + '<div class="hint" style="margin-bottom:4px">After connecting, <b>restart that app once</b> so it loads your memory. Don\\u2019t see your app? Open the snippet below.</div>';
     firstRunConnected = list.some(function(c){ return c.installed; });
+    var other = document.getElementById('mcpOther');
+    // Auto-open only when Connect has nothing to click. Never force-close —
+    // a Connect click would otherwise collapse a snippet they just opened
+    // for Cursor/Hermes.
+    if(other && !list.some(function(c){ return c.present; })) other.open = true;
     renderFirstRun();
     el.querySelectorAll('button').forEach(function(b){
       b.addEventListener('click', async function(){
@@ -929,6 +965,26 @@ const PAGE = `<!doctype html>
       });
     });
   }
+
+  (function setupMcpSnippet(){
+    var sn = MCP_SNIPPET || {};
+    var pre = document.getElementById('mcpJson');
+    if(pre) pre.textContent = sn.json || '';
+    var cli = document.getElementById('mcpClaudeCli');
+    if(cli) cli.textContent = sn.claudeCli || '';
+    var btn = document.getElementById('mcpCopy'), msg = document.getElementById('mcpCopyMsg');
+    if(btn){
+      btn.addEventListener('click', async function(){
+        try {
+          await navigator.clipboard.writeText(sn.json || '');
+          if(msg) msg.textContent = 'copied \\u2014 paste into your app\\u2019s MCP config';
+        } catch(e){
+          if(msg) msg.textContent = 'copy failed \\u2014 select the JSON above';
+        }
+        setTimeout(function(){ if(msg) msg.textContent=''; }, 4000);
+      });
+    }
+  })();
 
   demoBtn.addEventListener('click', function(){
     showDemo = !showDemo;
@@ -1435,6 +1491,7 @@ const server = http.createServer((req, res) => {
     extract.probeChatCapability({ modelsUrl: extract.modelsUrl(EMBED_URL) }).then(async (probe) => {
       const memories = await memCount();
       res.writeHead(200, { "Content-Type": "application/json" });
+      const loc = liveStoreFile(STORE_PATH, readConfig());
       res.end(JSON.stringify({
         field: fieldOn(),
         extract_llm: extractOn(),
@@ -1442,13 +1499,17 @@ const server = http.createServer((req, res) => {
         extract_model: probe.model,
         memories,
         store: STORE_PATH,
+        store_live: loc.live,
+        store_backend: loc.backend,
       }));
     }).catch(async () => {
       const memories = await memCount();
+      const loc = liveStoreFile(STORE_PATH, readConfig());
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({
         field: fieldOn(), extract_llm: extractOn(), extract_capable: false,
         extract_model: null, memories, store: STORE_PATH,
+        store_live: loc.live, store_backend: loc.backend,
       }));
     });
     return;

@@ -268,9 +268,14 @@ their OS:
    meaning.
 2. Launch the binary (Gatekeeper / SmartScreen / `chmod +x` as above).
    A page opens at `http://127.0.0.1:9090/`.
-3. Click **Connect** next to LM Studio or Claude Desktop.
+3. Click **Connect** next to LM Studio or Claude Desktop. Other MCP
+   clients (Claude Code, Cursor, Continue, Hermes) paste the JSON
+   snippet on that page into their config — we do not guess their
+   config file.
 4. Restart that app once.
 
+Memories live at `~/.lmstudio/resonance-memory.db` (SQLite default;
+the folder is named for LM Studio even if they don't use it — `BUG-004`).
 `--mcp` is what the AI client launches. `--export` / `--import` carry
 the store between machines.
 

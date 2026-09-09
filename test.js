@@ -627,8 +627,9 @@ test("recall backfill of a vectorless row does NOT increment embedding_version",
 section("SqliteStore (RM-07 drop-in) + Store conformance");
 
 const {
-  SqliteStore, openStore, resolveStoreBackend, sqlitePathFor,
+  SqliteStore, openStore, resolveStoreBackend, sqlitePathFor, liveStoreFile,
 } = require("./store.js");
+const install = require("./install.js");
 
 function sqliteAvailable() {
   try { require("node:sqlite"); return true; } catch { return false; }
@@ -3728,6 +3729,8 @@ test("release notes: unsigned + Gatekeeper/SmartScreen; rc banner on prerelease"
   assert.ok(/#readme/.test(stable), "notes link the README walkthrough (a downloader may never find it on the repo page)");
   assert.ok(/remembers?\b.*\byou|memory that survives|lasting, private memory/i.test(stable), "notes actually say what RM is, not just how to run it");
   assert.ok(/do \*\*not\*\* need to install Node prior to download/.test(stable), "Node wording is the requested phrasing");
+  assert.ok(/Claude Code/.test(stable) && /Hermes/.test(stable), "release notes name the other-MCP paste path");
+  assert.ok(/resonance-memory\.db/.test(stable), "release notes say where the data lives");
   const rc = releaseMeta.releaseNotes({ tag: "v0.2.0-rc1", pkgVersion: "0.2.0" });
   assert.ok(/pre-release/i.test(rc));
   assert.ok(rc.includes("v0.2.0-rc1"));
@@ -4017,6 +4020,96 @@ test("panel page source ships first-run empty-store copy (RM-20)", () => {
   assert.ok(src.includes("Copy a starter prompt"), "seed-prompt button");
   assert.ok(src.includes("Connected, but nothing saved yet"), "connected-but-empty hint");
   assert.ok(/remember that/i.test(src), "tells the user the phrase that triggers a save");
+});
+
+test("panel page source ships MCP snippet + live store path (RM-20 polish)", () => {
+  const src = fs.readFileSync(path.join(__dirname, "panel.js"), "utf8");
+  assert.ok(src.includes("mcpSnippet"), "bakes install.mcpSnippet into the page");
+  assert.ok(src.includes("Copy JSON"), "copy-paste control for other MCP clients");
+  assert.ok(/Claude Code/.test(src) && /Hermes/.test(src), "names the clients Connect does not one-click");
+  assert.ok(/mcp_servers/.test(src), "Hermes YAML key is named so they do not paste JSON into YAML");
+  assert.ok(src.includes('id="dataPath"'), "live store path is on Your memories, not only in uninstall copy");
+  assert.ok(src.includes("store_live"), "/api/state reports the live file");
+  assert.ok(/Export is the backup/.test(src), "backup path is named next to the file");
+});
+
+test("mcpSnippet is the same launch Connect writes, and is MCP not the panel", () => {
+  const launch = install.selfLaunch();
+  const sn = install.mcpSnippet();
+  assert.strictEqual(sn.command, launch.command);
+  assert.deepStrictEqual(sn.args, launch.args);
+  const parsed = JSON.parse(sn.json);
+  const entry = parsed.mcpServers["resonance-memory"];
+  assert.ok(entry, "JSON is a mergeable mcpServers fragment");
+  assert.strictEqual(entry.command, launch.command);
+  assert.deepStrictEqual(entry.args, launch.args);
+  // Failure: a stranger pastes a snippet that launches the exe with no --mcp
+  // and gets the control panel instead of the four verbs.
+  assert.ok(
+    entry.args.includes("--mcp") || /server\.js$/i.test(entry.args[0] || ""),
+    "snippet must launch the MCP server, not the panel"
+  );
+  const sea = install.mcpSnippet({ command: "C:\\\\fake\\\\resonance-memory.exe", args: ["--mcp"] });
+  assert.ok(JSON.parse(sea.json).mcpServers["resonance-memory"].args.includes("--mcp"),
+    "an exe snippet without --mcp would open the panel");
+  assert.ok(/claude mcp add --scope user/.test(sn.claudeCli), "Claude Code CLI is user-scope, not a per-project surprise");
+  assert.ok(/^mcp_servers:/m.test(sn.hermesYaml), "Hermes is YAML under mcp_servers");
+  assert.ok(!/"mcpServers"/.test(sn.hermesYaml), "Hermes YAML must not use the JSON key");
+});
+
+test("install writes selfLaunch, preserves other servers, leaves .bak", () => {
+  const dir = tmp("install-" + Math.random().toString(36).slice(2));
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, "mcp.json");
+  fs.writeFileSync(file, JSON.stringify({ mcpServers: { other: { command: "keep-me" } } }, null, 2));
+  const prev = process.env.RESONANCE_MEMORY_CONFIGS_JSON;
+  process.env.RESONANCE_MEMORY_CONFIGS_JSON = JSON.stringify([{ id: "t", name: "T", file }]);
+  try {
+    const r = install.install("t");
+    assert.ok(r.ok, r.message || "install should succeed when the client file exists");
+    const cfg = JSON.parse(fs.readFileSync(file, "utf8"));
+    assert.strictEqual(cfg.mcpServers.other.command, "keep-me", "other servers stay");
+    assert.deepStrictEqual(cfg.mcpServers["resonance-memory"], install.selfLaunch());
+    assert.ok(fs.existsSync(file + ".bak"), "leaves a .bak");
+    const bak = JSON.parse(fs.readFileSync(file + ".bak", "utf8"));
+    assert.strictEqual(bak.mcpServers.other.command, "keep-me");
+    assert.ok(!bak.mcpServers["resonance-memory"], "bak is pre-connect");
+  } finally {
+    if (prev === undefined) delete process.env.RESONANCE_MEMORY_CONFIGS_JSON;
+    else process.env.RESONANCE_MEMORY_CONFIGS_JSON = prev;
+  }
+});
+
+test("liveStoreFile names the .db a new sqlite user actually gets (not the jsonl stem)", () => {
+  const dir = tmp("live-store-" + Math.random().toString(36).slice(2));
+  fs.mkdirSync(dir, { recursive: true });
+  const jsonl = path.join(dir, "resonance-memory.jsonl");
+  const db = path.join(dir, "resonance-memory.db");
+  // New user, sqlite default, neither file exists yet.
+  const fresh = liveStoreFile(jsonl, { store: "sqlite" });
+  assert.strictEqual(fresh.backend, "sqlite");
+  assert.strictEqual(fresh.live, db, "new user is pointed at the .db, not a jsonl that will never appear");
+  assert.strictEqual(fresh.configured, jsonl);
+  fs.writeFileSync(db, "sqlite-placeholder");
+  assert.strictEqual(liveStoreFile(jsonl, { store: "sqlite" }).live, db, "existing .db wins");
+  fs.writeFileSync(jsonl, "{}\n");
+  assert.strictEqual(liveStoreFile(jsonl, { store: "jsonl" }).live, jsonl, "jsonl pin is honest");
+  fs.unlinkSync(db);
+  assert.strictEqual(liveStoreFile(jsonl, { store: "sqlite" }).live, jsonl, "leftover jsonl (fail-open / not-yet-migrated) is the live file");
+});
+
+test("README + READ ME FIRST put SmartScreen/Gatekeeper in the first-run path", () => {
+  const readme = fs.readFileSync(path.join(__dirname, "README.md"), "utf8");
+  const first = fs.readFileSync(path.join(__dirname, "READ ME FIRST.txt"), "utf8");
+  assert.ok(/More info/.test(readme) && /Run anyway/.test(readme), "README names the SmartScreen clicks");
+  assert.ok(/Right-click/.test(readme) && /Open Anyway/.test(readme), "README names the Gatekeeper clicks, not just BUILDING.md");
+  assert.ok(/resonance-memory\.db/.test(readme), "README names the live sqlite file");
+  assert.ok(/first thing worth doing/i.test(readme), "README still names the first chat action");
+  assert.ok(/Claude Code/.test(readme) && /Hermes/.test(readme), "README Connect step names the other-MCP path");
+  assert.ok(/More info/.test(first) && /Run anyway/.test(first), "READ ME FIRST prepares them for SmartScreen before double-click");
+  assert.ok(/resonance-memory\.db/.test(first), "READ ME FIRST names where the data lives");
+  const bat = fs.readFileSync(path.join(__dirname, "uninstall.bat"), "utf8");
+  assert.ok(/resonance-memory\.db/.test(bat), "uninstall.bat points at the sqlite default, not only the jsonl stem");
 });
 
 test("panel page source ships embedder selector + /api/embedder (not a browser test)", () => {

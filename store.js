@@ -188,6 +188,23 @@ function sqlitePathFor(file) {
   return s + ".db";
 }
 
+// Where the user's memories actually sit, for "where's my data?" (RM-20).
+// Filesystem only — must NOT call openStore() (that can auto-migrate).
+// Walk matches the default-switch intent: pin JSONL → the jsonl; else the
+// .db if it exists, else leftover jsonl (fail-open / not-yet-migrated),
+// else the .db path a new user will get on first save.
+function liveStoreFile(file, config) {
+  const configured = String(file || "");
+  const backend = resolveStoreBackend(config);
+  if (backend === "jsonl") {
+    return { configured, live: configured, backend: "jsonl" };
+  }
+  const dbPath = sqlitePathFor(configured);
+  try { if (configured && fs.existsSync(dbPath)) return { configured, live: dbPath, backend: "sqlite" }; } catch { /* */ }
+  try { if (configured && fs.existsSync(configured)) return { configured, live: configured, backend: "jsonl" }; } catch { /* */ }
+  return { configured, live: dbPath, backend: "sqlite" };
+}
+
 function jsonlHasContent(p) {
   try { return !!(p && fs.existsSync(p) && fs.statSync(p).size > 0); }
   catch { return false; }
@@ -282,7 +299,7 @@ async function openStore(file, opts) {
   return withEdges(new SqliteStore(dbPath, { readOnly }));
 }
 
-module.exports = { JsonlStore, openStore, resolveStoreBackend, sqlitePathFor };
+module.exports = { JsonlStore, openStore, resolveStoreBackend, sqlitePathFor, liveStoreFile };
 Object.defineProperty(module.exports, "SqliteStore", {
   enumerable: true,
   get() { return require("./store-sqlite.js").SqliteStore; },

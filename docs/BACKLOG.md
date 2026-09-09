@@ -539,7 +539,7 @@ instinct to the whole write path **and** to the writer of the learned signal.)*
 - [ ] Turns the 3D graph from a pretty object into a debugging instrument, and makes `RM-05`
       and `RM-09` tuning legible instead of magic.
 
-### `RM-20` — First-run quality · **S** · `in progress` — empty-store nudge + import-from-zip hole named
+### `RM-20` — First-run quality · **S** · `in progress` — empty-store + Connect snippet + unsigned first-run + data path
 - [x] The empty-store experience: what to say to your AI to seed it well.
       *(Panel card when `memories === 0`; "Copy a starter prompt" clipboard.
       README "first thing worth doing" under Get started.)*
@@ -547,6 +547,18 @@ instinct to the whole write path **and** to the writer of the learned signal.)*
       *(Same card retitles when any MCP client is installed and the store is empty.)*
 - [x] Panel import button (RM-17) — first-run card names "Import memories"
       for the "I have a zip from my old machine" hole.
+- [x] Connect path for clients we do not auto-wire (Claude Code / Cursor /
+      Continue / Hermes): copy-paste JSON snippet = the same `selfLaunch()`
+      Connect writes. One-click stays LM Studio + Claude Desktop. Hermes is
+      YAML under `mcp_servers` — named in the panel, not a second writer.
+- [x] Unsigned-binary first-run is in the 60-second path, not a footnote to
+      `BUILDING.md`: Windows **More info → Run anyway**; macOS right-click
+      **Open** / Privacy & Security **Open Anyway** / `xattr`. README,
+      `READ ME FIRST.txt`, Release notes. Signing itself remains `RM-11`.
+- [x] "Where's my data?" — panel **Your memories** row shows the live file
+      (`liveStoreFile`, the `.db` for a new user, not the configured `.jsonl`
+      stem). README + uninstall.bat name the default path. Folder-name wart
+      (`BUG-004`, `~/.lmstudio/`) is still RM-11.
 
 ---
 

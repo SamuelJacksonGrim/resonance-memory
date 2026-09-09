@@ -118,9 +118,10 @@ migration. Already noted under "Known limitations" in the changelog.
 
 First launch shows a scary OS warning. For a product whose core pitch is "trust this with your
 private memories," an "unknown publisher" dialog is a real adoption tax. The RM-11 release
-matrix now *ships* the unsigned binaries (plus Gatekeeper/SmartScreen guidance in the
-Release body and `docs/BUILDING.md`); it cannot silence the OS. Signing / notarization
-is the remainder of `RM-11`.
+matrix now *ships* the unsigned binaries. RM-20 put the click-path in the 60-second
+docs (README / `READ ME FIRST.txt` / Release notes: Windows **More info → Run anyway**,
+macOS right-click **Open** / `xattr`) so a stranger is not surprised; it still cannot
+silence the OS. Signing / notarization is the remainder of `RM-11`.
 
 ---
 
