@@ -80,7 +80,7 @@ Build `eval/` with seeded, offline, reproducible scoring.
 `server.js`), `test.js` (the test suite), and the fixes for `BUG-001` / `BUG-002` / `BUG-007`
 (the last one introduced *by* the `BUG-002` fix) — see [`BUGS.md`](BUGS.md).
 
-**Remaining for `RM-03`:** the *detection* logic that decides when to call `supersedePatches`.
+**`RM-03`:** detection shipped (v1 cue-gated + v2 silent-slot).
 
 Design: [`proposed/0002`](proposed/0002-temporal-supersession.md).
 
@@ -330,7 +330,7 @@ deletions, ever.
 
 ## Phase 3 — Scope and scale
 
-### `RM-07` — Store abstraction + SQLite backend · **L** · `todo`
+### `RM-07` — Store abstraction + SQLite backend · **L** · ✅ `done` — SQLite is the default (slice 4+5); FTS5 / `searchDense` later
 > **Update:** the *data-loss* half of this is **fixed** — writes are atomic and recall no
 > longer rewrites the store (`BUG-001`/`BUG-002` in [`BUGS.md`](BUGS.md)). What remains is the
 > *performance* half: `all()` still parses the whole store per call, and mutations still

@@ -37,7 +37,7 @@ That's the honest hard part of memory, and it's built in. (Some distinctions sti
 
 ## Get started (about 60 seconds)
 
-**Download the binary for your OS** from [Releases](https://github.com/SamuelJacksonGrim/resonance-memory/releases): `resonance-memory.exe` (Windows x64), `resonance-memory-linux-x64` (Linux), `resonance-memory-macos-arm64` (Apple Silicon). Node is baked in; you do not install Node. Checksums are in `SHA256SUMS`.
+**Build from source** with `node build-exe.js` (Node ≥ 22.5). That writes `dist/resonance-memory.exe` (Windows x64), `dist/resonance-memory-linux-x64` (Linux), or `dist/resonance-memory-macos-arm64` (Apple Silicon). Node is baked into the binary; you do not install Node to run it. Prebuilt binaries on [Releases](https://github.com/SamuelJacksonGrim/resonance-memory/releases) are pending.
 
 **The binary is unsigned** (code-signing certs cost money). The OS will warn. That is expected, not a virus.
 

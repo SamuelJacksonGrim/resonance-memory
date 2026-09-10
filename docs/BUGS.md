@@ -41,7 +41,7 @@ Same-directory placement is deliberate: `os.tmpdir()` is frequently a different 
 rename is still atomic without it. Failing the whole write because `fsync` is unsupported
 would be worse than the durability gap it closes.
 
-**Tests:** `test.js` → "durable writes" (6 tests), incl. a 5,000-record write verified
+**Tests:** `test.js` → "durable writes" (9 tests), incl. a 5,000-record write verified
 complete and parseable line-by-line.
 
 ---

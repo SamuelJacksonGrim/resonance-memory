@@ -1,7 +1,7 @@
 # Resonance Memory — developer notes
 
 An MCP memory server for local LLMs that a small model can't misuse. Pure Node standard
-library + built-in `fetch` (Node 18+), no SDK. Speaks MCP over stdio as line-delimited
+library + built-in `fetch` (Node ≥ 22.5), no SDK. Speaks MCP over stdio as line-delimited
 JSON-RPC 2.0. The graph/store is the **substrate**; the model only ever sees four verbs and
 an opaque `id`.
 
@@ -135,10 +135,11 @@ unaffected because the client pipes stdio. macOS gets a free ad-hoc
 Developer ID / notarization). Binaries ship unsigned; see BUILDING.md for the
 honest OS-warning path. Node ≥ 22.5 (`node:sqlite`).
 
-Shippable binaries for strangers come from GitHub Releases, built by
-`.github/workflows/release.yml` (native matrix, smoked on each runner).
-That is also how the macOS binary is made at all — this project has no
-Mac hardware. `macos-latest` is arm64; Intel macOS is not in the matrix.
+The release matrix (`.github/workflows/release.yml`) builds native
+binaries and would attach them to a GitHub Release; none are published
+yet. Until then, `node build-exe.js`. That is also how the macOS binary
+is made at all — this project has no Mac hardware. `macos-latest` is
+arm64; Intel macOS is not in the matrix.
 
 ## Design invariants (do not violate)
 
@@ -152,7 +153,7 @@ in the `resonance-memory-stack` repo. The load-bearing ones:
 - **The Hebbian layer is discovery, not ordering.** Co-activation expands the candidate set;
   it never reorders the primary cosine result.
 - **Embed once at save; server owns all metadata; a `Store` abstraction sits behind the verbs**
-  so the backend (JSONL now, SQLite later — see `docs/proposed/0005`) can be swapped without
+  so the backend (SQLite default, JSONL pin — see `docs/proposed/0005` / `0010`) can be swapped without
   changing the MCP API. The seam lives in `store.js`.
 - **Durable writes; no *unbounded* write on a read path (I5).** JSONL mutations go through
   `writeFileDurable()`; recall writes the AccessLog sidecar, never the JSONL file.

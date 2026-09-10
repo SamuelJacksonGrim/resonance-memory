@@ -121,7 +121,7 @@ Status only. Where each lives and how it works: `ARCHITECTURE.md`. What each sat
 | Bi-temporal validity + current-gating | `RM-04` | ✅ extended by Phase 7, not started by it |
 | Cue-gated + silent-slot supersession detection v2 | `RM-03` v2 | ✅ detection bar met; Phase 7.2 fusion still separate |
 | Offline deterministic eval + golden gate | `RM-00` | ✅ **this is Phase 2.5** — extend, don't rebuild |
-| Dependency-free test suite (61 after PRE-0) | — | Count in `CHANGELOG.md`; run it, don't cite it |
+| Dependency-free test suite | — | Run it (`npm test`); don't cite a count here |
 
 ---
 
@@ -211,7 +211,7 @@ Not substrate work; what makes it runnable by anyone. Scope + acceptance: `BACKL
 |---|---|---|
 | `RM-01` | Write-side extraction (heuristics first; local LLM optional, off by default, never blocks save) | ✅ 01.a+01.b+01.c (messy precision 0.26→1.00; messy-hard live Tier 2 A/B in RESULTS.md) |
 | `RM-02` | Near-duplicate detection + merge | ✅ 02.a+02.b+02.c (A/B + backfill: dup_rate 0.3182→0.0000, recall@5 held) |
-| `RM-07` | SQLite backend behind the Store seam (`node:sqlite` + BLOB/JS cosine; FTS5 later) | 🟡 slice 1+2a+2b+2c+3 shipped (selectable Store, `--migrate`, `--export` zip, panel export button, golden parity); default switch still open. [`proposed/0010`](proposed/0010-sqlite-backend.md) |
+| `RM-07` | SQLite backend behind the Store seam (`node:sqlite` + BLOB/JS cosine; FTS5 later) | 🟡 slice 1+2a+2b+2c+3+4+5 shipped (selectable Store, `--migrate`, `--export` zip, panel export button, golden parity, SQLite default, edges-in-db); FTS5 / `searchDense` still open. [`proposed/0010`](proposed/0010-sqlite-backend.md) |
 | `RM-11` | Cross-platform builds + signing | 🟡 unsigned per-OS SEA via GH Actions; signing still open |
 | `RM-12` | SDKs against a documented local HTTP API | ⬜ — W-02 Origin/CSRF lock shipped; SDKs + documented surface still open |
 | `RM-13` | Opt-in local-only telemetry + failure-report bundle | ⬜ |
@@ -293,14 +293,14 @@ Everything after Phase 1 is planned, not committed.
 Route-level only. The mechanism behind each lives in its owning doc (Phase 0 risks:
 [`phase-0`](phases/phase-0-edge-substrate.md)).
 
-1. **Save-time cost is measured** — Phase 0.1 scan p95 at N=100k is 77.1 ms vs. a pre-declared 250 ms budget. **`RM-07` is not forced by the neighbor scan**; it stays scheduled on JSONL-rewrite grounds. Table in [`phase-0`](phases/phase-0-edge-substrate.md).
+1. **Save-time cost is measured** — Phase 0.1 scan p95 at N=100k is 77.1 ms vs. a pre-declared 250 ms budget. **`RM-07` was not forced by the neighbor scan**; it was scheduled on JSONL-rewrite grounds (SQLite is now the default). Table in [`phase-0`](phases/phase-0-edge-substrate.md).
 2. **Two cosine thresholds serve different jobs** (recall gate 0.55 vs. save-time bind 0.25) — deliberate and documented, not accidental.
 3. **Consolidation (Phase 4) may not earn its place** — exit criterion is measurable retrieval gain; absent that, cut it.
 4. **Fusion may lose the Phase 2.2 gate** — valid and publishable; the flag stays off.
 5. **Edge inheritance across supersession is undecided** (Phase 7) — the quietest data-loss path.
 6. **Phases 5–8 have no eval design yet** — metrics before code.
 7. **Sidecar migration is one-way** — an old build reading a new sidecar must fail cleanly, not silently drop edges.
-8. **The sidecar now holds irreplaceable state** — semantic rebuilds, learned weight does not; `RM-17` backup rises in priority.
+8. **The sidecar now holds irreplaceable state** — semantic rebuilds, learned weight does not; `RM-17` backup shipped.
 
 ---
 
