@@ -85,8 +85,9 @@ is built to answer cleanly.
   contract (whole-set joint derivation audit + machine-checkable audit object).
 - [`phases/h6-result.md`](../phases/h6-result.md) — **the H6 result**: `Related:` is behaviorally
   load-bearing for stock qwen3.6; authority is ambiguous; the hijack magnitude is confounded.
-- [`phases/s2v2-prereg-draft.md`](../phases/s2v2-prereg-draft.md) — the S2v2 draft: matched-phrasing
-  + counterbalancing to measure channel-authority without the salience confound.
+- [`phases/s2v2-prereg.md`](../phases/s2v2-prereg.md) — the S2v2 pre-registration (**LOCKED**
+  2026-09-10): matched-phrasing + α/β counterbalancing + the pair-class 2×2 to measure
+  channel preference without the salience confound.
 
 ## Reproducing
 
