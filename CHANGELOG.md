@@ -9,6 +9,18 @@ stable; sophistication grows in the substrate, not in the API.
 ## [Unreleased]
 
 ### Added
+- **H4 exploratory: leftover activation → Related: (`RESONANCE_WARM_RELATED`, default off).**
+  Cross-turn residual spread-activation may expand the `Related:` appendix
+  (persist-net 1-hop to this-turn seeds, spread-only, cap 4). Primary stays
+  cosine (I3/I9). Flag-off is byte-identical. **Measured no** on the
+  pre-registered bar: leftover∩persist-net is a hub dump, not H1a
+  association; typed-constraint `Related:` already had the apex (kNN
+  duplicate). Report: `h4-related-discovery.md`. Campaign:
+  `node eval/h4-related-run.js`. Metric: `warm_related_discovery`
+  (new-vs-duplicate, unrelated target-lift, hub share of new). Corpus:
+  `eval/corpora/h4-related.jsonl` (non-constraint stars + held-out chain).
+  `eval/measure.js` now recalls at product k=5 when scoring `Related:`
+  (k=N had been suppressing the appendix).
 - **Activation test pool (cross-turn / weak-recall / hub-vs-apex).** The
   one-query-per-store A/B could not test leftover warmth — the thing
   activation is for. Three measurement corpora (`eval/corpora/cross-turn.jsonl`,

@@ -190,4 +190,64 @@ function reachableConstraints(records, seedIds, opts = {}) {
   return out.slice(0, max);
 }
 
-module.exports = { cosine, buildEdges, neighborhood, reachableConstraints };
+/*
+ * H4: leftover spreading-activation as a Related: DISCOVERY candidate.
+ *
+ * Cold Related: is this-turn cosine seeds → kNN (minSim 0.70) + typed
+ * constraint rescue (gate 0.45). A leftover-activated node is allowed
+ * to join that list only when ALL of:
+ *
+ *   1. residual E ≥ floor (default = WarmField floor 0.05)
+ *   2. not already in primary / cold Related: (`exclude`)
+ *   3. spread-activated, not a retrieval seed (`similarity == null`)
+ *      — that is H1a (associative leftover on a leaf). H1b direct
+ *      leftover keeps the retrieval `similarity` and is recency of
+ *      the last hit; this function refuses to launder it into
+ *      Related:. Sensitivity can pass spreadOnly:false.
+ *   4. persist-net 1-hop to a THIS-TURN cosine seed (query-tied).
+ *      Pure leftover dump (warm the cat → cat facts on a potluck
+ *      query) has no persist-net neighbor in the seed pool, so it
+ *      dies here. That is the clause-3 cheat detector.
+ *
+ * Persist-net (save-time ≥ 0.25), not field kNN 0.70: requiring the
+ * Related: graph would make every "win" a kNN duplicate, which is
+ * the load-bearing falsifier. `sim` on the returned row is leftover
+ * E, not cosine — callers must not re-sort the merged Related: list
+ * by this number as if it were neighborhood cosine.
+ *
+ * Discovery only. Never called on the primary path (I3 / I9).
+ */
+function warmRelatedCandidates(opts) {
+  opts = opts || {};
+  const leftover = opts.leftover || [];
+  const adj = opts.persistAdj;
+  const seeds = new Set((opts.seedIds || []).map(String));
+  const exclude = new Set((opts.exclude || []).map(String));
+  const floor = opts.floor != null ? Number(opts.floor) : 0.05;
+  const max = opts.max != null ? Number(opts.max) : 4;
+  const spreadOnly = opts.spreadOnly !== false;
+  const conflict = typeof opts.conflict === "function" ? opts.conflict : () => false;
+  if (!adj || !seeds.size || !(max > 0)) return [];
+  const out = [];
+  for (const n of leftover) {
+    if (!n) continue;
+    const id = String(n.id);
+    const e = Number(n.activation);
+    if (!Number.isFinite(e) || e < floor) continue;
+    if (exclude.has(id)) continue;
+    if (spreadOnly && n.similarity != null) continue;
+    if (conflict(id)) continue;
+    const nbrs = adj.get(id) || adj.get(Number(id)) || [];
+    let via = null;
+    for (const x of nbrs) {
+      if (!x) continue;
+      if (seeds.has(String(x.id))) { via = x; break; }
+    }
+    if (!via) continue;
+    out.push({ id, sim: e, via: via.id, source: "warm" });
+  }
+  out.sort((a, b) => (b.sim - a.sim) || String(a.id).localeCompare(String(b.id)));
+  return out.slice(0, max);
+}
+
+module.exports = { cosine, buildEdges, neighborhood, reachableConstraints, warmRelatedCandidates };

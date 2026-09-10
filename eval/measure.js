@@ -28,6 +28,8 @@
  *   node eval/measure.js --include-gate         also score golden corpora via expect.contains
  *   node eval/measure.js --corpus cross-turn --warm-rank
  *                                           leftover-warmth pool (carryover_lift)
+ *   node eval/measure.js --corpus h4-related --field --warm-related
+ *                                           H4 leftover → Related: (warm_related_discovery)
  *
  * Reuses `pipeline.js` → `memory-core.js`. Does not write golden.json, does
  * not change product behaviour. Measurement corpora (`kind: "duplicates"` /
@@ -130,6 +132,9 @@ function loadScenarios(file) {
         apex_writes: c.apex_writes || null,
         bridge_writes: c.bridge_writes || null,
         hub_writes: c.hub_writes || null,
+        held_out: !!c.held_out,
+        shape: c.shape || null,
+        intrusion_writes: c.intrusion_writes || null,
         stale_values: Array.isArray(c.stale_values) ? c.stale_values : [],
         current_values: Array.isArray(c.current_values) ? c.current_values : [],
         keep_values: Array.isArray(c.keep_values) ? c.keep_values : [],
@@ -338,6 +343,24 @@ function resolveHubIds(q, records, saveLog, scenario) {
   return [...new Set(fromWrites.concat(fromTexts, fromRole))];
 }
 
+function resolveIntrusionIds(q, records, saveLog, scenario) {
+  if (Array.isArray(q.intrusion_ids) && q.intrusion_ids.length) return q.intrusion_ids.map(String);
+  return storedIdsForWriteLabels(
+    [].concat(q.intrusion_writes || [], (scenario && scenario.intrusion_writes) || []),
+    saveLog
+  );
+}
+
+function cosineFullRank(queryVec, records) {
+  return (records || [])
+    .map((m) => ({
+      id: String(m.id),
+      text: m.text,
+      s: cosine(queryVec, m.embedding),
+    }))
+    .sort((a, b) => (b.s - a.s) || String(a.id).localeCompare(String(b.id)));
+}
+
 function labeledPairWrites(scenario) {
   const writes = (scenario && scenario.writes) || [];
   const apex = Array.isArray(scenario.apex_writes) && scenario.apex_writes.length
@@ -401,7 +424,11 @@ async function pairwiseCosines(groups) {
 
 async function runScenario(scenario, opts) {
   const k = opts && opts.k != null ? Number(opts.k) : 5;
-  const fieldEnabled = !!(opts && opts.fieldEnabled);
+  const warmRelated = !!(opts && opts.warmRelated);
+  const warmRelatedFloor = opts && opts.warmRelatedFloor;
+  // Related: is the H4 surface. --warm-related implies field so a
+  // forgotten --field cannot silently measure a dark appendix.
+  const fieldEnabled = !!(opts && opts.fieldEnabled) || warmRelated;
   const extractEnabled = !!(opts && opts.extractEnabled);
   const warmRank = !!(opts && opts.warmRank);
   const warmRankWeight = opts && opts.warmRankWeight;
@@ -414,7 +441,7 @@ async function runScenario(scenario, opts) {
     extractCapable: opts && opts.extractCapable,
     extract: opts && opts.extract,
     extractTimeoutMs: opts && opts.extractTimeoutMs,
-    warmRank, warmRankWeight, warmRankShape, warmRankRrfK,
+    warmRank, warmRankWeight, warmRankShape, warmRankRrfK, warmRelated, warmRelatedFloor,
   });
 
   const writes = (scenario.writes || []).map((w) => (typeof w === "string" ? { text: w } : w));
@@ -453,20 +480,41 @@ async function runScenario(scenario, opts) {
     scenario.kind === "cross_turn" || scenario.kind === "weak_recall" ||
     scenario.kind === "hub_vs_apex";
   const kFull = needsFullRank ? Math.max(k, records.length || 0) : k;
+  // Product Related: only exists when k < N (memory-core skips the
+  // appendix when everything is already "returned"). Rank A/B still
+  // uses k=N for fused lists; H4 / field-on Related: uses product k
+  // and fills full cosine rank from stored embeddings (warmRank off
+  // ⇒ fused == cosine, so carryover_lift is unchanged).
+  const useProductRelated = fieldEnabled && !warmRank;
+  const kRecall = useProductRelated ? k : kFull;
 
   let edgeStore = null;
   try { edgeStore = openEdgeStore({ store, file: file + ".edges.json" }); } catch { edgeStore = null; }
   const bind_pairs = inspectBindPairs(edgeStore, saveLog, scenario);
 
-  function makeMem() {
-    return createMemory({
+  function makeMem(extra) {
+    return createMemory(Object.assign({
       store, embed, fieldEnabled, edgesPath: file + ".edges.json",
       extractEnabled,
       extractCapable: opts && opts.extractCapable,
       extract: opts && opts.extract,
       extractTimeoutMs: opts && opts.extractTimeoutMs,
-      warmRank, warmRankWeight,
-    });
+      warmRank, warmRankWeight, warmRelated, warmRelatedFloor,
+    }, extra || {}));
+  }
+
+  async function recallProduct(mem, query) {
+    const hit = await recallRanked(mem, query, kRecall);
+    if (useProductRelated && needsFullRank) {
+      const qv = (await embed([query]))[0];
+      const full = cosineFullRank(qv, records);
+      hit.full_ranked_ids = full.map((x) => x.id);
+      hit.full_ranked_texts = full.map((x) => x.text);
+    } else {
+      hit.full_ranked_ids = hit.ranked_ids;
+      hit.full_ranked_texts = hit.ranked_texts;
+    }
+    return hit;
   }
 
   function packQuery(q, hit, extras) {
@@ -498,6 +546,10 @@ async function runScenario(scenario, opts) {
         extractMatch: scenario.extract_match,
       }),
       hub_ids: resolveHubIds(q, records, saveLog, scenario),
+      intrusion_ids: resolveIntrusionIds(q, records, saveLog, scenario),
+      subset: q.subset || scenario.subset || null,
+      held_out: !!(q.held_out || scenario.held_out),
+      shape: q.shape || scenario.shape || null,
       relevant_groups: q.relevant_groups || null,
       relevant_writes: q.relevant_writes || null,
       relevant_facts: q.relevant_facts || null,
@@ -515,32 +567,51 @@ async function runScenario(scenario, opts) {
     // Paired run: one core sees only the probe (this-turn activation),
     // another core runs warm turns then the probe (leftover + this-turn).
     // Do not reuse `mem` — save() may have touched its WarmField.
-    const coldMem = makeMem();
-    const warmMem = makeMem();
+    //
+    // H10: a field-on warm turn would also accrue Hebbian on the
+    // retrieved pair, which can lift Related: independently of leftover
+    // activation. Seed the WarmField with field OFF (silent hook still
+    // seeds/spreads); probe with field on. Same leftover Map.
+    const { WarmField } = require("../warm.js");
+    const leftoverW = new WarmField();
+    const seedMem = makeMem({
+      fieldEnabled: false, warmRelated: false, getWarm: () => leftoverW,
+    });
+    const coldMem = makeMem({ getWarm: () => new WarmField() });
+    const warmMem = makeMem({ getWarm: () => leftoverW });
     const warmTurns = scenarioQueries.filter((q) => q.role === "warm" || q.query_kind === "warm");
     const probes = scenarioQueries.filter((q) => q.role !== "warm" && q.query_kind !== "warm");
     for (const q of warmTurns) {
-      const hit = await recallRanked(warmMem, q.query, kFull);
+      const hit = await recallProduct(seedMem, q.query);
       queries.push(packQuery(q, hit, { score: false }));
     }
     for (const q of probes) {
-      const cold = await recallRanked(coldMem, q.query, kFull);
-      const warm = await recallRanked(warmMem, q.query, kFull);
+      const cold = await recallProduct(coldMem, q.query);
+      const warm = await recallProduct(warmMem, q.query);
       queries.push(packQuery(q, warm, {
-        cold_ranked_ids: cold.ranked_ids,
-        cold_ranked_texts: cold.ranked_texts,
+        cold_ranked_ids: cold.full_ranked_ids,
+        cold_ranked_texts: cold.full_ranked_texts,
+        cold_related_ids: cold.related_ids || [],
+        cold_related_texts: cold.related_texts || [],
         cold_output: cold.output,
-        warm_ranked_ids: warm.ranked_ids,
-        warm_ranked_texts: warm.ranked_texts,
-        ranked_ids: warm.ranked_ids,
-        ranked_texts: warm.ranked_texts,
+        warm_ranked_ids: warm.full_ranked_ids,
+        warm_ranked_texts: warm.full_ranked_texts,
+        warm_related_ids: warm.related_ids || [],
+        warm_related_texts: warm.related_texts || [],
+        ranked_ids: warm.full_ranked_ids,
+        ranked_texts: warm.full_ranked_texts,
+        related_ids: warm.related_ids || [],
+        related_texts: warm.related_texts || [],
         output: warm.output,
       }));
     }
   } else {
     for (const q of scenarioQueries) {
-      const hit = await recallRanked(mem, q.query, kFull);
-      queries.push(packQuery(q, hit));
+      const hit = await recallProduct(mem, q.query);
+      queries.push(packQuery(q, Object.assign({}, hit, {
+        ranked_ids: hit.full_ranked_ids,
+        ranked_texts: hit.full_ranked_texts,
+      })));
     }
   }
   const recallExplain = explainMetric("recall_at_k", { queries }, scenario, { k });
@@ -557,6 +628,7 @@ async function runScenario(scenario, opts) {
   const hubExplain = explainMetric("rank_hub_contamination", { queries }, scenario, { k });
   const bindExplain = explainMetric("graph_bind_rate", { bind_pairs }, scenario);
   const relatedExplain = explainMetric("related_rescue_rate", { queries }, scenario, { k });
+  const warmRelExplain = explainMetric("warm_related_discovery", { queries }, scenario, { k });
 
   const exactCaught = saveLog.filter((s) => /already remembered/i.test(s.msg || "")).length;
 
@@ -575,6 +647,7 @@ async function runScenario(scenario, opts) {
     rank_hub_contamination: hubExplain.rate,
     graph_bind_rate: bindExplain.rate,
     related_rescue_rate: relatedExplain.rate,
+    warm_related_discovery: warmRelExplain.rate,
   };
   if (extractExplain.n_labeled) {
     metrics.extraction_precision = extractExplain.rate;
@@ -587,7 +660,9 @@ async function runScenario(scenario, opts) {
     kind: scenario.kind || null,
     band: scenario.band || null,
     subset: scenario.subset || null,
-    k, field: fieldEnabled, warm_rank: warmRank,
+    held_out: !!scenario.held_out,
+    shape: scenario.shape || null,
+    k, field: fieldEnabled, warm_rank: warmRank, warm_related: warmRelated,
     n_writes: writes.length,
     n_stored_current: records.length,
     n_groups: Object.keys(groups).length,
@@ -602,6 +677,7 @@ async function runScenario(scenario, opts) {
     rank_hub_contamination: hubExplain,
     graph_bind_rate: bindExplain,
     related_rescue_rate: relatedExplain,
+    warm_related_discovery: warmRelExplain,
     extraction_precision: extractExplain.n_labeled ? extractExplain : null,
     extraction_recall: extractExplain.n_labeled ? extractRecallExplain : null,
     bind_pairs,
@@ -717,6 +793,14 @@ function printHuman(reports, { k }) {
         "   (" + rel.n_rescued + "/" + rel.n +
         " Related:-only; primary=" + rel.n_primary + ")");
     }
+    if (r.warm_related_discovery && r.warm_related_discovery.n) {
+      const w = r.warm_related_discovery;
+      console.log("  warm_related     " + fmtRate(w.rate) +
+        "   (disc=" + w.n_discovery + "/" + w.n_cold_miss +
+        " cold-miss; new-vs-dup=" + fmtRate(w.new_vs_dup) +
+        " intrusion=" + fmtRate(w.intrusion_rate) +
+        " hub_share_new=" + fmtRate(w.hub_share_of_new) + ")");
+    }
     if (r.extraction_precision) {
       const e = r.extraction_precision;
       console.log("  extraction_precision " + e.rate.toFixed(4) +
@@ -784,7 +868,10 @@ async function main(argv) {
   const json = args.includes("--json");
   const bands = args.includes("--bands");
   const fieldEnabled = args.includes("--field");
+  const warmRelated = args.includes("--warm-related");
   const warmRank = args.includes("--warm-rank");
+  const wri = args.indexOf("--warm-related-floor");
+  const warmRelatedFloor = wri >= 0 ? Number(args[wri + 1]) : undefined;
   const includeGate = args.includes("--include-gate");
   const wantExtract = args.includes("--extract");
   const wi = args.indexOf("--warm-rank-weight");
@@ -833,7 +920,7 @@ async function main(argv) {
   const reports = [];
   for (const s of scenarios) {
     reports.push(await runScenario(s, {
-      k, fieldEnabled, bands, warmRank, warmRankWeight, warmRankShape, warmRankRrfK,
+      k, fieldEnabled, bands, warmRank, warmRankWeight, warmRankShape, warmRankRrfK, warmRelated, warmRelatedFloor,
       extractEnabled, extract: extractFn, extractTimeoutMs,
     }));
   }
@@ -841,7 +928,7 @@ async function main(argv) {
   if (json) {
     console.log(JSON.stringify({
       generated: new Date().toISOString(),
-      k, field: fieldEnabled, warm_rank: warmRank,
+      k, field: fieldEnabled, warm_rank: warmRank, warm_related: warmRelated,
       metrics: listMetrics().map((m) => ({ name: m.name, description: m.description })),
       contradictions: poolContradiction(reports),
       scenarios: reports.map((r) => ({
@@ -862,6 +949,7 @@ async function main(argv) {
         rank_hub_contamination: r.rank_hub_contamination,
         graph_bind_rate: r.graph_bind_rate,
         related_rescue_rate: r.related_rescue_rate,
+        warm_related_discovery: r.warm_related_discovery,
         extraction_precision: r.extraction_precision,
         extraction_recall: r.extraction_recall,
         bind_pairs: r.bind_pairs,

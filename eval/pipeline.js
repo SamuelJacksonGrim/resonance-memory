@@ -36,6 +36,7 @@ function createMemory({
   warmEnabled,
   saveTimeK, saveTimeMinCos,
   recallBind = false, recallBindK, recallBindMinCos,
+  warmRelated = false, warmRelatedFloor, getWarm,
 }) {
   // Lazy EdgeStore, exactly as server.js does it, so a field-off run never touches disk.
   // Persistence follows the injected Store (RM-07 slice 5): SqliteStore shares
@@ -60,7 +61,10 @@ function createMemory({
     // RESONANCE_WARM_RANK from the process env — a leftover user flag
     // must not move the golden.
     warmEnabled: warmEnabled == null ? undefined : () => !!warmEnabled,
+    getWarm: typeof getWarm === "function" ? getWarm : undefined,
     warmRank: () => !!warmRank,
+    warmRelated: () => !!warmRelated,
+    warmRelatedFloor: warmRelatedFloor != null ? () => Number(warmRelatedFloor) : undefined,
     warmRankWeight: warmRankWeight != null ? () => Number(warmRankWeight) : undefined,
     warmRankSeedK: warmRankSeedK != null ? () => Number(warmRankSeedK) : undefined,
     warmRankShape: warmRankShape != null ? () => String(warmRankShape) : undefined,

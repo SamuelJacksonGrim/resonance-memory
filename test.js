@@ -863,7 +863,7 @@ test("conformance: add/get/current/active/updateMany/vacuum match JsonlStore", (
 // ------------------------------------------------- associative field topology
 section("associative field: reciprocal kNN (RM-00)");
 
-const { buildEdges, reachableConstraints } = require("./field.js");
+const { buildEdges, reachableConstraints, warmRelatedCandidates } = require("./field.js");
 const entity = require("./entity.js");
 const invoke = require("./embed-invoke.js");
 
@@ -1052,6 +1052,72 @@ test("reachableConstraints: the gate governs whether a bridge counts", () => {
   assert.deepStrictEqual(reachableConstraints([C, D], ["D"], { gate: 0.55, exclude: [] }), []);
   // Drop the gate to 0.35 and the same link now rescues C (the stage-2 mechanic).
   assert.deepStrictEqual(ids(reachableConstraints([C, D], ["D"], { gate: 0.35, exclude: [] })), ["C"]);
+});
+
+test("warmRelatedCandidates: spread leftover 1-hop from a seed is a discovery", () => {
+  const adj = new Map([
+    ["leaf", [{ id: "bridge", sim: 0.4 }]],
+    ["bridge", [{ id: "leaf", sim: 0.4 }]],
+  ]);
+  const out = warmRelatedCandidates({
+    leftover: [{ id: "leaf", activation: 0.2, similarity: null }],
+    persistAdj: adj,
+    seedIds: ["bridge"],
+    exclude: ["bridge"],
+    floor: 0.05,
+  });
+  assert.strictEqual(out.length, 1);
+  assert.strictEqual(out[0].id, "leaf");
+  assert.strictEqual(out[0].source, "warm");
+  assert.strictEqual(out[0].via, "bridge");
+});
+
+test("warmRelatedCandidates: retrieval leftover (H1b similarity set) is refused", () => {
+  const adj = new Map([["leaf", [{ id: "bridge", sim: 0.4 }]]]);
+  const out = warmRelatedCandidates({
+    leftover: [{ id: "leaf", activation: 0.9, similarity: 0.88 }],
+    persistAdj: adj,
+    seedIds: ["bridge"],
+    exclude: [],
+    floor: 0.05,
+  });
+  assert.deepStrictEqual(out, []);
+});
+
+test("warmRelatedCandidates: leftover with no persist-net to this-turn seeds is refused", () => {
+  const adj = new Map([
+    ["cat", [{ id: "apartment", sim: 0.5 }]],
+    ["leaf", [{ id: "bridge", sim: 0.4 }]],
+  ]);
+  const out = warmRelatedCandidates({
+    leftover: [
+      { id: "cat", activation: 0.8, similarity: null },
+      { id: "leaf", activation: 0.2, similarity: null },
+    ],
+    persistAdj: adj,
+    seedIds: ["potluck"],
+    exclude: [],
+    floor: 0.05,
+  });
+  assert.deepStrictEqual(out, []);
+});
+
+test("warmRelatedCandidates: already-returned / below-floor / conflict are dropped", () => {
+  const adj = new Map([["leaf", [{ id: "bridge", sim: 0.4 }]]]);
+  assert.deepStrictEqual(warmRelatedCandidates({
+    leftover: [{ id: "leaf", activation: 0.2, similarity: null }],
+    persistAdj: adj, seedIds: ["bridge"], exclude: ["leaf"],
+  }), []);
+  assert.deepStrictEqual(warmRelatedCandidates({
+    leftover: [{ id: "leaf", activation: 0.01, similarity: null }],
+    persistAdj: adj, seedIds: ["bridge"], exclude: [],
+    floor: 0.05,
+  }), []);
+  assert.deepStrictEqual(warmRelatedCandidates({
+    leftover: [{ id: "leaf", activation: 0.2, similarity: null }],
+    persistAdj: adj, seedIds: ["bridge"], exclude: [],
+    conflict: () => true,
+  }), []);
 });
 
 // ------------------------------------------------- Phase 0 contract (RM-21)
@@ -2963,6 +3029,7 @@ test("0011 §7.3 metric names are registered; dream-only ones are NA on an empty
     "hub_contamination", "provenance_integrity", "grimoire_hit_rate", "grimoire_crowding",
     "cofire_rate", "near_miss_cofire", "duplicate_rate", "recall_at_k", "mrr",
     "carryover_lift", "rank_hub_contamination", "graph_bind_rate", "related_rescue_rate",
+    "warm_related_discovery",
   ]) {
     assert.ok(names.includes(n), "missing metric " + n);
   }
@@ -2981,6 +3048,7 @@ test("0011 §7.3 metric names are registered; dream-only ones are NA on an empty
   assert.strictEqual(computeMetric("rank_hub_contamination", empty, null), null);
   assert.strictEqual(computeMetric("graph_bind_rate", empty, null), null);
   assert.strictEqual(computeMetric("related_rescue_rate", empty, null), null);
+  assert.strictEqual(computeMetric("warm_related_discovery", empty, null), null);
 });
 
 test("recall_at_k skips score:false warm turns (cross-turn seed is not the probe)", () => {
@@ -3034,6 +3102,31 @@ test("graph_bind_rate is present/labeled apex-bridge pairs; NA without pairs", (
   assert.strictEqual(computeMetric("graph_bind_rate", results, null), 0.5);
   assert.strictEqual(explainMetric("graph_bind_rate", results, null).n_present, 1);
   assert.strictEqual(computeMetric("graph_bind_rate", {}, null), null);
+});
+
+test("warm_related_discovery scores new-vs-duplicate and ignores unpaired queries", () => {
+  const results = { queries: [
+    { id: "disc", relevant_ids: ["apex"], ranked_ids: ["hub", "x"],
+      cold_related_ids: ["chairs"], warm_related_ids: ["chairs", "apex"],
+      hub_ids: ["hub"], intrusion_ids: ["cat"] },
+    { id: "dup", relevant_ids: ["apex"], ranked_ids: ["hub"],
+      cold_related_ids: ["apex"], warm_related_ids: ["apex"],
+      hub_ids: ["hub"] },
+    { id: "intrude", relevant_ids: ["apex"], ranked_ids: ["hub"],
+      cold_related_ids: [], warm_related_ids: ["cat"],
+      hub_ids: ["hub"], intrusion_ids: ["cat"] },
+    { id: "unpaired", relevant_ids: ["apex"], ranked_ids: ["hub"], related_ids: ["apex"] },
+  ] };
+  const expl = explainMetric("warm_related_discovery", results, null, { k: 5 });
+  assert.strictEqual(expl.n, 3, "unpaired query is skipped");
+  assert.strictEqual(expl.n_cold_miss, 2, "disc + intrude; dup already in cold Related:");
+  assert.strictEqual(expl.n_discovery, 1);
+  assert.strictEqual(expl.n_duplicate_target, 1);
+  assert.strictEqual(expl.n_intrusion, 1);
+  assert.strictEqual(expl.rate, 0.5);
+  assert.strictEqual(expl.new_vs_dup, 0.5, "of Related:-only warm target-hits, half were new");
+  assert.ok(expl.hub_share_of_new != null);
+  assert.strictEqual(computeMetric("warm_related_discovery", { queries: [] }, null), null);
 });
 
 test("related_rescue_rate counts Related:-only apex, not primary hits", () => {
@@ -3104,6 +3197,33 @@ test("activation test-pool corpora load, are not golden, and have the three shap
     nHubLabeled++;
   }
   assert.ok(nHubLabeled >= 4);
+});
+
+test("h4-related corpus is measurement-only, has held-out + a second shape", () => {
+  const { loadScenarios } = require("./eval/measure.js");
+  const { isGoldenCase } = require("./eval/run.js");
+  const h4 = loadScenarios(path.join(__dirname, "eval", "corpora", "h4-related.jsonl"));
+  assert.ok(h4.length >= 8, "h4-related needs in-pool + held-out, got " + h4.length);
+  const ids = new Set();
+  let nHeld = 0, nStar = 0, nChain = 0, nUnrelated = 0, nDirect = 0;
+  for (const s of h4) {
+    assert.strictEqual(s.kind, "cross_turn");
+    assert.strictEqual(s.gate, false);
+    assert.ok(!isGoldenCase(Object.assign({}, s, { expect: { contains: ["x"] }, query: "q", gate: undefined })),
+      s.id + " must not be golden");
+    assert.ok(!ids.has(s.id), "dup " + s.id);
+    ids.add(s.id);
+    if (s.held_out) nHeld++;
+    if (s.shape === "star") nStar++;
+    if (s.shape === "chain") nChain++;
+    if (s.subset === "unrelated-control") nUnrelated++;
+    if (s.subset === "direct-leftover") nDirect++;
+    assert.ok(s.queries.some((q) => q.role === "warm"), s.id + " needs a warm turn");
+  }
+  assert.ok(nHeld >= 2, "pre-declared held-out slice");
+  assert.ok(nStar >= 4 && nChain >= 1, "star in-pool plus a chain second shape");
+  assert.ok(nUnrelated >= 1 && nDirect >= 1, "unrelated-control and H1b direct-leftover");
+  assert.ok(ids.has("h4-caffeine-assoc") && ids.has("h4-canal-chain"));
 });
 
 test("cluster_precision/recall Hungarian match at IoU ≥ 0.5", () => {
@@ -3683,6 +3803,17 @@ test("seedFromRetrieval does not wipe leftover warmth on disjoint ids", () => {
   assert.ok(Math.abs(W.get("apex") - leftover) < 1e-12, "disjoint seed must not dump leftover E");
   assert.strictEqual(W.similarity("apex"), null);
   assert.ok(W.get("hub") > 0);
+});
+
+test("leftoverEntries separates spread-activated from retrieval-seeded", () => {
+  const W = new WarmField({ hops: 1, halfLife: 1e9 });
+  W.seedFromRetrieval([{ id: "bridge", similarity: 0.9 }]);
+  W.spread(chainEdges([["bridge", "apex", 0.8]]));
+  const rows = W.leftoverEntries();
+  const byId = Object.fromEntries(rows.map((r) => [r.id, r]));
+  assert.ok(byId.bridge && byId.bridge.similarity === 0.9, "retrieval seed keeps similarity");
+  assert.ok(byId.apex && byId.apex.similarity === null, "spread leaf has null similarity");
+  assert.ok(byId.apex.activation > 0);
 });
 
 test("seedFromRetrieval keeps similarity and activation separate", () => {
@@ -7822,6 +7953,213 @@ async function asyncTests() {
     assert.ok(!has(liveAdd.hits, combinerResearch.APEX_TEXT), "live additive w=1 does not pull the apex");
     assert.ok(has(liveL1.hits, combinerResearch.APEX_TEXT), "live l1 w=1 pulls the apex");
     assert.ok(!has(liveL1.hits, combinerResearch.HUB_TEXT), "live l1 w=1 does not pull the hub");
+  });
+
+  // H4: leftover spread → Related:. Synthetic pack so cosine(S, L) = 0.40
+  // (below Related: minSim 0.70, so neighborhood misses; above persist-net
+  // 0.25, so save-time bind / injected edges can carry leftover). L is not
+  // a typed constraint, so rescue also misses. That's the discovery window.
+  const h4Pack = {
+    "the canal path is the nicest ride in town": [1, 0, 0],
+    "the canal path floods after heavy rain": [0.4, Math.sqrt(1 - 0.16), 0],
+    "I prefer tea over coffee": [0, 1, 0],
+    "tell me about the canal path": [1, 0, 0],
+    "where's a nice outdoor ride this weekend": [1, 0, 0],
+    "what do I drink": [0, 1, 0],
+    "does the canal path flood": [0.4, Math.sqrt(1 - 0.16), 0],
+  };
+  const h4Embed = async (texts) => texts.map((t) => h4Pack[t] || [0, 0, 1]);
+  const H4_S = "the canal path is the nicest ride in town";
+  const H4_L = "the canal path floods after heavy rain";
+  const H4_D = "I prefer tea over coffee";
+
+  function h4Adj(store) {
+    const recs = store.current();
+    const S = recs.find((m) => m.text === H4_S);
+    const L = recs.find((m) => m.text === H4_L);
+    return {
+      S, L,
+      D: recs.find((m) => m.text === H4_D),
+      adj: chainEdges([
+        [String(S.id), String(L.id), 0.4],
+        [String(L.id), String(S.id), 0.4],
+      ]),
+    };
+  }
+
+  await atest("warmRelated flag-off Related: is byte-identical with leftover present", async () => {
+    const store = new JsonlStore(tmp("h4-off.jsonl"));
+    const setup = createCore({
+      store, embed: h4Embed, fieldEnabled: () => true, warmEnabled: () => false,
+      getEdgeStore: () => new EdgeStore(tmp("h4-off-setup.edges.json")),
+      saveSeed: () => false, dedupThresholds: () => ({ hi: 2, lo: 2 }),
+    });
+    await setup.save(H4_S);
+    await setup.save(H4_L);
+    await setup.save(H4_D);
+    const { L, adj } = h4Adj(store);
+    const W = new WarmField();
+    const offCore = createCore({
+      store, embed: h4Embed, fieldEnabled: () => true, warmEnabled: () => true,
+      warmRelated: () => false, getWarm: () => W, getEdges: () => adj,
+      getEdgeStore: () => new EdgeStore(tmp("h4-off-run.edges.json")),
+      saveSeed: () => false,
+    });
+    await offCore.recall("tell me about the canal path", 1);
+    assert.ok(W.get(L.id) > 0, "leaf was spread-warmed on turn 1");
+    const withLeftover = await offCore.recall("where's a nice outdoor ride this weekend", 1);
+    const fresh = createCore({
+      store, embed: h4Embed, fieldEnabled: () => true, warmEnabled: () => true,
+      warmRelated: () => false, getWarm: () => new WarmField(), getEdges: () => adj,
+      getEdgeStore: () => new EdgeStore(tmp("h4-off-fresh.edges.json")),
+      saveSeed: () => false,
+    });
+    const cold = await fresh.recall("where's a nice outdoor ride this weekend", 1);
+    assert.strictEqual(withLeftover, cold, "flag-off with leftover must match a cold field-on recall");
+    assert.ok(!/floods/.test(withLeftover.split(/related:/i)[1] || ""),
+      "cold Related: misses the non-constraint leaf");
+  });
+
+  await atest("warmRelated flag-on surfaces a spread leaf kNN missed; primary unchanged", async () => {
+    const store = new JsonlStore(tmp("h4-on.jsonl"));
+    const setup = createCore({
+      store, embed: h4Embed, fieldEnabled: () => true, warmEnabled: () => false,
+      getEdgeStore: () => new EdgeStore(tmp("h4-on-setup.edges.json")),
+      saveSeed: () => false, dedupThresholds: () => ({ hi: 2, lo: 2 }),
+    });
+    await setup.save(H4_S);
+    await setup.save(H4_L);
+    await setup.save(H4_D);
+    const recs = store.current();
+    const S = recs.find((m) => m.text === H4_S);
+    const L = recs.find((m) => m.text === H4_L);
+    const adj = chainEdges([
+      [String(S.id), String(L.id), 0.4],
+      [String(L.id), String(S.id), 0.4],
+    ]);
+    const W = new WarmField();
+    const core = createCore({
+      store, embed: h4Embed,
+      fieldEnabled: () => true,
+      warmEnabled: () => true,
+      warmRelated: () => true,
+      getWarm: () => W,
+      getEdges: () => adj,
+      getEdgeStore: () => new EdgeStore(tmp("h4-on.edges.json")),
+      saveSeed: () => false,
+    });
+    const offCore = createCore({
+      store, embed: h4Embed,
+      fieldEnabled: () => true,
+      warmEnabled: () => true,
+      warmRelated: () => false,
+      getWarm: () => new WarmField(),
+      getEdges: () => adj,
+      getEdgeStore: () => new EdgeStore(tmp("h4-on-off.edges.json")),
+      saveSeed: () => false,
+    });
+    await core.recall("tell me about the canal path", 1);
+    assert.ok(W.get(L.id) > 0, "leaf leftover exists");
+    assert.strictEqual(W.similarity(L.id), null, "leaf is spread-activated, not a retrieval seed");
+    const on = await core.recall("where's a nice outdoor ride this weekend", 1);
+    const off = await offCore.recall("where's a nice outdoor ride this weekend", 1);
+    function primary(out) {
+      const i = String(out).indexOf("\n\nRelated:");
+      return i < 0 ? String(out) : String(out).slice(0, i);
+    }
+    assert.strictEqual(primary(on), primary(off), "I3/I9: primary is byte-identical flag on/off");
+    assert.ok(/floods/.test(on), "flag-on Related: surfaces the leftover leaf");
+    assert.ok(!/floods/.test(off), "flag-off still misses it");
+    assert.ok(/\n\nRelated:/.test(on));
+  });
+
+  await atest("warmRelated: unrelated leftover does not intrude; H1b retrieval leftover is refused", async () => {
+    const store = new JsonlStore(tmp("h4-gate.jsonl"));
+    const setup = createCore({
+      store, embed: h4Embed, fieldEnabled: () => true, warmEnabled: () => false,
+      getEdgeStore: () => new EdgeStore(tmp("h4-gate-setup.edges.json")),
+      saveSeed: () => false, dedupThresholds: () => ({ hi: 2, lo: 2 }),
+    });
+    await setup.save(H4_S);
+    await setup.save(H4_L);
+    await setup.save(H4_D);
+    const recs = store.current();
+    const S = recs.find((m) => m.text === H4_S);
+    const L = recs.find((m) => m.text === H4_L);
+    const D = recs.find((m) => m.text === H4_D);
+    const adj = chainEdges([
+      [String(S.id), String(L.id), 0.4],
+      [String(L.id), String(S.id), 0.4],
+    ]);
+    const Wcat = new WarmField();
+    const catCore = createCore({
+      store, embed: h4Embed, fieldEnabled: () => true, warmEnabled: () => true,
+      warmRelated: () => true, getWarm: () => Wcat, getEdges: () => adj,
+      getEdgeStore: () => new EdgeStore(tmp("h4-gate-cat.edges.json")),
+      saveSeed: () => false,
+    });
+    await catCore.recall("what do I drink", 1);
+    assert.ok(Wcat.get(D.id) > 0, "tea was retrieved");
+    const afterCat = await catCore.recall("where's a nice outdoor ride this weekend", 1);
+    assert.ok(!/tea/.test(afterCat.split(/related:/i)[1] || ""), "unrelated leftover must not enter Related:");
+    assert.ok(!/floods/.test(afterCat), "warming tea must not surface the canal leaf");
+
+    const Wh1b = new WarmField();
+    const h1b = createCore({
+      store, embed: h4Embed, fieldEnabled: () => true, warmEnabled: () => true,
+      warmRelated: () => true, getWarm: () => Wh1b, getEdges: () => adj,
+      getEdgeStore: () => new EdgeStore(tmp("h4-gate-h1b.edges.json")),
+      saveSeed: () => false,
+    });
+    await h1b.recall("does the canal path flood", 1);
+    assert.ok(Wh1b.get(L.id) > 0);
+    assert.ok(Wh1b.similarity(L.id) != null, "H1b leftover keeps retrieval similarity");
+    const afterH1b = await h1b.recall("where's a nice outdoor ride this weekend", 1);
+    assert.ok(!/floods/.test(afterH1b.split(/related:/i)[1] || ""),
+      "H1b retrieval leftover must not be laundered into Related:");
+  });
+
+  await atest("warmRelated I3: leftoverEntries throw degrades to cold Related:", async () => {
+    const store = new JsonlStore(tmp("h4-i3.jsonl"));
+    const setup = createCore({
+      store, embed: h4Embed, fieldEnabled: () => true, warmEnabled: () => false,
+      getEdgeStore: () => new EdgeStore(tmp("h4-i3-setup.edges.json")),
+      saveSeed: () => false, dedupThresholds: () => ({ hi: 2, lo: 2 }),
+    });
+    await setup.save(H4_S);
+    await setup.save(H4_L);
+    await setup.save(H4_D);
+    const recs = store.current();
+    const S = recs.find((m) => m.text === H4_S);
+    const L = recs.find((m) => m.text === H4_L);
+    const adj = chainEdges([
+      [String(S.id), String(L.id), 0.4],
+      [String(L.id), String(S.id), 0.4],
+    ]);
+    const off = createCore({
+      store, embed: h4Embed, fieldEnabled: () => true, warmEnabled: () => true,
+      warmRelated: () => false, getEdges: () => adj,
+      getEdgeStore: () => new EdgeStore(tmp("h4-i3-off.edges.json")),
+      saveSeed: () => false,
+    });
+    const expected = await off.recall("where's a nice outdoor ride this weekend", 1);
+    const boom = {
+      leftoverEntries() { throw new Error("snapshot boom"); },
+      seedFromRetrieval() {},
+      spread() {},
+      pruneTo() {},
+      get() { return 0; },
+      forget() {},
+      now() { return Date.now(); },
+    };
+    const on = createCore({
+      store, embed: h4Embed, fieldEnabled: () => true, warmEnabled: () => true,
+      warmRelated: () => true, getWarm: () => boom, getEdges: () => adj,
+      getEdgeStore: () => new EdgeStore(tmp("h4-i3-on.edges.json")),
+      saveSeed: () => false,
+    });
+    const got = await on.recall("where's a nice outdoor ride this weekend", 1);
+    assert.strictEqual(got, expected, "cosine+Related: survives a leftover snapshot throw");
   });
 
   // ------------------------------------------------ Slice C: EdgeStore on the live path

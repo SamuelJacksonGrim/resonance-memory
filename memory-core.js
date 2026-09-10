@@ -47,6 +47,14 @@
  *                                  (cosine + w·spread-activation). Flag-off
  *                                  is today's byte-identical cosine. Not
  *                                  the 2.2 gate.)
+ *   warmRelated   () -> boolean   (RESONANCE_WARM_RELATED; default OFF.
+ *                                  Exploratory H4: leftover spread-activation
+ *                                  expands the Related: candidate pool.
+ *                                  Primary stays cosine (I3/I9). Flag-off
+ *                                  is byte-identical Related:. Injected so
+ *                                  eval cannot inherit a user env.)
+ *   warmRelatedFloor () -> number (RESONANCE_WARM_RELATED_FLOOR; default
+ *                                  0.05 = WarmField floor. Candidacy gate.)
  *   warmRankWeight () -> number   (RESONANCE_WARM_RANK_WEIGHT; default 0.3,
  *                                  same cap as Related: maxBonus. Injected
  *                                  so eval cannot inherit a user env.)
@@ -158,6 +166,14 @@ const WARM_RANK_WEIGHT = 0.3;
 const WARM_RANK_SHAPE = "additive";
 const FUSE_SHAPES = ["additive", "rrf", "ranknorm", "l1", "multiplicative"];
 const RRF_K = 60;
+
+// H4: leftover activation → Related: (default off). Floor matches
+// WarmField FLOOR so a node that is still "warm" is a candidate; the
+// graph gate (persist-net 1-hop to this-turn seeds) is what stops a
+// recency dump. Max matches neighborhood cap so Related: cannot
+// become an activation appendix of unbounded length.
+const WARM_RELATED_FLOOR = 0.05;
+const WARM_RELATED_MAX = 4;
 
 /*
  * Save-time semantic bind (Phase 0.1). K neighbors above SAVE_TIME_MIN_COS are
@@ -963,7 +979,8 @@ function fuseScoredWithActivation(scored, W, weight, opts) {
  *
  * Phase 1 warmth is computed by default (the signal has to exist to be
  * measured). The silent hook still must not change the output string;
- * Related: consumption is Phase 2, rank is the Phase 2.2 gate. Opt out
+ * Related: consumption of leftover activation is H4, behind
+ * warmRelated (default off); rank is the Phase 2.2 gate. Opt out
  * with warmEnabled: () => false.
  */
 function createCore({
@@ -973,6 +990,8 @@ function createCore({
   getLedger,
   warmEnabled = () => true,
   warmRank = () => false,
+  warmRelated = () => false,
+  warmRelatedFloor = () => WARM_RELATED_FLOOR,
   warmRankWeight = () => WARM_RANK_WEIGHT,
   warmRankShape = () => WARM_RANK_SHAPE,
   warmRankRrfK = () => RRF_K,
@@ -1119,6 +1138,14 @@ function createCore({
       rrfK: resolveRrfK(),
       edges: edgesFor(mems, W && typeof W.now === "function" ? W.now() : undefined),
     };
+  }
+
+  function resolveWarmRelatedFloor() {
+    try {
+      const n = Number(typeof warmRelatedFloor === "function" ? warmRelatedFloor() : warmRelatedFloor);
+      if (Number.isFinite(n) && n >= 0) return n;
+    } catch { /* injected getter must never break recall */ }
+    return WARM_RELATED_FLOOR;
   }
 
   // Internal prime (I1: not a tool). Whole path in try/catch — I3.
@@ -1378,6 +1405,13 @@ function createCore({
     let seedPool = [];        // wider top-K_SEARCH ids: the field's constraint walk seeds
     let rankedScores = [];    // Phase 1 seed: [{ id, similarity }] — cosine, not activation
     let warmSeededForRank = false; // flag-on already seeded; skip the silent hook
+    // H4 snapshot MUST be taken before this-turn seedAndSpread (including
+    // the warmRank path, which seeds earlier). After seed, leftover on
+    // this-turn hits is overwritten and we could not tell H1a from H1b.
+    let leftoverSnap = [];
+    try {
+      if (warmEnabled() && warmRelated()) leftoverSnap = warm().leftoverEntries();
+    } catch { leftoverSnap = []; }
     try {
       // Embed the query as a query and only the records missing a stored vector
       // as documents. Split so server.js can apply embedder-specific roles
@@ -1484,6 +1518,32 @@ function createCore({
             if (seen.has(key)) continue;
             seen.add(key);
             merged.push(e);
+          }
+          // H4: leftover spread-activated nodes, persist-net-tied to
+          // this-turn seeds, after constraints and before neighborhood
+          // so a genuine associative leaf can take a slot from generic
+          // kNN filler. Flag-off skips this; a throw is swallowed (I3).
+          if (warmRelated() && leftoverSnap && leftoverSnap.length) {
+            try {
+              const persistAdj = edgesFor(mems);
+              const warmHits = field.warmRelatedCandidates({
+                leftover: leftoverSnap,
+                persistAdj,
+                seedIds: seedPool,
+                exclude: [...seen],
+                floor: resolveWarmRelatedFloor(),
+                max: WARM_RELATED_MAX,
+                spreadOnly: true,
+                conflict: (id) => logicalConflict(qSlot, resolved.get(String(id))),
+              });
+              for (const e of warmHits) {
+                const key = String(e.id);
+                if (seen.has(key)) continue;
+                if (!byId.get(key)) continue;
+                seen.add(key);
+                merged.push(e);
+              }
+            } catch { /* I3: leftover Related: must never break recall */ }
           }
           for (const e of rel) {
             const key = String(e.id);
@@ -1610,6 +1670,7 @@ module.exports = {
   planDedupExisting, applyDedupExisting, dedupExisting,
   mergeBandPatches, restateSurvivorPatch,
   WARM_RANK_WEIGHT, WARM_RANK_SHAPE, FUSE_SHAPES, RRF_K, K_SEARCH,
+  WARM_RELATED_FLOOR, WARM_RELATED_MAX,
   activationRankBonus, fuseScoredWithActivation, resolveFuseShape,
   neighborGraph, competitiveL1, competitiveRankNorm,
 };
