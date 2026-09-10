@@ -55,8 +55,9 @@ Can spreading-activation improve PRIMARY recall rank?
         │  SAFETY: a contradictory Related overturned a correct primary 4/7 —
         │          but confounded by query-salience (upper bound, not clean)
         ▼
-  S2v2 (drafted): matched-phrasing + counterbalancing to get the clean
-   channel-authority rate — does the driver treat Primary as authoritative?
+  S2v2 (LOCKED; instrument built, live gated): matched-phrasing + α/β
+   counterbalancing. Measures channel preference (not "authority" as a raw
+   observation). Live driver waits on a fixture audit.
 ```
 
 The through-line: the associative interface is **not dead**. H4 showed one *candidate-generation*
@@ -94,11 +95,13 @@ is built to answer cleanly.
 The H6 instrument is in this branch and is offline/deterministic except the live-driver step:
 
 ```
-node test.js                       # unit + selftests (H6 selftest wired in)
+node test.js                       # unit + selftests (H6 + S2v2 selftests wired in)
 node eval/run.js                   # RM-00 golden regression gate (27/31, unchanged)
 node eval/h6-audit-check.js        # static fixture audit (14/14 mechanical-pass)
 node eval/h6-run.js --assemble-only  # build A/B/D/N prompts, assert primary identity, no driver
 node eval/h6-run.js --replay eval/h6-live-log.json   # reproduce the verdict from the logged run
+node eval/s2v2-audit-check.js      # S2v2 static fixture audit (mechanical vs author-asserted)
+node eval/s2v2-run.js --assemble-only  # build α/β/N, assert masked identity, no driver
 ```
 
 The live H6 run used **stock qwen3.6-35B-A3B** (Q4_K_M) served locally via llama.cpp, greedy

@@ -5214,6 +5214,10 @@ section("H6 prereg (offline: parser, audit-checker, stub harness)");
 const h6self = require("./eval/h6-selftest.js");
 h6self.runSync(test, assert);
 
+section("S2v2 prereg (offline: parser, pair-class, audit-checker, stub harness)");
+const s2v2self = require("./eval/s2v2-selftest.js");
+s2v2self.runSync(test, assert);
+
 // ------------------------------------------------ edit() embedding safety
 // An embedder outage is transient; losing an embedding is not.
 // createCore already required above (warm-field section)
@@ -5221,6 +5225,9 @@ h6self.runSync(test, assert);
 async function asyncTests() {
   section("H6 prereg async (stub driver, fail-loud)");
   await h6self.runAsync(atest, assert);
+
+  section("S2v2 prereg async (stub driver, fail-loud)");
+  await s2v2self.runAsync(atest, assert);
 
   // ------------------------------------------------- RM-07 slice 2a migrator
   section("JSONL→SQLite migrator (RM-07 slice 2a, 10-step protocol)");

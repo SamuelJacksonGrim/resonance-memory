@@ -125,6 +125,7 @@ function isGoldenCase(c) {
   if (c.kind === "duplicates" || c.kind === "messy" || c.kind === "measure" ||
       c.kind === "cross_turn" || c.kind === "weak_recall" || c.kind === "hub_vs_apex") return false;
   if (c.kind === "h6") return false; // H6 is a live-driver consumption eval, not RM-00
+  if (c.kind === "s2v2") return false; // S2v2 is a live-driver consumption eval, not RM-00
   return !!(c.expect && (c.query || c.repeat));
 }
 
