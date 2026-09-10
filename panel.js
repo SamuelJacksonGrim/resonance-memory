@@ -41,6 +41,10 @@
  *     binary (the exe, or `node entry.js` from source — never `node panel.js`).
  *     Mutating ops name the dry-run default and say to export first. Not a
  *     fifth MCP verb, and not a second page — the panel is one card.
+ *   - What can I ship / license?: closed-by-default explainer of the dual
+ *     license (AGPL-3.0 free track + paid commercial). Claims are traced to
+ *     LICENSING.md / LICENSE / NOTICE — not invented. Binding terms are those
+ *     files, not this panel. Same details grain; still one card.
  *   - W-02: Host must be loopback, Origin (when present) must be this panel,
  *     mutating POSTs require a per-process token baked into the page. Settles
  *     the CSRF / DNS-rebinding ship-gate before RM-12 documents the HTTP
@@ -334,6 +338,7 @@ const PAGE = `<!doctype html>
   details.mcpother { margin: 8px 0 12px; padding: 10px 14px; border-radius: 12px;
     background: #f7f8fa; border: 1px solid rgba(0,0,0,.05); }
   details.mcpother summary { cursor: pointer; font-weight: 600; font-size: 13px; }
+  details.mcpother a { color: var(--acc); }
   pre.mcp { font-family: ui-monospace, Consolas, monospace; font-size: 11.5px;
     background: #fff; padding: 10px 12px; border-radius: 8px; overflow: auto;
     white-space: pre-wrap; word-break: break-all; margin: 8px 0;
@@ -537,6 +542,22 @@ const PAGE = `<!doctype html>
         <div class="hint cli-flags">--apply &nbsp; --json &nbsp; [store.jsonl]</div>
         <div class="hint"><b>Export a backup first</b> before <code>--apply</code>.</div>
       </div>
+    </details>
+
+    <details class="mcpother" id="licenseFaq">
+      <summary>What can I ship / license?</summary>
+      <div class="hint" style="margin:8px 0">Plain English. This panel is an explainer, <b>not a contract</b>. The binding terms are in <code>LICENSE</code> (the GNU Affero General Public License v3.0) and, if you buy one, a signed commercial agreement. Full options: <a href="https://github.com/SamuelJacksonGrim/resonance-memory/blob/main/LICENSING.md" target="_blank" rel="noopener">LICENSING.md</a>.</div>
+
+      <div class="cname" style="margin-top:10px">It is dual-licensed. You pick one.</div>
+      <div class="hint">If the AGPL works for you, you owe nothing.</div>
+
+      <div class="hint" style="margin-top:10px"><b>1. AGPL-3.0 &mdash; free.</b> You can use, run, modify, fork, and redistribute this software at no charge under the AGPL-3.0 (see <a href="https://github.com/SamuelJacksonGrim/resonance-memory/blob/main/LICENSE" target="_blank" rel="noopener">LICENSE</a>).</div>
+      <div class="hint">The copyleft catch is AGPL <b>&sect;13</b>: if you <b>modify</b> this software and let other people interact with it over a network &mdash; for example, as part of a SaaS product, an API, or a hosted service &mdash; you must make the <b>complete corresponding source</b> of your modified version available to those users under the AGPL-3.0, at no charge. That obligation extends to the rest of the combined/derivative work, not just the files you edited.</div>
+
+      <div class="hint" style="margin-top:10px"><b>2. A paid commercial license</b> &mdash; if you want to build this into a SaaS or hosted service and keep your source closed, embed or ship it in a proprietary / closed-source product, modify it without publishing your changes, or your policy prohibits AGPL-licensed code. A commercial license removes the AGPL&rsquo;s copyleft/source-disclosure requirements for your product. Template: <a href="https://github.com/SamuelJacksonGrim/resonance-memory/blob/main/COMMERCIAL-LICENSE.md" target="_blank" rel="noopener">COMMERCIAL-LICENSE.md</a>.</div>
+      <div class="hint">Contact the copyright holder: <b>Samuel Jackson Grim</b>, <a href="mailto:collectiveaifamily@gmail.com">collectiveaifamily@gmail.com</a>, subject <code>Commercial license &mdash; Resonance Memory</code>. Please include your company / legal entity name, a short description of how you intend to use the software, whether you need support, warranty, or indemnification terms, and expected scale if relevant. Pricing is quoted per engagement.</div>
+
+      <div class="hint" style="margin-top:10px">What counts as a &ldquo;modification&rdquo; that triggers &sect;13, and the line between unmodified network use and a combined/derivative work, can be subtle. Do not trust a paraphrase for a business-critical call &mdash; read <a href="https://github.com/SamuelJacksonGrim/resonance-memory/blob/main/legal/licensing-faq.md" target="_blank" rel="noopener">legal/licensing-faq.md</a> or ask a lawyer. These documents were prepared by an AI assistant, not a lawyer.</div>
     </details>
 
     <div class="support">
@@ -1228,7 +1249,7 @@ const PAGE = `<!doctype html>
       G = { nodes: [], edges: [] }; alpha = 0; if(raf){ cancelAnimationFrame(raf); raf=null; } draw(); return;
     }
     cap.innerHTML = showDemo
-      ? 'A <b>demo</b> cloud in 3D. Related memories pull together; unrelated ones drift apart, reachable only through what bridges them. <b>Drag to rotate.</b>'
+      ? 'A <b>demo</b> cloud in 3D. Related memories pull together; unrelated ones drift apart, reachable only through what bridges them. A dimmed dot is a fact that was later corrected &mdash; history stays. <b>Drag to rotate.</b>'
       : 'Your memories in 3D - related ones cluster together. <b>Drag to rotate</b>, hover a dot to read it.';
     fit();
     // Keep where existing nodes already settled; only brand-new ones get a fresh

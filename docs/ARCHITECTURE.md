@@ -177,7 +177,7 @@ same record the panel renders, the installer targets, `--dedup-existing` scans,
 | `.github/workflows/ci.yml` | Always-on PR/main gate: `node test.js` + `node eval/run.js` on `ubuntu-latest`. Complements the release matrix; does not build binaries. |
 | `.github/workflows/release.yml` | RM-11 release matrix: gate + native SEA on windows/ubuntu/macos-latest + GitHub Release. The macOS binary is made here. |
 | `build-demo-seed.js` | Regenerates `demo-seed.jsonl` via a live embedder. |
-| `demo-seed.jsonl` | The synthetic first-launch showcase (a fictional game dev's notes). **Tracked**; 100% synthetic. |
+| `demo-seed.jsonl` | The synthetic first-launch showcase (a fictional game dev's notes: semantic recall, a superseded correction, a silent associative bridge). **Tracked**; 100% synthetic. |
 | `system-prompt.md` | Optional copy-in system prompt for weaker models. Baked into the exe. |
 | `sea-config.json` | Node SEA config (points at `build/bundle.js`). |
 | `embedded-assets.js` | **Generated every build (gitignored).** Bakes the seed + system prompt in as strings. Never edited, never committed. |

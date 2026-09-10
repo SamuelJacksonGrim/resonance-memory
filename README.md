@@ -84,7 +84,12 @@ Meaning-based recall uses the **`nomic-embed-text-v1.5`** embedding model by [No
 
 ## License
 
-AGPL-3.0 — see [`LICENSE`](LICENSE). Use it, fork it, build on it — just keep your version open too.
+**Dual-licensed.** You pick one. If the AGPL works for you, you owe nothing.
+
+1. **[AGPL-3.0](LICENSE)** — free. You can use, run, modify, fork, and redistribute this software at no charge. The copyleft catch is AGPL **§13**: if you *modify* it and let other people interact with it over a network (SaaS, an API, a hosted service), you must make the **complete corresponding source** of your modified version available to those users under the AGPL-3.0, at no charge. That obligation extends to the combined/derivative work, not just the files you edited.
+2. **A [paid commercial license](LICENSING.md)** — if you want closed-source / proprietary / hosted use without AGPL's source-disclosure obligations. Contact Samuel Jackson Grim, `collectiveaifamily@gmail.com`, subject `Commercial license — Resonance Memory`. Pricing is quoted per engagement.
+
+This README is not a contract. The binding terms are [`LICENSE`](LICENSE) and a signed commercial agreement, if you buy one. Full explainer: [`LICENSING.md`](LICENSING.md). Nuance (what counts as a modification, internal use): [`legal/licensing-faq.md`](legal/licensing-faq.md).
 
 ---
 

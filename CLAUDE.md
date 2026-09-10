@@ -72,7 +72,7 @@ roadmap, and per-repo backlog live in the companion repo
 | `.github/workflows/ci.yml` | Always-on PR/main gate. `ubuntu-latest`, Node 24: `node test.js` + `node eval/run.js`. Complements the release matrix; does not build binaries. Checks UI: `CI / gate`. |
 | `.github/workflows/release.yml` | RM-11 release matrix. `v*` tag (or `workflow_dispatch`): gate → native build on windows/ubuntu/macos-latest → smoke → GitHub Release. The macOS binary is made here; this project has no Mac hardware. |
 | `build-demo-seed.js` | Regenerates `demo-seed.jsonl` (synthetic, pre-embedded) via the embedder. |
-| `demo-seed.jsonl` | The synthetic demo graph (a fictional game dev's notes). **Tracked** and shipped — it's the first-launch showcase. 100% synthetic; never real user data. |
+| `demo-seed.jsonl` | The synthetic demo graph (a fictional game dev's notes). **Tracked** and shipped — first-launch showcase of semantic recall, a superseded correction, and a silent associative bridge. 100% synthetic; never real user data. |
 | `system-prompt.md` | Optional copy-in system prompt for weaker models that forget to call tools. Baked into the exe. |
 | `sea-config.json` | Node SEA config (points at `build/bundle.js`). |
 | `embedded-assets.js` | **Generated every build (gitignored).** Bakes `demo-seed.jsonl` + `system-prompt.md` in as strings so the exe is one self-contained file. Do not edit; do not commit. |

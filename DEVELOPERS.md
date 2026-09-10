@@ -34,7 +34,7 @@ an opaque `id`.
 | `.github/workflows/release.yml` | RM-11 release matrix (the macOS build path). `v*` tag → gate + native SEA on windows/ubuntu/macos-latest → smoke → GitHub Release. |
 | `embedded-assets.js` | **Generated** each build (gitignored): `demo-seed.jsonl` + `system-prompt.md` baked in as strings so the shipped exe is one self-contained file. |
 | `inspect_sidecar.js` | Dependency-free telemetry for the Hebbian ledger. |
-| `build-demo-seed.js` | Regenerates `demo-seed.jsonl` (synthetic, pre-embedded) via the embedder. |
+| `build-demo-seed.js` | Regenerates `demo-seed.jsonl` (synthetic, pre-embedded) via the embedder. Seed is built to show semantic recall, a superseded correction, and a silent associative bridge. |
 
 ## Store & embeddings
 
