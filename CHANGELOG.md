@@ -94,38 +94,6 @@ stable; sophistication grows in the substrate, not in the API.
   unchanged — this is the baseline later detector slices must beat. See
   `eval/RESULTS.md` ("RM-03 measurement seed").
 
-### Changed
-- **BUG-004 — default store is `~/.resonance-memory/`, not `~/.lmstudio/`.**
-  Same home-dotdir convention (including Windows), RM-owned name. On first
-  start, if `MEMORY_FILE_PATH` is unset, the old location has a store, and
-  the new one does not, the store files are **copied** (jsonl / sqlite + WAL
-  + sidecars + config) via a staging dir and an in-flight marker, verified,
-  and the original is left in place as a backup. Both locations occupied:
-  new wins, old untouched. A failed copy wipes dest artifacts and fail-opens
-  to the legacy path so a hiccup cannot hide memories. `MEMORY_FILE_PATH`
-  still wins outright. Not a fifth MCP verb; not the RM-07 JSONL→SQLite
-  `--migrate` (that's a format conversion of a store already at its path).
-- **RM-20 installer / first-run polish.** A stranger's first hour was the
-  remaining product tax: Connect was a dead end unless they ran LM Studio or
-  Claude Desktop; the unsigned-binary scare sat in `BUILDING.md` instead of
-  the 60-second path; the live store file was buried under "Removing it?"
-  and named the configured `.jsonl` stem, not the SQLite `.db` a new user
-  actually gets. The panel now ships a copy-paste MCP snippet (same
-  `selfLaunch()` Connect writes) for Claude Code / Cursor / Continue /
-  Hermes; README + `READ ME FIRST.txt` walk through SmartScreen (**More
-  info → Run anyway**) and Gatekeeper (right-click **Open** / `xattr`)
-  *before* "launch the binary"; **Your memories** shows the live file and
-  names Export as the backup. One-click Connect is unchanged. Signing stays
-  `RM-11` / `BUG-005`. The `~/.lmstudio/` folder wart is `BUG-004` (fixed
-  in this unreleased slice).
-- **Weak-model system prompt rewritten + the copy button fixed.** The optional
-  `system-prompt.md` block is now tighter and priority-ordered — recall-before-you-answer
-  leads, save-what-lasts and keep-it-clean follow — so a small model that forgets to reach
-  for tools has one clear routine. The panel's "copy a ready-made system prompt" button now
-  copies **only the paste-ready block**, not the surrounding human-facing doc (it was
-  handing over the "paste the block below…" intro too).
-
-### Added
 - **What can I ship / license?** A closed-by-default panel section (same
   `details` grain as Terminal commands; the panel is still one card) plus
   the README License section, answering the stranger's question from the
@@ -264,21 +232,6 @@ stable; sophistication grows in the substrate, not in the API.
   That is the `0009` planted-sidecar refusal, not a missing feature.
   Not a fifth MCP verb. Panel button shipped (confirm modal, same engine).
 
-### Changed
-- **Related: minSim 0.55 → 0.70** (nomic default). Fair-run: 0.55 leaked 11
-  near-miss edges; 0.70 keeps 14/15 true pairs (bookshelf m2↔m3 at 0.676 is
-  the cost), zero near-miss, zero unrelated. Live-config `field_minsim` /
-  env `RESONANCE_FIELD_MINSIM`. Constraint rescue stays at gate 0.45
-  (independent path — field-rescue still 3/3). **RM-00 golden held 27/31
-  case-for-case** on sqlite and jsonl; not re-accepted.
-- **Cosine-gated reinforce + neighborhood-normalized readout.**
-  `reinforceRecall` takes `pairScale`: α × how far doc-doc cosine sits
-  above the gate (entity mismatch → 0; constraint bridges use
-  `CONSTRAINT_GATE` so lemon↔diabetic still learns). Field bonus is
-  `tanh(w / nodeMax) * maxBonus` instead of saturated `tanh(w)`. EdgeStore
-  `bonus()` itself stays tanh so Ledger-parity tests hold.
-
-### Added
 - **RM-07 slice 5 — edges-in-db (one-file sovereignty).** EdgeStore keeps its
   API; persistence is now an adapter. SqliteStore shares the `DatabaseSync`
   connection so memories, access counts, and learned associations live in
@@ -356,23 +309,6 @@ stable; sophistication grows in the substrate, not in the API.
   50k and 100k** (JSONL cannot); field-off recall p95 **49.6 ms @50k, 96.4 ms @100k**.
   Export, default switch, edges-in-db (slice 5, shipped), `searchDense` are later slices.
 
-### Changed
-- **I5 restated** to match ARCHITECTURE/ROADMAP: durable writes; no *unbounded* /
-  full-corpus rewrite on a read path. Bounded atomic retention UPDATE of the
-  returned ids is permitted (JSONL = AccessLog sidecar; SQLite = in-table
-  `UPDATE`). CLAUDE.md / AGENTS.md brought in line.
-- **`package.json` `engines`** `>=18` → `>=22.5` (`node:sqlite` floor). esbuild
-  `--target` follows (`node22`).
-
-Beta-readiness pass:
-
-### Changed
-- **Relicensed GPL-3.0 → AGPL-3.0.** Closes the SaaS / network-use loophole in plain GPL: a
-  hosted or networked derivative must now also release its source. `LICENSE`, `package.json`
-  (`AGPL-3.0-or-later`), and every per-file source header updated. This is the
-  "revisit only if hosted resale looms" trigger the backlog pre-registered, now pulled.
-
-### Added
 - **RM-01.c Tier 2 opt-in LLM extraction.** Off by default (RM does the work; a
   weak local model can extract worse than Tier 0/1). Capability-detect: MCP
   sampling **or** a non-embedding chat model at the configured endpoint. Visible
@@ -542,6 +478,72 @@ Beta-readiness pass:
 - **`test.js`** — a dependency-free test suite (`npm test`), plus a `package.json` so the
   usual entry points (`npm test`, `npm run build`, `npm run panel`) work.
 
+### Changed
+- **BUG-004 — default store is `~/.resonance-memory/`, not `~/.lmstudio/`.**
+  Same home-dotdir convention (including Windows), RM-owned name. On first
+  start, if `MEMORY_FILE_PATH` is unset, the old location has a store, and
+  the new one does not, the store files are **copied** (jsonl / sqlite + WAL
+  + sidecars + config) via a staging dir and an in-flight marker, verified,
+  and the original is left in place as a backup. Both locations occupied:
+  new wins, old untouched. A failed copy wipes dest artifacts and fail-opens
+  to the legacy path so a hiccup cannot hide memories. `MEMORY_FILE_PATH`
+  still wins outright. Not a fifth MCP verb; not the RM-07 JSONL→SQLite
+  `--migrate` (that's a format conversion of a store already at its path).
+- **RM-20 installer / first-run polish.** A stranger's first hour was the
+  remaining product tax: Connect was a dead end unless they ran LM Studio or
+  Claude Desktop; the unsigned-binary scare sat in `BUILDING.md` instead of
+  the 60-second path; the live store file was buried under "Removing it?"
+  and named the configured `.jsonl` stem, not the SQLite `.db` a new user
+  actually gets. The panel now ships a copy-paste MCP snippet (same
+  `selfLaunch()` Connect writes) for Claude Code / Cursor / Continue /
+  Hermes; README + `READ ME FIRST.txt` walk through SmartScreen (**More
+  info → Run anyway**) and Gatekeeper (right-click **Open** / `xattr`)
+  *before* "launch the binary"; **Your memories** shows the live file and
+  names Export as the backup. One-click Connect is unchanged. Signing stays
+  `RM-11` / `BUG-005`. The `~/.lmstudio/` folder wart is `BUG-004` (fixed
+  in this unreleased slice).
+- **Weak-model system prompt rewritten + the copy button fixed.** The optional
+  `system-prompt.md` block is now tighter and priority-ordered — recall-before-you-answer
+  leads, save-what-lasts and keep-it-clean follow — so a small model that forgets to reach
+  for tools has one clear routine. The panel's "copy a ready-made system prompt" button now
+  copies **only the paste-ready block**, not the surrounding human-facing doc (it was
+  handing over the "paste the block below…" intro too).
+
+- **Related: minSim 0.55 → 0.70** (nomic default). Fair-run: 0.55 leaked 11
+  near-miss edges; 0.70 keeps 14/15 true pairs (bookshelf m2↔m3 at 0.676 is
+  the cost), zero near-miss, zero unrelated. Live-config `field_minsim` /
+  env `RESONANCE_FIELD_MINSIM`. Constraint rescue stays at gate 0.45
+  (independent path — field-rescue still 3/3). **RM-00 golden held 27/31
+  case-for-case** on sqlite and jsonl; not re-accepted.
+- **Cosine-gated reinforce + neighborhood-normalized readout.**
+  `reinforceRecall` takes `pairScale`: α × how far doc-doc cosine sits
+  above the gate (entity mismatch → 0; constraint bridges use
+  `CONSTRAINT_GATE` so lemon↔diabetic still learns). Field bonus is
+  `tanh(w / nodeMax) * maxBonus` instead of saturated `tanh(w)`. EdgeStore
+  `bonus()` itself stays tanh so Ledger-parity tests hold.
+
+- **I5 restated** to match ARCHITECTURE/ROADMAP: durable writes; no *unbounded* /
+  full-corpus rewrite on a read path. Bounded atomic retention UPDATE of the
+  returned ids is permitted (JSONL = AccessLog sidecar; SQLite = in-table
+  `UPDATE`). CLAUDE.md / AGENTS.md brought in line.
+- **`package.json` `engines`** `>=18` → `>=22.5` (`node:sqlite` floor). esbuild
+  `--target` follows (`node22`).
+
+Beta-readiness pass:
+
+- **Relicensed GPL-3.0 → AGPL-3.0.** Closes the SaaS / network-use loophole in plain GPL: a
+  hosted or networked derivative must now also release its source. `LICENSE`, `package.json`
+  (`AGPL-3.0-or-later`), and every per-file source header updated. This is the
+  "revisit only if hosted resale looms" trigger the backlog pre-registered, now pulled.
+
+- **Association graph is now 3D.** Memories are placed by association: each semantic/Hebbian
+  link is a spring whose rest length shrinks as similarity rises, so related memories cluster
+  and unrelated ones stay reachable only through what bridges them. Drag to rotate. More-
+  connected memories carry more mass and draw larger.
+- **The graph no longer re-settles on a timer.** Node positions persist across polls; the
+  layout re-settles only when the set of memories changes. The render loop idles to zero CPU
+  once settled.
+
 ### Fixed
 - **Your memories can no longer be truncated by a crash.** Store writes replaced the live file
   in place, so a crash or power loss partway through could leave it empty. Writes are now
@@ -552,15 +554,6 @@ Beta-readiness pass:
   the store in steady state. (`BUG-002`)
 
 See [`docs/BUGS.md`](docs/BUGS.md) for the full write-up and the open watch list.
-
-### Changed
-- **Association graph is now 3D.** Memories are placed by association: each semantic/Hebbian
-  link is a spring whose rest length shrinks as similarity rises, so related memories cluster
-  and unrelated ones stay reachable only through what bridges them. Drag to rotate. More-
-  connected memories carry more mass and draw larger.
-- **The graph no longer re-settles on a timer.** Node positions persist across polls; the
-  layout re-settles only when the set of memories changes. The render loop idles to zero CPU
-  once settled.
 
 ## [0.1.0] - 2026-07-26
 
