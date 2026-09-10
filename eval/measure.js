@@ -115,6 +115,8 @@ function loadAllScenarios(filter) {
     // RM-15 soak is a timed event log with its own runner (eval/soak/run.js).
     // Playing it as write-then-query would drop clock / missed_dup / order.
     if (lines.some((c) => c && c.kind === "soak")) continue;
+    // H6 is an injected-recall consumption eval (eval/h6-run.js), not recall@k.
+    if (lines.some((c) => c && c.kind === "h6")) continue;
     for (const s of loadScenarios(file)) {
       // Exact stem match (so --corpus messy does not also pull messy-hard)
       // or scenario-id prefix.

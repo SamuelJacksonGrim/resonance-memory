@@ -130,6 +130,12 @@ eval/
   soak/                  RM-15 control harness (0011 §7.3). Generator + runner
                          arms. Slice 4.0 is measurement only: control arm plays
                          the persona soak field-on, no dream. See soak/README.md.
+  h6-parse.js            H6 slot parser (deterministic; no LLM judge)
+  h6-audit-check.js      H6 static fixture checker (mechanical vs author-asserted)
+  h6-run.js              H6 injected-recall harness (stub / replay / --live gated)
+  h6-build-notes.md      What the checker proved vs what GPT must review
+  corpora/h6-stratum1.jsonl  Related-necessary fixtures (kind:h6, skipped by RM-00)
+  corpora/h6-stratum2.jsonl  Primary-sufficient / Related-adversarial fixtures
 
 
 ## Case format

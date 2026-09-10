@@ -122,6 +122,7 @@ async function runCase(c, fieldOn, storeKind) {
 function isGoldenCase(c) {
   if (!c || c.gate === false) return false;
   if (c.kind === "duplicates" || c.kind === "messy" || c.kind === "measure") return false;
+  if (c.kind === "h6") return false; // H6 is a live-driver consumption eval, not RM-00
   return !!(c.expect && (c.query || c.repeat));
 }
 
