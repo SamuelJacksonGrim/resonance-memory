@@ -55,7 +55,7 @@ const DEFAULT_DRIVER = {
  */
 const SYSTEM = [
   "You are answering one factual question about a fictional person's notes.",
-  "Use only the injected recall block below (the numbered memories and any Related: section).",
+  "Use only the injected recall block below.",
   "Do not use world knowledge. Do not guess.",
   "Reply with a single slot value. Do not list alternatives.",
 ].join(" ");

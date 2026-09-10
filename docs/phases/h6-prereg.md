@@ -80,9 +80,14 @@ override path when stronger evidence already exists in primary.
 ## No-recall control (validity gate, not an accuracy estimate)
 
 Every case gets arm **N** (both surfaces gone). Expected: failure. **A case the driver solves
-under N is contaminated by priors/guessability and is removed *before* H6 scoring.** N proves
-the synthetic fact is actually supplied by retrieval, making the whole experiment auditable.
-Favor exact, arbitrary, slot-checkable values over common knowledge.
+under N is contaminated by priors/guessability and is removed *before* H6 scoring.** N does not
+prove the fact is *metaphysically* unguessable — the fixture is *constructed* to be arbitrary;
+N establishes **operational contamination for the tested driver** (if qwen3.6 produces the
+value with no recall, this driver has a prior path to it and the case is invalid *for this
+experiment*). That empirical gate is what makes the whole thing auditable. Favor exact,
+arbitrary, slot-checkable values over common knowledge (GPT audit: the three real-word values
+`vesper`/`juniper`/`moss` were replaced pre-run with invented tokens to shrink this risk rather
+than lean on N alone — with only 7 S1 cases each contaminated case is costly).
 
 ## Consumption format (pre-run decision — injected block, not tool-call)
 

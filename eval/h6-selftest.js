@@ -45,6 +45,17 @@ function sectioned(test, assert) {
     assert.strictEqual(hedge.ok, false);
     assert.ok(hedge.reason === "absent" || hedge.reason === "empty");
 
+    // GPT audit ruling (strict): a present+unique gold span that is not
+    // COMMITTED fails. "maybe copper" surfaces the value without committing.
+    for (const h of ["maybe copper", "I think copper", "copper, probably",
+                     "possibly copper", "copper or something"]) {
+      const r = parseSlot(h, COPPER.parser, COPPER.candidates);
+      assert.strictEqual(r.ok, false, "hedge must fail: " + h);
+      assert.strictEqual(r.reason, "hedge", "hedge reason: " + h);
+    }
+    // A bare committed value with no hedge token still passes.
+    assert.strictEqual(parseSlot("copper", COPPER.parser, COPPER.candidates).reason, "match");
+
     const list = parseSlot("copper or saffron", COPPER.parser, COPPER.candidates);
     assert.strictEqual(list.ok, false);
     assert.strictEqual(list.reason, "list-everything");

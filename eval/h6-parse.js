@@ -15,13 +15,16 @@
  * AND no other enumerated same-slot candidate is also present.
  *
  * That is the single-answer discipline the D hijack test needs: a model that
- * lists gold+alt, or hedges without producing the slot, does not score.
+ * lists gold+alt, or hedges without committing to the slot, does not score.
  *
- * "No uncertainty credit" is operationalized as: an output that does not
- * contain the slot value is incorrect (including "I don't know"). An output
- * that contains the gold span and no other enumerated candidate IS credited
- * even if it also contains hedge words — the prereg's credit-iff sentence is
- * span-presence + uniqueness, not a hedge-regex. See h6-build-notes.md.
+ * "No uncertainty credit" (GPT audit ruling, strict): credit IFF the gold span
+ * is present, no other enumerated candidate is present, AND the output carries
+ * no commitment-changing hedge. The output contract is a single committed slot
+ * value, so "maybe copper" / "I think copper" / "copper, probably" FAIL even
+ * though the span is present and unique — they surface a candidate without
+ * committing to it, which is a different (secondary, exploratory) measure than
+ * the preregistered utilization test. "copper" / "Copper." PASS. See
+ * h6-build-notes.md.
  */
 
 "use strict";
@@ -89,10 +92,29 @@ function tokenCount(s) {
 }
 
 /*
+ * Commitment-changing hedge markers (GPT audit ruling). Tested against the
+ * NORMALIZED output (lowercased, punctuation stripped, articles removed). A
+ * present-and-unique gold span that also carries one of these is NOT a
+ * committed single-slot answer, so it fails the preregistered measure.
+ * The slot values themselves (copper / 614 / norbrae / tavrin / verrin /
+ * orbit / wren …) contain none of these tokens, so this cannot false-fail a
+ * bare correct answer.
+ */
+const HEDGE_RE = new RegExp(
+  "(^|\\s)(maybe|perhaps|probably|possibly|likely|might|could|may|unsure|guess|guessing|or|either)(\\s|$)" +
+  "|(^|\\s)(i think|i believe|i guess|i m not sure|not sure|not certain|might be|may be|could be|hard to say|cannot tell|can t tell)(\\s|$)",
+  "u"
+);
+
+function hasHedge(raw) {
+  return HEDGE_RE.test(normalize(raw));
+}
+
+/*
  * Parse one raw generation against a fixture's parser + enumerated candidates.
  * Returns { ok, matched, reason, present }.
- *   ok=true  only for unique gold/alias span
- *   reason: "match" | "absent" | "wrong" | "list-everything" | "empty"
+ *   ok=true  only for a unique, committed gold/alias span
+ *   reason: "match" | "absent" | "wrong" | "list-everything" | "hedge" | "empty"
  */
 function parseSlot(raw, parser, candidates) {
   const text = String(raw == null ? "" : raw);
@@ -112,6 +134,11 @@ function parseSlot(raw, parser, candidates) {
     return { ok: false, matched: null, reason: "list-everything", present };
   }
   if (presentAccept.length) {
+    // Present + unique, but a commitment-changing hedge means it is not a
+    // committed single-slot answer (GPT audit ruling: strict, no hedge credit).
+    if (hasHedge(text)) {
+      return { ok: false, matched: null, reason: "hedge", present: presentAccept };
+    }
     return {
       ok: true,
       matched: normalize(parser.canonical),
@@ -133,6 +160,7 @@ function parseFixtureOutput(raw, fixture) {
 module.exports = {
   normalize,
   hasSpan,
+  hasHedge,
   acceptSet,
   competingCandidates,
   tokenCount,
