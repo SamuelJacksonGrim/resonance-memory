@@ -55,16 +55,18 @@ Can spreading-activation improve PRIMARY recall rank?
         │  SAFETY: a contradictory Related overturned a correct primary 4/7 —
         │          but confounded by query-salience (upper bound, not clean)
         ▼
-  S2v2 (LOCKED; instrument built, live gated): matched-phrasing + α/β
-   counterbalancing + A/A instrument control. Measures channel preference
-   (not "authority" as a raw observation). Live driver waits on freeze
-   (cosine |Δ| bound + value re-selection + C4 GPT marks).
+  S2v2 (RUN COMPLETE): matched-phrasing + α/β counterbalancing + A/A control.
+   With salience matched, the H6 hijack DISAPPEARS ── PRIMARY-CHANNEL DOMINANT
+   (primary_following 100%, RR=0, N-gate 29/29 clean). The driver does NOT
+   treat Related: as authoritative; H6's 4/7 was the salience confound.
 ```
 
 The through-line: the associative interface is **not dead**. H4 showed one *candidate-generation*
-mechanism fails; H6 showed the *interface itself is behaviorally consumed*. What remains is an
-**authority-modeling** question — does the driver know Primary outranks `Related:`? — which S2v2
-is built to answer cleanly.
+mechanism fails; H6 showed the *interface itself is behaviorally consumed*; **S2v2 showed the
+driver weights Primary over a contradicting `Related:` once phrasing is matched** — the
+authority-modeling question is answered for this driver/format. Net: `Related:` is neither
+decorative nor authoritative — a **secondary evidence channel whose behavioral weight is
+measurable**, and Primary wins conflicts (consistent with I3).
 
 ## Contents
 
@@ -87,9 +89,12 @@ is built to answer cleanly.
   contract (whole-set joint derivation audit + machine-checkable audit object).
 - [`phases/h6-result.md`](../phases/h6-result.md) — **the H6 result**: `Related:` is behaviorally
   load-bearing for stock qwen3.6; authority is ambiguous; the hijack magnitude is confounded.
-- [`phases/s2v2-prereg.md`](../phases/s2v2-prereg.md) — the S2v2 pre-registration (**LOCKED**
-  2026-09-10): matched-phrasing + α/β counterbalancing + the pair-class 2×2 to measure
-  channel preference without the salience confound.
+- [`phases/s2v2-prereg.md`](../phases/s2v2-prereg.md) — the S2v2 pre-registration: matched-phrasing
+  + α/β counterbalancing + the pair-class 2×2 + A/A control, to measure channel preference without
+  the salience confound.
+- [`phases/s2v2-result.md`](../phases/s2v2-result.md) — **the S2v2 result** (live, 2026-09-10):
+  PRIMARY-CHANNEL DOMINANT — with phrasing matched the H6 hijack disappears (RR=0); the driver
+  weights Primary over a contradicting `Related:`.
 
 ## Reproducing
 

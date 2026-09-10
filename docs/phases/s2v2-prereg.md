@@ -12,10 +12,13 @@ overturned a correct primary in 4/7 — but that 57% is **confounded by query-sa
 wrong `Related:` sentence was phrased closer to the query than the primary row in every hijack).
 S2v2 removes the confound and asks the clean question.
 
-**Status: METHOD LOCKED; cosine bound frozen at 0.05; real-word swaps + 5 in-pool headroom cases
-done (round 3).** C4 path marks remain author-asserted pending GPT. Nothing runs live until the
-C4 derivation audit is marked. Reconciled from `s2v2-prereg-draft.md` against GPT's cross-check
-(v1), then revised after GPT's **fixture audit** (v2 — see [History](#history)).
+**Status: RUN COMPLETE (2026-09-10) — see [`s2v2-result.md`](s2v2-result.md).** Verdict:
+**PRIMARY-CHANNEL DOMINANT** (primary_following 100%, RR=0, N-gate 29/29 clean). The pre-declared
+scoring below was frozen before the run and is now unfrozen (this experiment is closed; a
+replication would pre-register afresh). Method reconciled from `s2v2-prereg-draft.md` against GPT's
+cross-check (v1), revised after GPT's fixture audit (v2), cosine bound frozen at 0.05, real-word
+values swapped + 5 headroom cases added (round 3). C4 first-pass marks were author-reviewed on the
+highest-risk case before the run.
 
 ## Terminology — the measured thing vs the interpreted thing
 
