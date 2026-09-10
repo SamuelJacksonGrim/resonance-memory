@@ -63,7 +63,7 @@ function runSync(test, assert) {
 
   test("S2v2 parser dry-run against each fixture using hand-authored mocks", () => {
     const fixtures = loadAllFixtures();
-    assert.ok(fixtures.length === 24, "want 24 cases, got " + fixtures.length);
+    assert.ok(fixtures.length === 29, "want 29 cases, got " + fixtures.length);
     for (const fix of fixtures) {
       const x = parseFixtureOutput(fix.x, fix);
       assert.strictEqual(x.pick, "X", fix.id + " x should pick X");
@@ -338,13 +338,27 @@ function runSync(test, assert) {
 
     const fixtures = loadAllFixtures();
     const archive = checkFixture(fixtures.find((f) => f.id === "s2v2-archive-color"));
-    assert.strictEqual(archive.ok, true, "lexical hit is a WARN, not a mechanical fail");
+    assert.strictEqual(archive.ok, true, "archive-color is mechanical-PASS after the real-word swap");
+    const archiveFix = fixtures.find((f) => f.id === "s2v2-archive-color");
+    assert.strictEqual(lookupLexical(archiveFix.x).hit, false, "swapped x must not hit lexicon");
+    assert.strictEqual(lookupLexical(archiveFix.y).hit, false, "swapped y must not hit lexicon");
+    const sten = fixtures.find((f) => f.id === "s2v2-held-stencil");
+    assert.strictEqual(lookupLexical(sten.x).hit, false, "swapped stencil x must not hit lexicon");
+    assert.strictEqual(lookupLexical(sten.y).hit, false, "swapped stencil y must not hit lexicon");
+    const used = new Set();
+    for (const f of fixtures) {
+      used.add(String(f.x).toLowerCase());
+      used.add(String(f.y).toLowerCase());
+    }
+    for (const old of ["sorin", "velka", "yulka", "porin"]) {
+      assert.ok(!used.has(old), old + " must not remain as a fixture value");
+    }
   });
 
-  test("S2v2 fixtures: kind s2v2, not a golden case, ≥5 held_out, 24 total", () => {
+  test("S2v2 fixtures: kind s2v2, not a golden case, ≥5 held_out, 29 total", () => {
     const { isGoldenCase } = require("./run.js");
     const fixtures = loadAllFixtures();
-    assert.strictEqual(fixtures.length, 24);
+    assert.strictEqual(fixtures.length, 29);
     const held = fixtures.filter((f) => f.held_out);
     assert.ok(held.length >= 5, "held_out n=" + held.length);
     assert.ok(held.every((f) => String(f.family).indexOf("heldout-") === 0),
@@ -391,7 +405,7 @@ function runSync(test, assert) {
     const base = fixtures.find((f) => f.id === "s2v2-archive-color");
     assert.ok(base, "archive fixture");
     const leaked = JSON.parse(JSON.stringify(base));
-    leaked.primary_distractors[0].text = leaked.primary_distractors[0].text + " Also sorin.";
+    leaked.primary_distractors[0].text = leaked.primary_distractors[0].text + " Also " + leaked.x + ".";
     leaked.audit.values_absent_from_distractors = true; // author lie
     const r = checkFixture(leaked);
     assert.strictEqual(r.ok, false, "lexical leak must fail even if audit says true");
@@ -402,14 +416,14 @@ function runSync(test, assert) {
     const fixtures = loadAllFixtures();
     const base = fixtures.find((f) => f.id === "s2v2-archive-color");
     const qleak = JSON.parse(JSON.stringify(base));
-    qleak.query = qleak.query + " (sorin?)";
+    qleak.query = qleak.query + " (" + qleak.x + "?)";
     const rq = checkFixture(qleak);
     assert.strictEqual(rq.ok, false);
     assert.ok(rq.errors.some((e) => /absent_from_query/.test(e)), rq.errors.join("; "));
 
     const asym = JSON.parse(JSON.stringify(base));
-    asym.y = "velkaxx";
-    asym.audit.value_symmetry.y_chars = 7;
+    asym.y = String(asym.y) + "xx";
+    asym.audit.value_symmetry.y_chars = String(asym.y).length;
     const ra = checkFixture(asym);
     assert.strictEqual(ra.ok, false);
     assert.ok(ra.errors.some((e) => /symmetry_chars/.test(e)), ra.errors.join("; "));
@@ -496,16 +510,18 @@ function runSync(test, assert) {
 async function runAsync(atest, assert) {
   await atest("S2v2 stub driver: generates α/β/N, logs prompt+raw+parsed, never fetches", async () => {
     const fixtures = loadAllFixtures().filter((f) => f.id === "s2v2-archive-color");
+    const x = fixtures[0].x;
+    const y = fixtures[0].y;
     let fetches = 0;
     const driver = {
       id: "stub-qwen",
       complete: async (prompt, meta) => {
         assert.ok(prompt.indexOf("Recall:") >= 0);
-        if (meta.arm === "alpha") return "sorin";
-        if (meta.arm === "beta") return "velka";
+        if (meta.arm === "alpha") return x;
+        if (meta.arm === "beta") return y;
         if (meta.arm === "N") return "";
-        if (meta.arm === "AAx") return "sorin";
-        if (meta.arm === "AAy") return "velka";
+        if (meta.arm === "AAx") return x;
+        if (meta.arm === "AAy") return y;
         throw new Error("bad arm");
       },
       fetch: async () => { fetches++; throw new Error("fetch must not run in stub"); },
@@ -514,9 +530,9 @@ async function runAsync(atest, assert) {
     assert.strictEqual(fetches, 0);
     assert.strictEqual(result.cases.length, 1);
     const c = result.cases[0];
-    assert.ok(c.arms.alpha.prompt.indexOf("The chosen archive color is sorin.") >= 0);
-    assert.ok(c.arms.alpha.prompt.indexOf("The chosen archive color is velka.") >= 0);
-    assert.ok(c.arms.beta.prompt.indexOf("The chosen archive color is velka.") >= 0);
+    assert.ok(c.arms.alpha.prompt.indexOf("The chosen archive color is " + x + ".") >= 0);
+    assert.ok(c.arms.alpha.prompt.indexOf("The chosen archive color is " + y + ".") >= 0);
+    assert.ok(c.arms.beta.prompt.indexOf("The chosen archive color is " + y + ".") >= 0);
     assert.strictEqual(c.arms.alpha.parsed.pick, "X");
     assert.strictEqual(c.arms.beta.parsed.pick, "Y");
     assert.strictEqual(c.eval.pair_class, "PP");
@@ -526,22 +542,24 @@ async function runAsync(atest, assert) {
     assert.strictEqual(result.summary.pair_class_n_clean.PP, 1);
     assert.strictEqual(result.summary.aa_rate, 1);
     assert.strictEqual(result.decision.instrument_ok, true);
-    assert.ok(c.arms.AAx.prompt.indexOf("The chosen archive color is sorin.") >= 0);
+    assert.ok(c.arms.AAx.prompt.indexOf("The chosen archive color is " + x + ".") >= 0);
     assert.ok(c.arms.AAx.prompt.indexOf("Related:") >= 0);
     // Both channels agree on X: Related also carries T(X), not T(Y).
-    assert.ok(c.arms.AAx.prompt.split("Related:")[1].indexOf("sorin") >= 0);
-    assert.ok(c.arms.AAx.prompt.split("Related:")[1].indexOf("velka") < 0);
+    assert.ok(c.arms.AAx.prompt.split("Related:")[1].indexOf(x) >= 0);
+    assert.ok(c.arms.AAx.prompt.split("Related:")[1].indexOf(y) < 0);
   });
 
   await atest("S2v2 stub: XX value-bias is classified, not reported as peer", async () => {
     const fixtures = loadAllFixtures().filter((f) => f.id === "s2v2-archive-color");
+    const x = fixtures[0].x;
+    const y = fixtures[0].y;
     const result = await s2.runFixtures(fixtures, {
       id: "stub",
       complete: async (_p, meta) => {
         if (meta.arm === "N") return "no idea";
-        if (meta.arm === "AAx") return "sorin";
-        if (meta.arm === "AAy") return "velka";
-        return "sorin"; // both α and β emit X
+        if (meta.arm === "AAx") return x;
+        if (meta.arm === "AAy") return y;
+        return x; // both α and β emit X
       },
     });
     assert.strictEqual(result.cases[0].eval.pair_class, "XX");
@@ -554,14 +572,16 @@ async function runAsync(atest, assert) {
 
   await atest("S2v2 A/A gate: stub AAx miss marks the run INVALID (not a channel verdict)", async () => {
     const fixtures = loadAllFixtures().filter((f) => f.id === "s2v2-archive-color");
+    const x = fixtures[0].x;
+    const y = fixtures[0].y;
     const result = await s2.runFixtures(fixtures, {
       id: "stub",
       complete: async (_p, meta) => {
         if (meta.arm === "N") return "";
         if (meta.arm === "AAx") return ""; // instrument fail
-        if (meta.arm === "AAy") return "velka";
-        if (meta.arm === "alpha") return "sorin";
-        if (meta.arm === "beta") return "velka";
+        if (meta.arm === "AAy") return y;
+        if (meta.arm === "alpha") return x;
+        if (meta.arm === "beta") return y;
         throw new Error("bad arm");
       },
     });

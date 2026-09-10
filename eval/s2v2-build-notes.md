@@ -482,3 +482,187 @@ or drop. See disagreement #3.
 
 Live run still waits on freeze: cosine bound, value re-selection, C4 GPT
 marks.
+
+---
+
+## Round 3 — fixture finalization (2026-09-10)
+
+Three decided tasks (Ember's calls). **No live driver. No `--live`.**
+Embedder at `:1234` was up (cosine re-measured and written). llama.cpp
+`:8080` `/tokenize` was down (BPE skipped, not fabricated). No text
+generation on any port.
+
+### Old → new value swaps
+
+| case | old | new | why the old one was flagged |
+|---|---|---|---|
+| `s2v2-archive-color` | `sorin` → `bivod` | Romanian given name | |
+| `s2v2-archive-color` | `velka` → `nurel` | Czech/Slovak *velká* ("big"/"great") | |
+| `s2v2-held-stencil` | `yulka` → `qimra` | Slavic diminutive of Yulia | |
+| `s2v2-held-stencil` | `porin` → `wosku` | protein name / recognizable lexical item | |
+
+Replacements were picked for **symmetry + meaninglessness only**: same
+length (5), lowercase, no shared substring/prefix/suffix ≥3, trigram
+Jaccard 0, not in the bundled lexicon/namelist, not a recognizable
+English/common-language word or name I could find. Cosine was measured
+*after* the pick, not used to choose letters. After the swap, C4
+`world_knowledge` on those four sides moved from `possible` to
+`impossible` (a fresh nonsense token is not world-knowledge-derivable).
+This is the round-2 disagreement resolution without dropping the cases.
+
+`nurel` contains the Arabic/Turkish name-root *nur-* ("light"). The
+**whole token** is not a listed given name (the bar that flagged
+`sorin`). I kept it. GPT can still flag the root.
+
+Held-out values other than `yulka`/`porin` were checked; none were
+GPT-grade real words. Left in place.
+
+### Code-family verdict: leave them
+
+`envelope-code` `jumlen`/`vorpac`, `gate-code` `tormin`/`breska`,
+`crate-code` `peshek`/`dorlan`. Intra-pair morphological code-ness is
+**symmetric**: all six are 6-letter pronounceable invented names, no
+digits, no mixed case, no PIN/alphanumeric shape. Neither member of any
+pair looks more "code-like" than its partner. The remaining flag is
+**family-level** (query says "code", values are name-like) — an N-arm /
+validity concern, not an intra-pair swap. I did not swap.
+
+Out-of-scope possibles I did **not** expand the swap list to (GPT named
+four tokens, not these): `peshek` ≈ Czech *pešek* (chess pawn);
+`dorlan` is a rare given name; `wendu` is Chinese pinyin for 温度
+("temperature"). Flagged here, not silently edited.
+
+### Cosine bound FROZEN at 0.05
+
+Re-measured all 29 cases (nomic-embed-text-v1.5 @ `:1234`) and wrote
+the numbers. Bound applied: in-pool over 0.05 quarantined (excluded
+from analysis, not repaired); held-out over 0.05 reported only.
+
+**Final quarantine list:**
+
+| id | \|Δ\| | pool | action |
+|---|---|---|---|
+| `s2v2-held-procedure` | 0.0867 | held-out | reported only |
+| `s2v2-drawer-lining` | 0.0570 | in-pool | excluded from analysis |
+| `s2v2-ink-color` | 0.0561 | in-pool | excluded from analysis |
+| `s2v2-envelope-code` | 0.0511 | in-pool | excluded from analysis |
+
+Next under the bound: `s2v2-crate-code` 0.0484, then new
+`s2v2-mending-thread` 0.0454. Swapped archive-color landed at 0.0006;
+held-stencil at 0.0126. I did **not** retune `mending-thread` toward a
+smaller Δ — 0.0454 is under the frozen bound; chasing would be the
+gaming the bound exists to prevent. If a later re-embed noise-bumps it
+over, it quarantines.
+
+### Five new in-pool cases (headroom)
+
+| id | query | x / y | \|Δ\| |
+|---|---|---|---|
+| `s2v2-parcel-ribbon` | Which ribbon should I use when wrapping the outgoing parcel? | `nuvik` / `pajem` | 0.0022 |
+| `s2v2-mending-thread` | Which thread should I pull from the mending kit for the winter coat? | `hunvek` / `pralod` | 0.0454 |
+| `s2v2-guest-towel` | Which towel should I set out for overnight guests? | `kasvod` / `brelun` | 0.0184 |
+| `s2v2-spice-jar` | Which jar on the spice rack is the one I refill first? | `kadrumo` / `bivnole` | 0.0181 |
+| `s2v2-coffee-mug` | Which mug should I put out for coffee guests? | `nivdask` / `gremolt` | 0.0164 |
+
+Same everyday-notes register; new template families (`ribbon` / `thread`
+/ `towel` / `jar` / `mug`); answer_index=2 (in-pool position control
+unchanged); 5 distractors; shared N-arm filler; full audit + first-pass
+C4 (all paths `impossible`). x/y assignment on three of the five was
+flipped vs alphabetical so corpus x<y vs x>y stays 15/14 (not cosine).
+
+### Final counts
+
+| | n |
+|---|---|
+| total fixtures | 29 |
+| in-pool | 23 |
+| held-out | 6 (unchanged; still held out) |
+| quarantined in-pool | 3 |
+| quarantined held-out | 1 (reported only) |
+| analysis-eligible in-pool if N-clean | **20** |
+
+### What stays AUTHOR-ASSERTED for GPT
+
+| Claim | Notes |
+|---|---|
+| **C4 path marks** | Author first-pass. After the real-word swap, **every** path on all 29 cases is `impossible`, including `world_knowledge` on the swapped pairs and `anaphora` on `held-anaphora` (query `it` binds the wooden box, not the lining value). Checker validates shape only. |
+| **values_arbitrary** | Invented / prior-free? Mechanical absence ≠ prior-freeness. New tokens and `nurel`'s *nur-* root are the look. |
+| **n_unguessable** | Live N-arm. Both x and y must fail under N. Code-family format clash lives here. |
+| **lexical_class tag** | Author tag `invented-name`. |
+| **held-out structural freshness** | Unchanged. |
+| **template subtle framing** | Regex still only catches `unusual`/`correct`/…. |
+| **peshek / dorlan / wendu** | Out-of-scope possibles; I did not swap. |
+
+### Gate output (real, this build)
+
+```
+node test.js
+624 passed, 0 failed
+```
+
+```
+node eval/run.js
+TOTAL: 27/31 checks passed
+SqliteStore scorecard matches golden case-for-case.
+No regressions vs golden.
+```
+
+Golden did not move. This slice does not touch the recall path.
+
+```
+node eval/s2v2-run.js --assemble-only
+Masked-identity assertion held on 29 fixtures (α/β/AAx/AAy/N assembled; α/β differ only by the swapped value). No generation.
+```
+
+```
+node eval/s2v2-audit-check.js
+S2v2 audit-check: 29 fixtures  held_out=6  mechanical_fail=0  balance_fail=0
+  BPE /tokenize skipped  tokenizer unreachable at http://localhost:8080/tokenize (fetch failed)
+  COSINE_DELTA_BOUND=0.05
+  wrote measured cosine into s2v2.jsonl (29 fixtures)
+  quarantined_by_cosine n=4  in-pool=3  held-out=1
+    in-pool excluded from analysis: s2v2-drawer-lining(0.0570), s2v2-ink-color(0.0561), s2v2-envelope-code(0.0511)
+    held-out reported only: s2v2-held-procedure(0.0867)
+  WARNs: 3 flag(s) across 3 case(s) (not mechanical fails).
+All fixtures passed mechanical checks. values_arbitrary + n_unguessable + derivation_audit marks remain author-asserted.
+```
+
+The 3 remaining WARNs are the code-family format-clash flags (justified
+above). No real-word WARNs remain in the corpus. GPT-named values
+surface as `used=(not in corpus)` and still hit the lexicon if they
+sneak back.
+
+### Disagreements / pushback (round 3)
+
+1. **I updated `docs/phases/s2v2-prereg.md`** even though the brief
+   listed only the eval files. BUG-006: the bound going from proposal
+   to frozen is a documented behaviour of the instrument; leaving the
+   prereg saying PROPOSAL would be stale. Status line and bound
+   paragraph updated; v2 history left as history.
+
+2. **Code-family: I did not swap.** The brief said swap only if
+   genuinely asymmetric. They are not. If you wanted the values
+   themselves to look like codes (digits, mixed alphanum) *symmetrically*,
+   that is a different ask — it would also change the N-arm (a digit
+   guess becomes more tempting). I will not invent that.
+
+3. **`mending-thread` at 0.0454.** Under the bound. A backup pair
+   (`brelun`/`kasvod`) measured 0.0081 on that template, but that pair
+   was already assigned to `guest-towel` and swapping to chase a
+   smaller Δ is the thing the freeze forbids. Left it.
+
+4. **Round-2 C4 `world_knowledge=possible` on name-class priors.** Ember
+   resolved this by swapping the tokens rather than dropping the cases
+   or keeping `possible`. I agree with the swap. The marks are now
+   `impossible` because the new tokens are nonsense, not because I
+   relitigated the old tokens.
+
+### What this slice did not do
+
+- Did not call qwen / any `/v1/chat/completions`. Did not pass `--live`.
+- Did not repair a quarantined case to land under 0.05.
+- Did not fabricate BPE token ids (`:8080` down).
+- Did not change `golden.json` or the RM-00 case set.
+- Did not add a fifth MCP verb.
+
+Live run still waits on GPT C4 marks.

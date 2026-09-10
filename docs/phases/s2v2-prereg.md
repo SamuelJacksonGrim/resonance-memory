@@ -12,12 +12,10 @@ overturned a correct primary in 4/7 — but that 57% is **confounded by query-sa
 wrong `Related:` sentence was phrased closer to the query than the primary row in every hijack).
 S2v2 removes the confound and asks the clean question.
 
-**Status: METHOD LOCKED; fixture content pending GPT re-audit + freeze.** Reconciled from
-`s2v2-prereg-draft.md` against GPT's cross-check (v1), then revised again after GPT's **fixture
-audit** returned *do-not-run-yet* with ten pre-live changes (v2 — see [History](#history)). The
-method is settled; two items await a GPT/Samuel **freeze** before the live run: the cosine
-`|Δ|` bound value, and any real-word/code-family value re-selection. Nothing runs live until those
-are frozen and the C4 derivation audit is marked.
+**Status: METHOD LOCKED; cosine bound frozen at 0.05; real-word swaps + 5 in-pool headroom cases
+done (round 3).** C4 path marks remain author-asserted pending GPT. Nothing runs live until the
+C4 derivation audit is marked. Reconciled from `s2v2-prereg-draft.md` against GPT's cross-check
+(v1), then revised after GPT's **fixture audit** (v2 — see [History](#history)).
 
 ## Terminology — the measured thing vs the interpreted thing
 
@@ -104,9 +102,10 @@ Same content; the 2×2 form is the less error-prone way to hold it.)
   pronounceable, semantically-empty pairs (`navor / telun`) over one-looks-like-a-name /
   one-looks-like-a-fantasy-noun; do **not** use UUID-garbage (values should behave like ordinary
   lexical items). Values named by GPT to scrutinize for real-word/name priors: `sorin` (Romanian
-  given name), `velka` (Czech *velká*), `yulka`/`porin`, and the **code-family** pairs (query says
-  "code", values are name-like) for asymmetric "code-ness". Any real-word re-selection is a
-  freeze-time decision, not a silent edit.
+  given name), `velka` (Czech *velká*), `yulka`/`porin` — **swapped in round 3** for genuine
+  nonsense (`bivod`/`nurel`, `qimra`/`wosku`). The **code-family** pairs (query says "code",
+  values are name-like) were re-checked for intra-pair "code-ness" asymmetry at freeze and
+  left in place (symmetric name-like tokens; family-level format clash is an N-arm concern).
 - **Primary block realism:** the `T(value)` answer-sentence sits among a small fixed set of
   **neutral distractor rows** (identical across α/β) that favor neither value; `Related:` is the
   single `T(other value)` line. Answer-sentence position within the primary block is fixed
@@ -224,17 +223,15 @@ matched-phrasing test can *exonerate* the driver as readily as convict it.
   (repairing values after seeing the number is the post-hoc tuning we're avoiding): it is excluded
   from the main channel estimate and reported with its measured Δ. **Held-out** cases may exceed
   the bound and are kept as reported stress cases (never folded into the main estimate).
-  - **Proposed bound `|Δcos| ≤ 0.05`** — rationale: the two answer-sentences differ by exactly one
-    meaningless pseudo-word; query-alignment must come from the shared template, so swapping the
-    value may not shift query-cosine by more than ~0.05 or the value is itself carrying
-    query-alignment (an asymmetry). On the built corpus this quarantines `held-procedure`
-    (|Δ|=0.087, held-out — fine) and in-pool `drawer-lining` (0.057), `ink-color` (0.056),
-    `envelope-code` (0.051). **This bound is a PROPOSAL, frozen only on GPT/Samuel sign-off** — set
-    from the construction rationale, not to hit a case count; the full 24-case distribution is on
-    the table for that decision. (Consequence: quarantining ~3 in-pool cases leaves the in-pool set
-    near the 15-minimum floor with no headroom → likely add ~4 symmetric in-pool cases; also a
-    freeze-time decision.) Cosine equality is *supporting* evidence — the shared template +
-    counterbalancing do the heavy lifting; cosine ≠ salience equality; this backstops the template.
+  - **Frozen bound `|Δcos| ≤ 0.05`** (round 3; Ember's call) — rationale: the two answer-sentences
+    differ by exactly one meaningless pseudo-word; query-alignment must come from the shared
+    template, so swapping the value may not shift query-cosine by more than ~0.05 or the value is
+    itself carrying query-alignment (an asymmetry). Set from the construction rationale, not to
+    hit a case count. In-pool over the bound is quarantined (excluded from analysis, not repaired);
+    held-out over the bound is reported only. Round 3 also swapped the accidentally-real values
+    (`sorin`/`velka`/`yulka`/`porin`) and added 5 in-pool cases for headroom after quarantine.
+    Cosine equality is *supporting* evidence — the shared template + counterbalancing do the heavy
+    lifting; cosine ≠ salience equality; this backstops the template.
 - **Randomization balance (audited):** across the corpus, X/Y assignment, template families,
   value lengths, and held-out structure must each be balanced — no stupid asymmetry (e.g. "all
   the odd values happen to be X in α") hiding in the fixtures.
@@ -286,6 +283,11 @@ nor inherently dangerous — **a secondary evidence channel whose behavioral wei
 
 ## History
 
+- **2026-09-10 — round 3 fixture freeze.** Cosine bound frozen at `|Δcos| ≤ 0.05`. Accidentally-real
+  values swapped (`sorin`/`velka` → `bivod`/`nurel`; `yulka`/`porin` → `qimra`/`wosku`); their C4
+  `world_knowledge` marks moved to `impossible`. Code-family intra-pair code-ness judged symmetric
+  (left in place). Five in-pool headroom cases added (`parcel-ribbon`, `mending-thread`,
+  `guest-towel`, `spice-jar`, `coffee-mug`). Live driver still gated on GPT C4 marks.
 - **2026-09-10 — v2, after GPT's fixture audit (do-not-run-yet, 10 changes).** GPT audited the
   built branch corpus and returned a strong *don't run yet*. Three of its ten asks were **already
   satisfied** in Grok's harness and are now named explicitly rather than re-implemented: value-bias

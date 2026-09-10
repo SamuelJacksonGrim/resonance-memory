@@ -883,7 +883,7 @@ function printSummary(result) {
     console.log("  N-prior dropped from analysis: " + s.n_prior_ids.join(", "));
   }
   console.log("  COSINE_DELTA_BOUND=" + COSINE_DELTA_BOUND
-    + " (PROPOSAL, not frozen)"
+    + " (frozen)"
     + "  quarantined_in_pool=" + ((s.quarantined_in_pool && s.quarantined_in_pool.join(", ")) || "(none)")
     + "  quarantined_held_out="
     + ((s.quarantined_by_cosine || []).filter((id) => (s.held_out_ids || []).includes(id)).join(", ") || "(none)"));

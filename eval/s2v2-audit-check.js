@@ -9,7 +9,7 @@
  * (at your option) any later version. See <https://www.gnu.org/licenses/>.
  */
 /*
- * eval/s2v2-audit-check.js — static fixture checker for S2v2 (round 2).
+ * eval/s2v2-audit-check.js — static fixture checker for S2v2 (round 3).
  *
  * Makes the embedded audit object inspectable instead of trusted. Per case
  * it verifies what CAN be verified without a model, and it PRINTS the split
@@ -26,7 +26,7 @@
  *   COSINE (embedder if reachable; never a hard-fail, never a value repair):
  *     MEASURES cos(T(x), Q), cos(T(y), Q), |Δ| and WRITES them into the
  *     fixture jsonl (replace nulls). Cases with |Δ| > COSINE_DELTA_BOUND
- *     are quarantined (flagged, not repaired). Bound is a PROPOSAL.
+ *     are quarantined (flagged, not repaired). Bound is FROZEN at 0.05.
  *
  *   VALUE-SYMMETRY expanded (GPT #6/#10): real BPE via /tokenize (skip if
  *     down), shared substrings/affixes/trigrams, reference-lexical flags.
@@ -59,14 +59,15 @@ const PRIVILEGE_RE = /\b(unusual|unique|correct|true|actual|official|authentic|p
 /*
  * COSINE_DELTA_BOUND = 0.05
  *
- * PROPOSAL, not frozen. Human freeze-time decision (GPT/Samuel sign-off).
- * Construction rationale (prereg v2): the two answer-sentences differ by
- * exactly one meaningless pseudo-word; query-alignment must come from the
- * shared template, so swapping the value may not shift query-cosine by
- * more than ~0.05 or the value is itself carrying query-alignment.
+ * FROZEN (round 3; Ember's call). Construction rationale (prereg v2): the
+ * two answer-sentences differ by exactly one meaningless pseudo-word;
+ * query-alignment must come from the shared template, so swapping the
+ * value may not shift query-cosine by more than ~0.05 or the value is
+ * itself carrying query-alignment.
  *
  * Do NOT change this constant to keep or drop cases. Do NOT repair fixture
- * values to land under it. A human may change it at freeze time.
+ * values to land under it. In-pool over the bound is quarantined (excluded
+ * from analysis); held-out over the bound is reported only.
  */
 const COSINE_DELTA_BOUND = 0.05;
 
@@ -467,7 +468,7 @@ function checkCorpusBalance(fixtures) {
   }
 
   if (n < 20) flags.push("corpus n=" + n + " < 20 (prereg floor)");
-  if (n !== 24) flags.push("corpus n=" + n + " (brief asked 24)");
+  if (n !== 29) flags.push("corpus n=" + n + " (round 3: 24 original + 5 in-pool headroom = 29)");
   if ((held.true || 0) < 5) flags.push("held_out=" + (held.true || 0) + " < 5");
   for (const [fam, c] of Object.entries(families)) {
     if (c > 8) flags.push("family " + fam + " has " + c + " cases (>8, gross skew)");
@@ -691,7 +692,7 @@ function valuePairAudit(fix, bpeRow) {
   if (xLex.hit) warns.push("X=" + JSON.stringify(x) + " LEXICAL HIT (" + xLex.kind + "): " + xLex.detail);
   if (yLex.hit) warns.push("Y=" + JSON.stringify(y) + " LEXICAL HIT (" + yLex.kind + "): " + yLex.detail);
   if (fix.family === CODE_FAMILY) {
-    warns.push("code-family: query asks for a 'code'; values are name-like (asymmetric code-ness — freeze-time re-selection, not auto-fail)");
+    warns.push("code-family: query asks for a 'code'; values are name-like (family-level format clash; intra-pair code-ness judged symmetric at freeze — not auto-fail)");
   }
 
   return {
@@ -898,9 +899,9 @@ async function cosineAudit(fixtures) {
 
 function formatCosine(report, fixtures) {
   const lines = [];
-  lines.push("  COSINE (MEASURED; bound is a PROPOSAL, not frozen):");
+  lines.push("  COSINE (MEASURED; bound FROZEN at 0.05):");
   lines.push("    COSINE_DELTA_BOUND=" + COSINE_DELTA_BOUND
-    + "  (do not retune to keep/drop cases; freeze-time human decision)");
+    + "  (do not retune to keep/drop cases; in-pool over bound quarantined, held-out reported only)");
   if (!report) {
     lines.push("    (no cosine report)");
     return lines.join("\n");
