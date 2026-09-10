@@ -33,6 +33,15 @@ stable; sophistication grows in the substrate, not in the API.
   hub-promotes at `w = 0.3`. Recommended shape for Lane A's corpus: `l1`,
   still flag-off. Harness: `node eval/combiner-research.js`. Report:
   `combiner-research.md`.
+- **Lane C edge-density knobs (exploratory; defaults unchanged).** Save-time
+  bind K / floor and an ephemeral recall-time seed-kNN are env + live-config
+  (`RESONANCE_SAVE_K` / `save_k`, `RESONANCE_SAVE_MIN_COS` / `save_min_cos`,
+  `RESONANCE_WARM_RECALL_BIND` / `recall_bind`, default **off**). Eval/tests
+  pin the Phase 0.1 constants so a leftover user env cannot move the golden.
+  Measured on the field-rescue leaves: reachability is already 3/3 at K=5;
+  denser K raises degree, not E. Vegetarian bonus 0 is the combiner (rank-10
+  seed), not a missing wire. Report: `docs/edge-density.md`. Harness:
+  `node eval/edge-density.js`.
 - **Exploratory activation-in-rank (`RESONANCE_WARM_RANK`, default off).** Phase 1
   activation can enter primary rank behind a flag: `final = cosine + 0.3 ·
   spread-activation` (weight = Related: `maxBonus`, not tuned). Flag-off is

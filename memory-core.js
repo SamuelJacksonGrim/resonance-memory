@@ -68,6 +68,21 @@
  *   saveSeed      () -> boolean   (production may pass true; eval MUST pass false)
  *   warmTrace     () -> boolean   (RESONANCE_WARM_TRACE; default off, zero-cost)
  *   warmEdgeCap   () -> number    (RESONANCE_WARM_EDGE_CAP; default 512)
+ *   saveTimeK     () -> number    (RESONANCE_SAVE_K; default SAVE_TIME_K=5.
+ *                                  How many neighbors bindSaveTimeNeighbors
+ *                                  persists. Eval/tests pin the constant so a
+ *                                  leftover user env cannot move the golden.)
+ *   saveTimeMinCos () -> number   (RESONANCE_SAVE_MIN_COS; default 0.25.
+ *                                  Floor for a persist-worthy pair. Must stay
+ *                                  ≤ SEMANTIC_PRUNE_GATE or pruneSweep will
+ *                                  immediately mark the new edges pruned.)
+ *   recallBind    () -> boolean   (RESONANCE_WARM_RECALL_BIND; default OFF.
+ *                                  Union an ephemeral seed-kNN into the
+ *                                  spread graph at recall. Does NOT persist
+ *                                  (I5/I7). Flag-off is today's EdgeStore
+ *                                  walk. Exploratory — Lane C.)
+ *   recallBindK   () -> number    (RESONANCE_WARM_RECALL_BIND_K; default 5)
+ *   recallBindMinCos () -> number (RESONANCE_WARM_RECALL_BIND_MINCOS; default 0.25)
  *   dedupThresholds () -> { hi, lo }  (RM-02.b cosine bands. Production reads
  *                                  live config + env; eval/tests use defaults
  *                                  or inject. Never read CONFIG_PATH here —
@@ -167,6 +182,67 @@ const RRF_K = 60;
  */
 const SAVE_TIME_K = 5;
 const SAVE_TIME_MIN_COS = 0.25;
+
+function envInt(name, fallback) {
+  const n = envNumber(name, fallback);
+  return Number.isFinite(n) ? Math.trunc(n) : fallback;
+}
+
+function envFlagOn(name) {
+  return ["1", "true", "yes", "on"].includes(String(process.env[name] || "").toLowerCase());
+}
+
+/*
+ * Save-time bind knobs (Lane C). Defaults are the Phase 0.1 constants;
+ * env / live-config can raise K or drop the floor for an A/B. createCore
+ * defaults pin the constants so eval/tests never inherit a user env
+ * (same posture as warmRank). server.js injects these readers.
+ *
+ * Do not lower save_min_cos below SEMANTIC_PRUNE_GATE (0.25) without
+ * also dropping the prune gate: pruneSweep marks unreinforced edges
+ * below the gate, so a denser persist-net would be born already dead.
+ */
+function readSaveTimeK(config) {
+  const env = envInt("RESONANCE_SAVE_K", SAVE_TIME_K);
+  const c = config && typeof config === "object" ? config : {};
+  if (typeof c.save_k === "number" && Number.isFinite(c.save_k) && c.save_k > 0) {
+    return Math.trunc(c.save_k);
+  }
+  return env > 0 ? env : SAVE_TIME_K;
+}
+
+function readSaveTimeMinCos(config) {
+  const env = envNumber("RESONANCE_SAVE_MIN_COS", SAVE_TIME_MIN_COS);
+  const c = config && typeof config === "object" ? config : {};
+  if (typeof c.save_min_cos === "number" && Number.isFinite(c.save_min_cos) && c.save_min_cos >= 0) {
+    return c.save_min_cos;
+  }
+  return Number.isFinite(env) && env >= 0 ? env : SAVE_TIME_MIN_COS;
+}
+
+function readRecallBind(config) {
+  const c = config && typeof config === "object" ? config : {};
+  if (typeof c.recall_bind === "boolean") return c.recall_bind;
+  return envFlagOn("RESONANCE_WARM_RECALL_BIND");
+}
+
+function readRecallBindK(config) {
+  const env = envInt("RESONANCE_WARM_RECALL_BIND_K", SAVE_TIME_K);
+  const c = config && typeof config === "object" ? config : {};
+  if (typeof c.recall_bind_k === "number" && Number.isFinite(c.recall_bind_k) && c.recall_bind_k > 0) {
+    return Math.trunc(c.recall_bind_k);
+  }
+  return env > 0 ? env : SAVE_TIME_K;
+}
+
+function readRecallBindMinCos(config) {
+  const env = envNumber("RESONANCE_WARM_RECALL_BIND_MINCOS", SAVE_TIME_MIN_COS);
+  const c = config && typeof config === "object" ? config : {};
+  if (typeof c.recall_bind_mincos === "number" && Number.isFinite(c.recall_bind_mincos) && c.recall_bind_mincos >= 0) {
+    return c.recall_bind_mincos;
+  }
+  return Number.isFinite(env) && env >= 0 ? env : SAVE_TIME_MIN_COS;
+}
 
 /*
  * Related: kNN floor. Live-config `field_minsim` (and embedder_tuning.field_minsim)
@@ -562,7 +638,8 @@ async function dedupExisting({ store, embed, apply = false, now, thresholds } = 
  *
  * Deliberately NOT field.buildEdges: that path is recall-time (k=2, minSim
  * 0.70, mutual kNN, Hebbian bonus blended in). This is save-time structure
- * (K=5, minCos 0.25, no bonus, not mutual). Recall still uses field.js;
+ * (default K=5, minCos 0.25, no bonus, not mutual; `RESONANCE_SAVE_K` /
+ * `RESONANCE_SAVE_MIN_COS`). Recall still uses field.js;
  * wiring Related: to this table is a later, gated slice.
  *
  * src_versions are tagged to the CANONICAL endpoints (edge.a / edge.b after
@@ -632,6 +709,74 @@ function bindSaveTimeNeighbors(rec, mems, edgeStore, opts = {}) {
   }
   if (wrote && typeof edgeStore.save === "function") edgeStore.save();
   return { bound: top.length, wrote };
+}
+
+/*
+ * Ephemeral seed-kNN for spread (Lane C recall-time bind). NOT persisted.
+ * Walks only `seeds` (or every vector if seeds omitted) against the live
+ * set, top-K above minCos, both directions so a 1-hop spread from a seed
+ * can reach the neighbor. Cost is O(|seeds| · N) cosine — not O(N²).
+ * WARM_EDGE_CAP still gates whether spread runs at all (N ≤ 512 default).
+ */
+function recallTimeNeighborMap(mems, opts = {}) {
+  const k = opts.k != null ? opts.k : SAVE_TIME_K;
+  const minCos = opts.minCos != null ? opts.minCos : SAVE_TIME_MIN_COS;
+  const seedSet = opts.seeds
+    ? new Set([...opts.seeds].map((s) => String(s && s.id != null ? s.id : s)))
+    : null;
+  const withVec = (mems || []).filter((m) => m && isVector(m.embedding));
+  const sources = seedSet
+    ? withVec.filter((m) => seedSet.has(String(m.id)))
+    : withVec;
+  const map = new Map();
+  function add(from, to, sim) {
+    if (!from || !to || !(sim > 0)) return;
+    if (!map.has(from)) map.set(from, []);
+    map.get(from).push({ id: to, sim });
+  }
+  for (const a of sources) {
+    const scores = [];
+    for (const b of withVec) {
+      if (String(a.id) === String(b.id)) continue;
+      const cos = cosine(a.embedding, b.embedding);
+      if (cos >= minCos) scores.push({ id: String(b.id), sim: cos });
+    }
+    scores.sort((x, y) => y.sim - x.sim);
+    for (const n of scores.slice(0, k)) {
+      add(String(a.id), n.id, n.sim);
+      add(n.id, String(a.id), n.sim);
+    }
+  }
+  return map;
+}
+
+function unionAdjacency(a, b) {
+  const out = new Map();
+  function add(src) {
+    if (!src || typeof src.forEach !== "function") return;
+    for (const [from, nbrs] of src) {
+      const key = String(from);
+      if (!out.has(key)) out.set(key, []);
+      const list = out.get(key);
+      const seen = new Map(list.map((n) => [String(n.id), n]));
+      for (const n of nbrs || []) {
+        const id = String(n && n.id != null ? n.id : "");
+        const sim = Number(n && n.sim);
+        if (!id || !Number.isFinite(sim) || sim <= 0) continue;
+        const prev = seen.get(id);
+        if (!prev) {
+          const rec = { id, sim };
+          list.push(rec);
+          seen.set(id, rec);
+        } else if (sim > prev.sim) {
+          prev.sim = sim;
+        }
+      }
+    }
+  }
+  add(a);
+  add(b);
+  return out;
 }
 
 // Fallback ranking when the embedder is unreachable at recall time. Deliberately
@@ -837,6 +982,11 @@ function createCore({
   getEdges,
   warmTrace = () => false,
   warmEdgeCap = () => WARM_EDGE_CAP,
+  saveTimeK = () => SAVE_TIME_K,
+  saveTimeMinCos = () => SAVE_TIME_MIN_COS,
+  recallBind = () => false,
+  recallBindK = () => SAVE_TIME_K,
+  recallBindMinCos = () => SAVE_TIME_MIN_COS,
   dedupThresholds = () => readDedupThresholds(null),
   fieldMinSim = () => readFieldMinSim(null),
   constraintGate = () => readConstraintGate(null),
@@ -866,10 +1016,54 @@ function createCore({
     return null;
   }
 
-  function edgesFor(mems, now) {
+  function resolveSaveK() {
+    try {
+      const t = typeof saveTimeK === "function" ? saveTimeK() : saveTimeK;
+      if (typeof t === "number" && Number.isFinite(t) && t > 0) return Math.trunc(t);
+    } catch { /* injected getter must never break save */ }
+    return SAVE_TIME_K;
+  }
+
+  function resolveSaveMinCos() {
+    try {
+      const t = typeof saveTimeMinCos === "function" ? saveTimeMinCos() : saveTimeMinCos;
+      if (typeof t === "number" && Number.isFinite(t) && t >= 0) return t;
+    } catch { /* injected getter must never break save */ }
+    return SAVE_TIME_MIN_COS;
+  }
+
+  function recallBindOn() {
+    try { return !!recallBind(); } catch { return false; }
+  }
+
+  function resolveRecallBindK() {
+    try {
+      const t = typeof recallBindK === "function" ? recallBindK() : recallBindK;
+      if (typeof t === "number" && Number.isFinite(t) && t > 0) return Math.trunc(t);
+    } catch { /* injected getter must never break recall */ }
+    return SAVE_TIME_K;
+  }
+
+  function resolveRecallBindMinCos() {
+    try {
+      const t = typeof recallBindMinCos === "function" ? recallBindMinCos() : recallBindMinCos;
+      if (typeof t === "number" && Number.isFinite(t) && t >= 0) return t;
+    } catch { /* injected getter must never break recall */ }
+    return SAVE_TIME_MIN_COS;
+  }
+
+  function edgesFor(mems, now, seeds) {
     const L = hebbianStore();
     if (typeof getEdges === "function") return asEdgeMap(getEdges(mems, L));
-    return activationEdgesFromStore(L, mems, { now: now != null ? now : Date.now() });
+    const persist = activationEdgesFromStore(L, mems, { now: now != null ? now : Date.now() });
+    if (!recallBindOn()) return persist;
+    // Ephemeral: union seed-kNN into the walk. Nothing is written (I5/I7).
+    const ephemeral = recallTimeNeighborMap(mems, {
+      k: resolveRecallBindK(),
+      minCos: resolveRecallBindMinCos(),
+      seeds: seeds || null,
+    });
+    return unionAdjacency(persist, ephemeral);
   }
 
   function liveIds(mems) {
@@ -894,7 +1088,8 @@ function createCore({
     pruneWarm(W, mems);
     W.seedFromRetrieval(hits);
     if (shouldSpread(mems, warmEdgeCap())) {
-      W.spread(edgesFor(mems, W.now()), { live: liveIds(mems) });
+      const seeds = (hits || []).map((h) => h && h.id != null ? h.id : h);
+      W.spread(edgesFor(mems, W.now(), seeds), { live: liveIds(mems) });
     }
     return W;
   }
@@ -934,7 +1129,7 @@ function createCore({
       W.seed([id], 1.0);
       const mems = store.current();
       if (shouldSpread(mems, warmEdgeCap())) {
-        W.spread(edgesFor(mems, W.now()), { live: liveIds(mems) });
+        W.spread(edgesFor(mems, W.now(), [id]), { live: liveIds(mems) });
       }
     } catch { /* warmth must never break save */ }
   }
@@ -963,7 +1158,7 @@ function createCore({
       const L = hebbianStore();
       if (!L) return;
       if (typeof L.acceptRequest === "function" && !L.acceptRequest(requestId)) return;
-      bindSaveTimeNeighbors(rec, mems, L);
+      bindSaveTimeNeighbors(rec, mems, L, { k: resolveSaveK(), minCos: resolveSaveMinCos() });
     } catch { /* save-time bind must never break save */ }
   }
 
@@ -1408,6 +1603,8 @@ function createCore({
 module.exports = {
   createCore, cosine, keywordScore, defaultGetEdges, asEdgeMap,
   bindSaveTimeNeighbors, SAVE_TIME_K, SAVE_TIME_MIN_COS,
+  readSaveTimeK, readSaveTimeMinCos, readRecallBind, readRecallBindK, readRecallBindMinCos,
+  recallTimeNeighborMap, unionAdjacency,
   FIELD_MINSIM, readFieldMinSim, readConstraintGate, nodeMaxBonus,
   DEDUP_HI, DEDUP_LO, readDedupThresholds,
   planDedupExisting, applyDedupExisting, dedupExisting,

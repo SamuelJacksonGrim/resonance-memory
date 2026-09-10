@@ -46,7 +46,9 @@ const fs = require("fs");
 const path = require("path");
 const { hebbianDecayType, openEdgeStore } = require("./edges.js");
 const { openStore } = require("./store.js");
-const { createCore, readDedupThresholds, readFieldMinSim, readConstraintGate } = require("./memory-core.js");
+const { createCore, readDedupThresholds, readFieldMinSim, readConstraintGate,
+  readSaveTimeK, readSaveTimeMinCos, readRecallBind, readRecallBindK, readRecallBindMinCos,
+} = require("./memory-core.js");
 const extract = require("./extract.js");
 const { detectEmbedderFamily, formatEmbedInputs } = require("./embed-invoke.js");
 const { WarmField } = require("./warm.js");
@@ -119,6 +121,21 @@ function fieldMinSim() {
 }
 function constraintGate() {
   return readConstraintGate(liveConfig());
+}
+function saveTimeK() {
+  return readSaveTimeK(liveConfig());
+}
+function saveTimeMinCos() {
+  return readSaveTimeMinCos(liveConfig());
+}
+function recallBind() {
+  return readRecallBind(liveConfig());
+}
+function recallBindK() {
+  return readRecallBindK(liveConfig());
+}
+function recallBindMinCos() {
+  return readRecallBindMinCos(liveConfig());
 }
 function embedderFamily() {
   const c = liveConfig();
@@ -256,6 +273,7 @@ async function bootStore() {
   core = createCore({
     store, embed, fieldEnabled, getEdgeStore, dedupThresholds, fieldMinSim, constraintGate,
     warmEnabled, getWarm, warmRank, warmRankWeight, warmRankShape, warmRankRrfK,
+    saveTimeK, saveTimeMinCos, recallBind, recallBindK, recallBindMinCos,
     saveSeed: () => true,          // production: a just-saved fact is warm without a recall
     warmTrace, warmEdgeCap,
     extractEnabled, extractCapable, extract: extractFn,

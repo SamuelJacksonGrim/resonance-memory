@@ -3501,6 +3501,8 @@ const {
 const {
   createCore, defaultGetEdges, cosine: coreCosine,
   bindSaveTimeNeighbors, SAVE_TIME_K, SAVE_TIME_MIN_COS, FIELD_MINSIM,
+  readSaveTimeK, readSaveTimeMinCos, readRecallBind,
+  recallTimeNeighborMap, unionAdjacency,
   DEDUP_HI, DEDUP_LO, readDedupThresholds,
   dedupExisting,
   WARM_RANK_WEIGHT, WARM_RANK_SHAPE, FUSE_SHAPES,
@@ -8126,11 +8128,17 @@ async function asyncTests() {
       embed: embedFn,
       fieldEnabled: () => !!opts.fieldOn,
       getEdgeStore,
+      getWarm: opts.getWarm,
       // Phase 0.1/0.3 bind tests construct many collinear vecAtCos()
       // neighbors whose pairwise cosine is ≥ DEDUP_LO even though the
       // texts are distinct labels ("n90" vs "n80"). Dedup is RM-02.b's
       // job; these tests isolate bind. Bands above 1 disable it.
       dedupThresholds: opts.dedupThresholds || (() => ({ hi: 2, lo: 2 })),
+      saveTimeK: opts.saveTimeK != null ? () => opts.saveTimeK : () => SAVE_TIME_K,
+      saveTimeMinCos: opts.saveTimeMinCos != null ? () => opts.saveTimeMinCos : () => SAVE_TIME_MIN_COS,
+      recallBind: () => !!opts.recallBind,
+      recallBindK: opts.recallBindK != null ? () => opts.recallBindK : () => SAVE_TIME_K,
+      recallBindMinCos: opts.recallBindMinCos != null ? () => opts.recallBindMinCos : () => SAVE_TIME_MIN_COS,
     });
     return { store, core, edgesPath, edges: () => getEdgeStore() };
   }
@@ -8208,6 +8216,118 @@ async function asyncTests() {
     const e = edges().get(hubId, onId);
     assert.ok(Math.abs(e.semantic.value - coreCosine(vecs.hub, vecs.on)) < 1e-12,
       "cached semantic.value is the measured cosine");
+  });
+
+  await atest("injected saveTimeK=10 binds 10, default remains 5", async () => {
+    const vecs = {
+      hub: [1, 0, 0],
+      n90: vecAtCos(0.90), n85: vecAtCos(0.85), n80: vecAtCos(0.80),
+      n70: vecAtCos(0.70), n60: vecAtCos(0.60), n50: vecAtCos(0.50),
+      n40: vecAtCos(0.40), n30: vecAtCos(0.30), n20: vecAtCos(0.28),
+      n10: vecAtCos(0.26),
+    };
+    const embed = async (texts) => texts.map((t) => vecs[t] || [0, 0, 1]);
+    const { store, core, edges } = saveTimeCore("st-k10.jsonl", embed, { saveTimeK: 10 });
+    for (const name of ["n90", "n85", "n80", "n70", "n60", "n50", "n40", "n30", "n20", "n10"]) {
+      await core.save(name);
+    }
+    await core.save("hub");
+    const hubId = store.current().find((m) => m.text === "hub").id;
+    assert.strictEqual(edges().incident(hubId).length, 10, "injected K=10 binds all 10 above 0.25");
+    assert.strictEqual(SAVE_TIME_K, 5, "the constant is still the default");
+    const prevK = process.env.RESONANCE_SAVE_K;
+    const prevBind = process.env.RESONANCE_WARM_RECALL_BIND;
+    delete process.env.RESONANCE_SAVE_K;
+    delete process.env.RESONANCE_WARM_RECALL_BIND;
+    try {
+      assert.strictEqual(readSaveTimeK(null), 5);
+      assert.strictEqual(readSaveTimeK({ save_k: 10 }), 10);
+      assert.strictEqual(readSaveTimeMinCos({ save_min_cos: 0.15 }), 0.15);
+      assert.strictEqual(readRecallBind(null), false);
+      assert.strictEqual(readRecallBind({ recall_bind: true }), true);
+    } finally {
+      if (prevK != null) process.env.RESONANCE_SAVE_K = prevK;
+      else delete process.env.RESONANCE_SAVE_K;
+      if (prevBind != null) process.env.RESONANCE_WARM_RECALL_BIND = prevBind;
+      else delete process.env.RESONANCE_WARM_RECALL_BIND;
+    }
+  });
+
+  await atest("minCos below SEMANTIC_PRUNE_GATE is born already dead (I8)", async () => {
+    const vecs = { hub: [1, 0, 0], leaf: vecAtCos(0.20) };
+    const embed = async (texts) => texts.map((t) => vecs[t] || [0, 0, 1]);
+    const { store, core, edges } = saveTimeCore("st-prune-trap.jsonl", embed, { saveTimeMinCos: 0.15 });
+    await core.save("leaf");
+    await core.save("hub");
+    const hubId = store.current().find((m) => m.text === "hub").id;
+    const leafId = store.current().find((m) => m.text === "leaf").id;
+    const e = edges().get(hubId, leafId);
+    assert.ok(e, "0.20 clears the lowered persist floor");
+    assert.ok(e.semantic.value < SEMANTIC_PRUNE_GATE, "but it sits below the prune gate");
+    assert.strictEqual(e.pruned_at, null, "not pruned until sweep");
+    const n = edges().pruneSweep();
+    assert.ok(n >= 1, "pruneSweep marks the unreinforced-and-weak edge");
+    assert.ok(edges().get(hubId, leafId).pruned_at, "soft-pruned, not dropped (I8)");
+    assert.strictEqual(edges().incident(hubId).length, 0, "incident() skips pruned_at — spread cannot walk it");
+  });
+
+  await atest("recall-time bind is ephemeral: spread reaches a below-floor pair without persisting", async () => {
+    const vecs = { hub: [1, 0, 0], leaf: vecAtCos(0.20), decoy: [0, 0, 1] };
+    const embed = async (texts, opts) => {
+      if (opts && opts.role === "query") return [vecs.hub];
+      return texts.map((t) => vecs[t] || vecs.decoy);
+    };
+    const offWarm = new WarmField({ now: () => 1_000_000 });
+    const { store: stOff, core: off, edges: eOff } = saveTimeCore("st-rboff.jsonl", embed, {
+      getWarm: () => offWarm,
+    });
+    await off.save("leaf");
+    await off.save("decoy");
+    await off.save("hub");
+    const hubOff = stOff.current().find((m) => m.text === "hub").id;
+    const leafOff = stOff.current().find((m) => m.text === "leaf").id;
+    assert.strictEqual(eOff().get(hubOff, leafOff), undefined, "0.20 is below persist floor");
+    await off.recall("query-for-hub", 1);
+    assert.ok(!(offWarm.get(leafOff) > 0), "flag-off: no persist edge → spread does not reach leaf");
+
+    const onWarm = new WarmField({ now: () => 1_000_000 });
+    const { store: stOn, core: on, edges: eOn } = saveTimeCore("st-rbon.jsonl", embed, {
+      getWarm: () => onWarm,
+      recallBind: true,
+      recallBindK: 5,
+      recallBindMinCos: 0.15,
+    });
+    await on.save("leaf");
+    await on.save("decoy");
+    await on.save("hub");
+    const hubOn = stOn.current().find((m) => m.text === "hub").id;
+    const leafOn = stOn.current().find((m) => m.text === "leaf").id;
+    const sizeBefore = eOn().size;
+    await on.recall("query-for-hub", 1);
+    assert.ok(onWarm.get(leafOn) > 0, "flag-on: ephemeral seed-kNN carries E to the leaf");
+    assert.strictEqual(eOn().get(hubOn, leafOn), undefined, "still not persisted");
+    assert.strictEqual(eOn().size, sizeBefore, "recall-time bind writes no edge (I5/I7)");
+  });
+
+  await atest("recallTimeNeighborMap is seed-only kNN, unionAdjacency keeps max sim", async () => {
+    const mems = [
+      { id: "A", embedding: [1, 0, 0] },
+      { id: "B", embedding: vecAtCos(0.80) },
+      { id: "C", embedding: vecAtCos(0.20) },
+    ];
+    const m = recallTimeNeighborMap(mems, { k: 1, minCos: 0.15, seeds: ["A"] });
+    const aNbrs = (m.get("A") || []).map((n) => n.id).sort();
+    assert.deepStrictEqual(aNbrs, ["B"], "k=1 from A picks B, not C");
+    const loose = recallTimeNeighborMap(mems, { k: 5, minCos: 0.15, seeds: ["A"] });
+    const ids = new Set((loose.get("A") || []).map((n) => n.id));
+    assert.ok(ids.has("B") && ids.has("C"), "lower floor + higher K reaches C");
+    const u = unionAdjacency(
+      new Map([["A", [{ id: "B", sim: 0.5 }]]]),
+      new Map([["A", [{ id: "B", sim: 0.8 }, { id: "C", sim: 0.2 }]]])
+    );
+    const uA = u.get("A");
+    assert.strictEqual(uA.find((n) => n.id === "B").sim, 0.8, "union keeps the stronger sim");
+    assert.ok(uA.find((n) => n.id === "C"), "union adds the new neighbor");
   });
 
   await atest("src_versions follow canonical edge.a/edge.b, not save-argument order", async () => {
