@@ -1,0 +1,2509 @@
+{
+  "driver": {
+    "id": "qwen3.6-35B-A3B-stock-Q4_K_M",
+    "url": "http://localhost:8080/v1/chat/completions",
+    "gen_params": {
+      "temperature": 0,
+      "seed": 7,
+      "max_tokens": 128,
+      "enable_thinking": false
+    }
+  },
+  "cases": [
+    {
+      "id": "h6-s1-copper-labels",
+      "stratum": "related-necessary",
+      "family": "A",
+      "held_out": false,
+      "gold": {
+        "slot": "permanent_notebook_label_color",
+        "value": "copper"
+      },
+      "primary_block": "1. [id memory-03] The north alcove notebooks sit on the third shelf, behind the glass door.\n2. [id memory-08] Permanent notebooks use a cloth spine and a sewn binding; drafts use a spiral.\n3. [id memory-11] The label tape dispenser lives in the left desk drawer, next to the spare clips.\n4. [id memory-19] Last restock of label tape was on the eleventh; the roll is still more than half full.\n5. [id memory-24] Draft notebooks are marked with leftover packaging tape, never the assigned label tape.",
+      "arms": {
+        "A": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: I keep two kinds of notebooks on the north alcove shelves: drafts and the ones I intend to keep.\n\nRecall:\n1. [id memory-03] The north alcove notebooks sit on the third shelf, behind the glass door.\n2. [id memory-08] Permanent notebooks use a cloth spine and a sewn binding; drafts use a spiral.\n3. [id memory-11] The label tape dispenser lives in the left desk drawer, next to the spare clips.\n4. [id memory-19] Last restock of label tape was on the eleventh; the roll is still more than half full.\n5. [id memory-24] Draft notebooks are marked with leftover packaging tape, never the assigned label tape.\n\nRelated:\n- [id memory-17] Sam uses copper for labels on notebooks he intends to keep permanently.\n\nQuestion: What color should I use for the permanent notebook labels?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: I keep two kinds of notebooks on the north alcove shelves: drafts and the ones I intend to keep.\n\nRecall:\n1. [id memory-03] The north alcove notebooks sit on the third shelf, behind the glass door.\n2. [id memory-08] Permanent notebooks use a cloth spine and a sewn binding; drafts use a spiral.\n3. [id memory-11] The label tape dispenser lives in the left desk drawer, next to the spare clips.\n4. [id memory-19] Last restock of label tape was on the eleventh; the roll is still more than half full.\n5. [id memory-24] Draft notebooks are marked with leftover packaging tape, never the assigned label tape.\n\nRelated:\n- [id memory-17] Sam uses copper for labels on notebooks he intends to keep permanently.\n\nQuestion: What color should I use for the permanent notebook labels?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "copper",
+          "parsed": {
+            "ok": true,
+            "matched": "copper",
+            "reason": "match",
+            "present": [
+              "copper"
+            ]
+          },
+          "primary_ids": [
+            "memory-03",
+            "memory-08",
+            "memory-11",
+            "memory-19",
+            "memory-24"
+          ]
+        },
+        "B": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: I keep two kinds of notebooks on the north alcove shelves: drafts and the ones I intend to keep.\n\nRecall:\n1. [id memory-03] The north alcove notebooks sit on the third shelf, behind the glass door.\n2. [id memory-08] Permanent notebooks use a cloth spine and a sewn binding; drafts use a spiral.\n3. [id memory-11] The label tape dispenser lives in the left desk drawer, next to the spare clips.\n4. [id memory-19] Last restock of label tape was on the eleventh; the roll is still more than half full.\n5. [id memory-24] Draft notebooks are marked with leftover packaging tape, never the assigned label tape.\n\nRelated:\n- [id memory-40] The hallway shelf was dusted last Thursday and the vacuum bag was replaced.\n\nQuestion: What color should I use for the permanent notebook labels?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: I keep two kinds of notebooks on the north alcove shelves: drafts and the ones I intend to keep.\n\nRecall:\n1. [id memory-03] The north alcove notebooks sit on the third shelf, behind the glass door.\n2. [id memory-08] Permanent notebooks use a cloth spine and a sewn binding; drafts use a spiral.\n3. [id memory-11] The label tape dispenser lives in the left desk drawer, next to the spare clips.\n4. [id memory-19] Last restock of label tape was on the eleventh; the roll is still more than half full.\n5. [id memory-24] Draft notebooks are marked with leftover packaging tape, never the assigned label tape.\n\nRelated:\n- [id memory-40] The hallway shelf was dusted last Thursday and the vacuum bag was replaced.\n\nQuestion: What color should I use for the permanent notebook labels?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "None",
+          "parsed": {
+            "ok": false,
+            "matched": null,
+            "reason": "absent",
+            "present": []
+          },
+          "primary_ids": [
+            "memory-03",
+            "memory-08",
+            "memory-11",
+            "memory-19",
+            "memory-24"
+          ]
+        },
+        "D": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: I keep two kinds of notebooks on the north alcove shelves: drafts and the ones I intend to keep.\n\nRecall:\n1. [id memory-03] The north alcove notebooks sit on the third shelf, behind the glass door.\n2. [id memory-08] Permanent notebooks use a cloth spine and a sewn binding; drafts use a spiral.\n3. [id memory-11] The label tape dispenser lives in the left desk drawer, next to the spare clips.\n4. [id memory-19] Last restock of label tape was on the eleventh; the roll is still more than half full.\n5. [id memory-24] Draft notebooks are marked with leftover packaging tape, never the assigned label tape.\n\nRelated:\n- [id memory-17] Sam uses saffron for labels on notebooks he intends to keep permanently.\n\nQuestion: What color should I use for the permanent notebook labels?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: I keep two kinds of notebooks on the north alcove shelves: drafts and the ones I intend to keep.\n\nRecall:\n1. [id memory-03] The north alcove notebooks sit on the third shelf, behind the glass door.\n2. [id memory-08] Permanent notebooks use a cloth spine and a sewn binding; drafts use a spiral.\n3. [id memory-11] The label tape dispenser lives in the left desk drawer, next to the spare clips.\n4. [id memory-19] Last restock of label tape was on the eleventh; the roll is still more than half full.\n5. [id memory-24] Draft notebooks are marked with leftover packaging tape, never the assigned label tape.\n\nRelated:\n- [id memory-17] Sam uses saffron for labels on notebooks he intends to keep permanently.\n\nQuestion: What color should I use for the permanent notebook labels?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "saffron",
+          "parsed": {
+            "ok": false,
+            "matched": null,
+            "reason": "wrong",
+            "present": [
+              "saffron"
+            ]
+          },
+          "primary_ids": [
+            "memory-03",
+            "memory-08",
+            "memory-11",
+            "memory-19",
+            "memory-24"
+          ]
+        },
+        "N": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: I keep two kinds of notebooks on the north alcove shelves: drafts and the ones I intend to keep.\n\nRecall:\n1. [id memory-n01] The porch light timer is set to come on after sunset and off at late night.\n2. [id memory-n02] A bag of rice sits on the pantry floor, unopened since the last delivery.\n3. [id memory-n03] The spare batteries are in the hall closet, second box from the left.\n4. [id memory-n04] Library books go back on the first sunny morning of the week.\n5. [id memory-n05] The watering can stays by the back step, emptied after each use.\n\nRelated:\n- [id memory-n40] The hallway shelf was dusted last Thursday and the vacuum bag was replaced.\n\nQuestion: What color should I use for the permanent notebook labels?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: I keep two kinds of notebooks on the north alcove shelves: drafts and the ones I intend to keep.\n\nRecall:\n1. [id memory-n01] The porch light timer is set to come on after sunset and off at late night.\n2. [id memory-n02] A bag of rice sits on the pantry floor, unopened since the last delivery.\n3. [id memory-n03] The spare batteries are in the hall closet, second box from the left.\n4. [id memory-n04] Library books go back on the first sunny morning of the week.\n5. [id memory-n05] The watering can stays by the back step, emptied after each use.\n\nRelated:\n- [id memory-n40] The hallway shelf was dusted last Thursday and the vacuum bag was replaced.\n\nQuestion: What color should I use for the permanent notebook labels?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "Unknown",
+          "parsed": {
+            "ok": false,
+            "matched": null,
+            "reason": "absent",
+            "present": []
+          },
+          "primary_ids": [
+            "memory-n01",
+            "memory-n02",
+            "memory-n03",
+            "memory-n04",
+            "memory-n05"
+          ]
+        }
+      },
+      "eval": {
+        "id": "h6-s1-copper-labels",
+        "stratum": "related-necessary",
+        "family": "A",
+        "held_out": false,
+        "A_correct": true,
+        "B_correct": false,
+        "D_correct": false,
+        "N_correct": false,
+        "b_to_a": true,
+        "a_to_b": false,
+        "a_to_d": true,
+        "drop_n_pass": false,
+        "drop_b_succeeds": false,
+        "valid": true,
+        "s1": true,
+        "s2": false
+      }
+    },
+    {
+      "id": "h6-s1-envelope-614",
+      "stratum": "related-necessary",
+      "family": "B",
+      "held_out": false,
+      "gold": {
+        "slot": "archive_envelope_code",
+        "value": "614"
+      },
+      "primary_block": "1. [id memory-31] The archive crate lives under the bench in the mudroom, lid marked with a painted stripe.\n2. [id memory-33] Envelopes for the crate are the kraft ones with the metal clasp, not the windowed office kind.\n3. [id memory-36] Pickup for the crate is the morning after a restock, never the same day.\n4. [id memory-39] A spare clasp pack is in the mudroom hook-basket, third hook from the door.\n5. [id memory-44] The hall table is oak; mail that is not for the crate goes in the ceramic bowl.",
+      "arms": {
+        "A": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: The kraft clasp envelopes on the hall table are the ones that leave with the crate.\n\nRecall:\n1. [id memory-31] The archive crate lives under the bench in the mudroom, lid marked with a painted stripe.\n2. [id memory-33] Envelopes for the crate are the kraft ones with the metal clasp, not the windowed office kind.\n3. [id memory-36] Pickup for the crate is the morning after a restock, never the same day.\n4. [id memory-39] A spare clasp pack is in the mudroom hook-basket, third hook from the door.\n5. [id memory-44] The hall table is oak; mail that is not for the crate goes in the ceramic bowl.\n\nRelated:\n- [id memory-32] Sam assigned 614 as the code on the envelope that goes into the archive crate.\n\nQuestion: What code should I write on the envelope before it goes into the archive crate?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: The kraft clasp envelopes on the hall table are the ones that leave with the crate.\n\nRecall:\n1. [id memory-31] The archive crate lives under the bench in the mudroom, lid marked with a painted stripe.\n2. [id memory-33] Envelopes for the crate are the kraft ones with the metal clasp, not the windowed office kind.\n3. [id memory-36] Pickup for the crate is the morning after a restock, never the same day.\n4. [id memory-39] A spare clasp pack is in the mudroom hook-basket, third hook from the door.\n5. [id memory-44] The hall table is oak; mail that is not for the crate goes in the ceramic bowl.\n\nRelated:\n- [id memory-32] Sam assigned 614 as the code on the envelope that goes into the archive crate.\n\nQuestion: What code should I write on the envelope before it goes into the archive crate?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "614",
+          "parsed": {
+            "ok": true,
+            "matched": "614",
+            "reason": "match",
+            "present": [
+              "614"
+            ]
+          },
+          "primary_ids": [
+            "memory-31",
+            "memory-33",
+            "memory-36",
+            "memory-39",
+            "memory-44"
+          ]
+        },
+        "B": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: The kraft clasp envelopes on the hall table are the ones that leave with the crate.\n\nRecall:\n1. [id memory-31] The archive crate lives under the bench in the mudroom, lid marked with a painted stripe.\n2. [id memory-33] Envelopes for the crate are the kraft ones with the metal clasp, not the windowed office kind.\n3. [id memory-36] Pickup for the crate is the morning after a restock, never the same day.\n4. [id memory-39] A spare clasp pack is in the mudroom hook-basket, third hook from the door.\n5. [id memory-44] The hall table is oak; mail that is not for the crate goes in the ceramic bowl.\n\nRelated:\n- [id memory-45] The mudroom rug was shaken out on Monday and left on the porch rail to dry.\n\nQuestion: What code should I write on the envelope before it goes into the archive crate?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: The kraft clasp envelopes on the hall table are the ones that leave with the crate.\n\nRecall:\n1. [id memory-31] The archive crate lives under the bench in the mudroom, lid marked with a painted stripe.\n2. [id memory-33] Envelopes for the crate are the kraft ones with the metal clasp, not the windowed office kind.\n3. [id memory-36] Pickup for the crate is the morning after a restock, never the same day.\n4. [id memory-39] A spare clasp pack is in the mudroom hook-basket, third hook from the door.\n5. [id memory-44] The hall table is oak; mail that is not for the crate goes in the ceramic bowl.\n\nRelated:\n- [id memory-45] The mudroom rug was shaken out on Monday and left on the porch rail to dry.\n\nQuestion: What code should I write on the envelope before it goes into the archive crate?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "None",
+          "parsed": {
+            "ok": false,
+            "matched": null,
+            "reason": "absent",
+            "present": []
+          },
+          "primary_ids": [
+            "memory-31",
+            "memory-33",
+            "memory-36",
+            "memory-39",
+            "memory-44"
+          ]
+        },
+        "D": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: The kraft clasp envelopes on the hall table are the ones that leave with the crate.\n\nRecall:\n1. [id memory-31] The archive crate lives under the bench in the mudroom, lid marked with a painted stripe.\n2. [id memory-33] Envelopes for the crate are the kraft ones with the metal clasp, not the windowed office kind.\n3. [id memory-36] Pickup for the crate is the morning after a restock, never the same day.\n4. [id memory-39] A spare clasp pack is in the mudroom hook-basket, third hook from the door.\n5. [id memory-44] The hall table is oak; mail that is not for the crate goes in the ceramic bowl.\n\nRelated:\n- [id memory-32] Sam assigned 271 as the code on the envelope that goes into the archive crate.\n\nQuestion: What code should I write on the envelope before it goes into the archive crate?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: The kraft clasp envelopes on the hall table are the ones that leave with the crate.\n\nRecall:\n1. [id memory-31] The archive crate lives under the bench in the mudroom, lid marked with a painted stripe.\n2. [id memory-33] Envelopes for the crate are the kraft ones with the metal clasp, not the windowed office kind.\n3. [id memory-36] Pickup for the crate is the morning after a restock, never the same day.\n4. [id memory-39] A spare clasp pack is in the mudroom hook-basket, third hook from the door.\n5. [id memory-44] The hall table is oak; mail that is not for the crate goes in the ceramic bowl.\n\nRelated:\n- [id memory-32] Sam assigned 271 as the code on the envelope that goes into the archive crate.\n\nQuestion: What code should I write on the envelope before it goes into the archive crate?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "271",
+          "parsed": {
+            "ok": false,
+            "matched": null,
+            "reason": "wrong",
+            "present": [
+              "271"
+            ]
+          },
+          "primary_ids": [
+            "memory-31",
+            "memory-33",
+            "memory-36",
+            "memory-39",
+            "memory-44"
+          ]
+        },
+        "N": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: The kraft clasp envelopes on the hall table are the ones that leave with the crate.\n\nRecall:\n1. [id memory-n01] The porch light timer is set to come on after sunset and off at late night.\n2. [id memory-n02] A bag of rice sits on the pantry floor, unopened since the last delivery.\n3. [id memory-n03] The spare batteries are in the hall closet, second box from the left.\n4. [id memory-n04] Library books go back on the first sunny morning of the week.\n5. [id memory-n05] The watering can stays by the back step, emptied after each use.\n\nRelated:\n- [id memory-n40] The hallway shelf was dusted last Thursday and the vacuum bag was replaced.\n\nQuestion: What code should I write on the envelope before it goes into the archive crate?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: The kraft clasp envelopes on the hall table are the ones that leave with the crate.\n\nRecall:\n1. [id memory-n01] The porch light timer is set to come on after sunset and off at late night.\n2. [id memory-n02] A bag of rice sits on the pantry floor, unopened since the last delivery.\n3. [id memory-n03] The spare batteries are in the hall closet, second box from the left.\n4. [id memory-n04] Library books go back on the first sunny morning of the week.\n5. [id memory-n05] The watering can stays by the back step, emptied after each use.\n\nRelated:\n- [id memory-n40] The hallway shelf was dusted last Thursday and the vacuum bag was replaced.\n\nQuestion: What code should I write on the envelope before it goes into the archive crate?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "None",
+          "parsed": {
+            "ok": false,
+            "matched": null,
+            "reason": "absent",
+            "present": []
+          },
+          "primary_ids": [
+            "memory-n01",
+            "memory-n02",
+            "memory-n03",
+            "memory-n04",
+            "memory-n05"
+          ]
+        }
+      },
+      "eval": {
+        "id": "h6-s1-envelope-614",
+        "stratum": "related-necessary",
+        "family": "B",
+        "held_out": false,
+        "A_correct": true,
+        "B_correct": false,
+        "D_correct": false,
+        "N_correct": false,
+        "b_to_a": true,
+        "a_to_b": false,
+        "a_to_d": true,
+        "drop_n_pass": false,
+        "drop_b_succeeds": false,
+        "valid": true,
+        "s1": true,
+        "s2": false
+      }
+    },
+    {
+      "id": "h6-s1-room-norbrae",
+      "stratum": "related-necessary",
+      "family": "C",
+      "held_out": false,
+      "gold": {
+        "slot": "frosted_door_room_name",
+        "value": "norbrae"
+      },
+      "primary_block": "1. [id memory-51] The frosted door sticks in humid weather; a felt pad on the latch helps.\n2. [id memory-53] The kitchen side of that door has a hook for the spare apron.\n3. [id memory-56] The cleaner comes on alternate Fridays and brings their own vacuum.\n4. [id memory-58] The small room holds overflow linens, not food.\n5. [id memory-61] A painted nameplate is screwed to the door at eye level; the screws are brass.",
+      "arms": {
+        "A": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: The small room off the kitchen has a frosted door and a painted nameplate.\n\nRecall:\n1. [id memory-51] The frosted door sticks in humid weather; a felt pad on the latch helps.\n2. [id memory-53] The kitchen side of that door has a hook for the spare apron.\n3. [id memory-56] The cleaner comes on alternate Fridays and brings their own vacuum.\n4. [id memory-58] The small room holds overflow linens, not food.\n5. [id memory-61] A painted nameplate is screwed to the door at eye level; the screws are brass.\n\nRelated:\n- [id memory-52] Sam named the frosted-door room off the kitchen Norbrae, and that is the name the cleaner is told to skip.\n\nQuestion: When I tell the cleaner which room to skip, what name should I use for the frosted-door room?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: The small room off the kitchen has a frosted door and a painted nameplate.\n\nRecall:\n1. [id memory-51] The frosted door sticks in humid weather; a felt pad on the latch helps.\n2. [id memory-53] The kitchen side of that door has a hook for the spare apron.\n3. [id memory-56] The cleaner comes on alternate Fridays and brings their own vacuum.\n4. [id memory-58] The small room holds overflow linens, not food.\n5. [id memory-61] A painted nameplate is screwed to the door at eye level; the screws are brass.\n\nRelated:\n- [id memory-52] Sam named the frosted-door room off the kitchen Norbrae, and that is the name the cleaner is told to skip.\n\nQuestion: When I tell the cleaner which room to skip, what name should I use for the frosted-door room?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "Norbrae",
+          "parsed": {
+            "ok": true,
+            "matched": "norbrae",
+            "reason": "match",
+            "present": [
+              "norbrae"
+            ]
+          },
+          "primary_ids": [
+            "memory-51",
+            "memory-53",
+            "memory-56",
+            "memory-58",
+            "memory-61"
+          ]
+        },
+        "B": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: The small room off the kitchen has a frosted door and a painted nameplate.\n\nRecall:\n1. [id memory-51] The frosted door sticks in humid weather; a felt pad on the latch helps.\n2. [id memory-53] The kitchen side of that door has a hook for the spare apron.\n3. [id memory-56] The cleaner comes on alternate Fridays and brings their own vacuum.\n4. [id memory-58] The small room holds overflow linens, not food.\n5. [id memory-61] A painted nameplate is screwed to the door at eye level; the screws are brass.\n\nRelated:\n- [id memory-62] The porch swing chain was oiled last weekend, and now that hinge no longer squeaks on a slow forward push.\n\nQuestion: When I tell the cleaner which room to skip, what name should I use for the frosted-door room?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: The small room off the kitchen has a frosted door and a painted nameplate.\n\nRecall:\n1. [id memory-51] The frosted door sticks in humid weather; a felt pad on the latch helps.\n2. [id memory-53] The kitchen side of that door has a hook for the spare apron.\n3. [id memory-56] The cleaner comes on alternate Fridays and brings their own vacuum.\n4. [id memory-58] The small room holds overflow linens, not food.\n5. [id memory-61] A painted nameplate is screwed to the door at eye level; the screws are brass.\n\nRelated:\n- [id memory-62] The porch swing chain was oiled last weekend, and now that hinge no longer squeaks on a slow forward push.\n\nQuestion: When I tell the cleaner which room to skip, what name should I use for the frosted-door room?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "overflow linens",
+          "parsed": {
+            "ok": false,
+            "matched": null,
+            "reason": "absent",
+            "present": []
+          },
+          "primary_ids": [
+            "memory-51",
+            "memory-53",
+            "memory-56",
+            "memory-58",
+            "memory-61"
+          ]
+        },
+        "D": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: The small room off the kitchen has a frosted door and a painted nameplate.\n\nRecall:\n1. [id memory-51] The frosted door sticks in humid weather; a felt pad on the latch helps.\n2. [id memory-53] The kitchen side of that door has a hook for the spare apron.\n3. [id memory-56] The cleaner comes on alternate Fridays and brings their own vacuum.\n4. [id memory-58] The small room holds overflow linens, not food.\n5. [id memory-61] A painted nameplate is screwed to the door at eye level; the screws are brass.\n\nRelated:\n- [id memory-52] Sam named the frosted-door room off the kitchen Kessit, and that is the name the cleaner is told to skip.\n\nQuestion: When I tell the cleaner which room to skip, what name should I use for the frosted-door room?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: The small room off the kitchen has a frosted door and a painted nameplate.\n\nRecall:\n1. [id memory-51] The frosted door sticks in humid weather; a felt pad on the latch helps.\n2. [id memory-53] The kitchen side of that door has a hook for the spare apron.\n3. [id memory-56] The cleaner comes on alternate Fridays and brings their own vacuum.\n4. [id memory-58] The small room holds overflow linens, not food.\n5. [id memory-61] A painted nameplate is screwed to the door at eye level; the screws are brass.\n\nRelated:\n- [id memory-52] Sam named the frosted-door room off the kitchen Kessit, and that is the name the cleaner is told to skip.\n\nQuestion: When I tell the cleaner which room to skip, what name should I use for the frosted-door room?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "Kessit",
+          "parsed": {
+            "ok": false,
+            "matched": null,
+            "reason": "wrong",
+            "present": [
+              "kessit"
+            ]
+          },
+          "primary_ids": [
+            "memory-51",
+            "memory-53",
+            "memory-56",
+            "memory-58",
+            "memory-61"
+          ]
+        },
+        "N": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: The small room off the kitchen has a frosted door and a painted nameplate.\n\nRecall:\n1. [id memory-n01] The porch light timer is set to come on after sunset and off at late night.\n2. [id memory-n02] A bag of rice sits on the pantry floor, unopened since the last delivery.\n3. [id memory-n03] The spare batteries are in the hall closet, second box from the left.\n4. [id memory-n04] Library books go back on the first sunny morning of the week.\n5. [id memory-n05] The watering can stays by the back step, emptied after each use.\n\nRelated:\n- [id memory-n40] The hallway shelf was dusted last Thursday and the vacuum bag was replaced.\n\nQuestion: When I tell the cleaner which room to skip, what name should I use for the frosted-door room?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: The small room off the kitchen has a frosted door and a painted nameplate.\n\nRecall:\n1. [id memory-n01] The porch light timer is set to come on after sunset and off at late night.\n2. [id memory-n02] A bag of rice sits on the pantry floor, unopened since the last delivery.\n3. [id memory-n03] The spare batteries are in the hall closet, second box from the left.\n4. [id memory-n04] Library books go back on the first sunny morning of the week.\n5. [id memory-n05] The watering can stays by the back step, emptied after each use.\n\nRelated:\n- [id memory-n40] The hallway shelf was dusted last Thursday and the vacuum bag was replaced.\n\nQuestion: When I tell the cleaner which room to skip, what name should I use for the frosted-door room?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "The small room off the kitchen",
+          "parsed": {
+            "ok": false,
+            "matched": null,
+            "reason": "absent",
+            "present": []
+          },
+          "primary_ids": [
+            "memory-n01",
+            "memory-n02",
+            "memory-n03",
+            "memory-n04",
+            "memory-n05"
+          ]
+        }
+      },
+      "eval": {
+        "id": "h6-s1-room-norbrae",
+        "stratum": "related-necessary",
+        "family": "C",
+        "held_out": false,
+        "A_correct": true,
+        "B_correct": false,
+        "D_correct": false,
+        "N_correct": false,
+        "b_to_a": true,
+        "a_to_b": false,
+        "a_to_d": true,
+        "drop_n_pass": false,
+        "drop_b_succeeds": false,
+        "valid": true,
+        "s1": true,
+        "s2": false
+      }
+    },
+    {
+      "id": "h6-s1-marker-tavrin",
+      "stratum": "related-necessary",
+      "family": "D",
+      "held_out": false,
+      "gold": {
+        "slot": "grocery_list_marker",
+        "value": "tavrin"
+      },
+      "primary_block": "1. [id memory-71] Grocery lists are written on the pad that hangs by the fridge magnet.\n2. [id memory-73] Markers live in the tin on the fridge; the tin also holds a spare magnet.\n3. [id memory-76] The weekly list is always started on Sunday evening after the fridge is checked.\n4. [id memory-78] Dried-out markers go in the jar under the sink, not back in the tin.\n5. [id memory-82] The pad uses a binder clip at the top so pages don't curl.",
+      "arms": {
+        "A": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: The grocery pad hangs by the fridge; markers live in the tin beside it.\n\nRecall:\n1. [id memory-71] Grocery lists are written on the pad that hangs by the fridge magnet.\n2. [id memory-73] Markers live in the tin on the fridge; the tin also holds a spare magnet.\n3. [id memory-76] The weekly list is always started on Sunday evening after the fridge is checked.\n4. [id memory-78] Dried-out markers go in the jar under the sink, not back in the tin.\n5. [id memory-82] The pad uses a binder clip at the top so pages don't curl.\n\nRelated:\n- [id memory-72] Sam's preferred marker for the weekly grocery list is tavrin.\n\nQuestion: Which marker should I pull when writing this week's grocery list?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: The grocery pad hangs by the fridge; markers live in the tin beside it.\n\nRecall:\n1. [id memory-71] Grocery lists are written on the pad that hangs by the fridge magnet.\n2. [id memory-73] Markers live in the tin on the fridge; the tin also holds a spare magnet.\n3. [id memory-76] The weekly list is always started on Sunday evening after the fridge is checked.\n4. [id memory-78] Dried-out markers go in the jar under the sink, not back in the tin.\n5. [id memory-82] The pad uses a binder clip at the top so pages don't curl.\n\nRelated:\n- [id memory-72] Sam's preferred marker for the weekly grocery list is tavrin.\n\nQuestion: Which marker should I pull when writing this week's grocery list?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "tavrin",
+          "parsed": {
+            "ok": true,
+            "matched": "tavrin",
+            "reason": "match",
+            "present": [
+              "tavrin"
+            ]
+          },
+          "primary_ids": [
+            "memory-71",
+            "memory-73",
+            "memory-76",
+            "memory-78",
+            "memory-82"
+          ]
+        },
+        "B": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: The grocery pad hangs by the fridge; markers live in the tin beside it.\n\nRecall:\n1. [id memory-71] Grocery lists are written on the pad that hangs by the fridge magnet.\n2. [id memory-73] Markers live in the tin on the fridge; the tin also holds a spare magnet.\n3. [id memory-76] The weekly list is always started on Sunday evening after the fridge is checked.\n4. [id memory-78] Dried-out markers go in the jar under the sink, not back in the tin.\n5. [id memory-82] The pad uses a binder clip at the top so pages don't curl.\n\nRelated:\n- [id memory-83] The fridge magnet tin was wiped after a condiment leaked.\n\nQuestion: Which marker should I pull when writing this week's grocery list?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: The grocery pad hangs by the fridge; markers live in the tin beside it.\n\nRecall:\n1. [id memory-71] Grocery lists are written on the pad that hangs by the fridge magnet.\n2. [id memory-73] Markers live in the tin on the fridge; the tin also holds a spare magnet.\n3. [id memory-76] The weekly list is always started on Sunday evening after the fridge is checked.\n4. [id memory-78] Dried-out markers go in the jar under the sink, not back in the tin.\n5. [id memory-82] The pad uses a binder clip at the top so pages don't curl.\n\nRelated:\n- [id memory-83] The fridge magnet tin was wiped after a condiment leaked.\n\nQuestion: Which marker should I pull when writing this week's grocery list?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "markers in the tin",
+          "parsed": {
+            "ok": false,
+            "matched": null,
+            "reason": "absent",
+            "present": []
+          },
+          "primary_ids": [
+            "memory-71",
+            "memory-73",
+            "memory-76",
+            "memory-78",
+            "memory-82"
+          ]
+        },
+        "D": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: The grocery pad hangs by the fridge; markers live in the tin beside it.\n\nRecall:\n1. [id memory-71] Grocery lists are written on the pad that hangs by the fridge magnet.\n2. [id memory-73] Markers live in the tin on the fridge; the tin also holds a spare magnet.\n3. [id memory-76] The weekly list is always started on Sunday evening after the fridge is checked.\n4. [id memory-78] Dried-out markers go in the jar under the sink, not back in the tin.\n5. [id memory-82] The pad uses a binder clip at the top so pages don't curl.\n\nRelated:\n- [id memory-72] Sam's preferred marker for the weekly grocery list is polbeck.\n\nQuestion: Which marker should I pull when writing this week's grocery list?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: The grocery pad hangs by the fridge; markers live in the tin beside it.\n\nRecall:\n1. [id memory-71] Grocery lists are written on the pad that hangs by the fridge magnet.\n2. [id memory-73] Markers live in the tin on the fridge; the tin also holds a spare magnet.\n3. [id memory-76] The weekly list is always started on Sunday evening after the fridge is checked.\n4. [id memory-78] Dried-out markers go in the jar under the sink, not back in the tin.\n5. [id memory-82] The pad uses a binder clip at the top so pages don't curl.\n\nRelated:\n- [id memory-72] Sam's preferred marker for the weekly grocery list is polbeck.\n\nQuestion: Which marker should I pull when writing this week's grocery list?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "polbeck",
+          "parsed": {
+            "ok": false,
+            "matched": null,
+            "reason": "wrong",
+            "present": [
+              "polbeck"
+            ]
+          },
+          "primary_ids": [
+            "memory-71",
+            "memory-73",
+            "memory-76",
+            "memory-78",
+            "memory-82"
+          ]
+        },
+        "N": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: The grocery pad hangs by the fridge; markers live in the tin beside it.\n\nRecall:\n1. [id memory-n01] The porch light timer is set to come on after sunset and off at late night.\n2. [id memory-n02] A bag of rice sits on the pantry floor, unopened since the last delivery.\n3. [id memory-n03] The spare batteries are in the hall closet, second box from the left.\n4. [id memory-n04] Library books go back on the first sunny morning of the week.\n5. [id memory-n05] The watering can stays by the back step, emptied after each use.\n\nRelated:\n- [id memory-n40] The hallway shelf was dusted last Thursday and the vacuum bag was replaced.\n\nQuestion: Which marker should I pull when writing this week's grocery list?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: The grocery pad hangs by the fridge; markers live in the tin beside it.\n\nRecall:\n1. [id memory-n01] The porch light timer is set to come on after sunset and off at late night.\n2. [id memory-n02] A bag of rice sits on the pantry floor, unopened since the last delivery.\n3. [id memory-n03] The spare batteries are in the hall closet, second box from the left.\n4. [id memory-n04] Library books go back on the first sunny morning of the week.\n5. [id memory-n05] The watering can stays by the back step, emptied after each use.\n\nRelated:\n- [id memory-n40] The hallway shelf was dusted last Thursday and the vacuum bag was replaced.\n\nQuestion: Which marker should I pull when writing this week's grocery list?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "markers",
+          "parsed": {
+            "ok": false,
+            "matched": null,
+            "reason": "absent",
+            "present": []
+          },
+          "primary_ids": [
+            "memory-n01",
+            "memory-n02",
+            "memory-n03",
+            "memory-n04",
+            "memory-n05"
+          ]
+        }
+      },
+      "eval": {
+        "id": "h6-s1-marker-tavrin",
+        "stratum": "related-necessary",
+        "family": "D",
+        "held_out": false,
+        "A_correct": true,
+        "B_correct": false,
+        "D_correct": false,
+        "N_correct": false,
+        "b_to_a": true,
+        "a_to_b": false,
+        "a_to_d": true,
+        "drop_n_pass": false,
+        "drop_b_succeeds": false,
+        "valid": true,
+        "s1": true,
+        "s2": false
+      }
+    },
+    {
+      "id": "h6-s1-box-verrin",
+      "stratum": "related-necessary",
+      "family": "E",
+      "held_out": false,
+      "gold": {
+        "slot": "key_box_lining_color",
+        "value": "verrin"
+      },
+      "primary_block": "1. [id memory-91] The wooden box on the dresser has a brass latch that clicks twice.\n2. [id memory-93] The spare house key is the one with the rubber sleeve, not the tagged office key.\n3. [id memory-96] The dresser stands against the east wall, under the small print of a harbor.\n4. [id memory-98] The box was a gift; the underside has a burned-in maker's mark, not a date.\n5. [id memory-104] Dusting the dresser is done with a dry cloth so the latch doesn't tarnish.",
+      "arms": {
+        "A": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: There's a wooden box on the dresser. I keep the spare house key in it.\nUser: The latch still clicks twice. I'm replacing the felt this weekend.\n\nRecall:\n1. [id memory-91] The wooden box on the dresser has a brass latch that clicks twice.\n2. [id memory-93] The spare house key is the one with the rubber sleeve, not the tagged office key.\n3. [id memory-96] The dresser stands against the east wall, under the small print of a harbor.\n4. [id memory-98] The box was a gift; the underside has a burned-in maker's mark, not a date.\n5. [id memory-104] Dusting the dresser is done with a dry cloth so the latch doesn't tarnish.\n\nRelated:\n- [id memory-92] The wooden key-box on the dresser is lined in verrin felt.\n\nQuestion: What color lining should I buy for it?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: There's a wooden box on the dresser. I keep the spare house key in it.\nUser: The latch still clicks twice. I'm replacing the felt this weekend.\n\nRecall:\n1. [id memory-91] The wooden box on the dresser has a brass latch that clicks twice.\n2. [id memory-93] The spare house key is the one with the rubber sleeve, not the tagged office key.\n3. [id memory-96] The dresser stands against the east wall, under the small print of a harbor.\n4. [id memory-98] The box was a gift; the underside has a burned-in maker's mark, not a date.\n5. [id memory-104] Dusting the dresser is done with a dry cloth so the latch doesn't tarnish.\n\nRelated:\n- [id memory-92] The wooden key-box on the dresser is lined in verrin felt.\n\nQuestion: What color lining should I buy for it?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "verrin",
+          "parsed": {
+            "ok": true,
+            "matched": "verrin",
+            "reason": "match",
+            "present": [
+              "verrin"
+            ]
+          },
+          "primary_ids": [
+            "memory-91",
+            "memory-93",
+            "memory-96",
+            "memory-98",
+            "memory-104"
+          ]
+        },
+        "B": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: There's a wooden box on the dresser. I keep the spare house key in it.\nUser: The latch still clicks twice. I'm replacing the felt this weekend.\n\nRecall:\n1. [id memory-91] The wooden box on the dresser has a brass latch that clicks twice.\n2. [id memory-93] The spare house key is the one with the rubber sleeve, not the tagged office key.\n3. [id memory-96] The dresser stands against the east wall, under the small print of a harbor.\n4. [id memory-98] The box was a gift; the underside has a burned-in maker's mark, not a date.\n5. [id memory-104] Dusting the dresser is done with a dry cloth so the latch doesn't tarnish.\n\nRelated:\n- [id memory-105] The porch rail was sanded yesterday and a cloth was left there.\n\nQuestion: What color lining should I buy for it?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: There's a wooden box on the dresser. I keep the spare house key in it.\nUser: The latch still clicks twice. I'm replacing the felt this weekend.\n\nRecall:\n1. [id memory-91] The wooden box on the dresser has a brass latch that clicks twice.\n2. [id memory-93] The spare house key is the one with the rubber sleeve, not the tagged office key.\n3. [id memory-96] The dresser stands against the east wall, under the small print of a harbor.\n4. [id memory-98] The box was a gift; the underside has a burned-in maker's mark, not a date.\n5. [id memory-104] Dusting the dresser is done with a dry cloth so the latch doesn't tarnish.\n\nRelated:\n- [id memory-105] The porch rail was sanded yesterday and a cloth was left there.\n\nQuestion: What color lining should I buy for it?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "felt",
+          "parsed": {
+            "ok": false,
+            "matched": null,
+            "reason": "absent",
+            "present": []
+          },
+          "primary_ids": [
+            "memory-91",
+            "memory-93",
+            "memory-96",
+            "memory-98",
+            "memory-104"
+          ]
+        },
+        "D": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: There's a wooden box on the dresser. I keep the spare house key in it.\nUser: The latch still clicks twice. I'm replacing the felt this weekend.\n\nRecall:\n1. [id memory-91] The wooden box on the dresser has a brass latch that clicks twice.\n2. [id memory-93] The spare house key is the one with the rubber sleeve, not the tagged office key.\n3. [id memory-96] The dresser stands against the east wall, under the small print of a harbor.\n4. [id memory-98] The box was a gift; the underside has a burned-in maker's mark, not a date.\n5. [id memory-104] Dusting the dresser is done with a dry cloth so the latch doesn't tarnish.\n\nRelated:\n- [id memory-92] The wooden key-box on the dresser is lined in sabec felt.\n\nQuestion: What color lining should I buy for it?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: There's a wooden box on the dresser. I keep the spare house key in it.\nUser: The latch still clicks twice. I'm replacing the felt this weekend.\n\nRecall:\n1. [id memory-91] The wooden box on the dresser has a brass latch that clicks twice.\n2. [id memory-93] The spare house key is the one with the rubber sleeve, not the tagged office key.\n3. [id memory-96] The dresser stands against the east wall, under the small print of a harbor.\n4. [id memory-98] The box was a gift; the underside has a burned-in maker's mark, not a date.\n5. [id memory-104] Dusting the dresser is done with a dry cloth so the latch doesn't tarnish.\n\nRelated:\n- [id memory-92] The wooden key-box on the dresser is lined in sabec felt.\n\nQuestion: What color lining should I buy for it?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "sabec",
+          "parsed": {
+            "ok": false,
+            "matched": null,
+            "reason": "wrong",
+            "present": [
+              "sabec"
+            ]
+          },
+          "primary_ids": [
+            "memory-91",
+            "memory-93",
+            "memory-96",
+            "memory-98",
+            "memory-104"
+          ]
+        },
+        "N": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: There's a wooden box on the dresser. I keep the spare house key in it.\nUser: The latch still clicks twice. I'm replacing the felt this weekend.\n\nRecall:\n1. [id memory-n01] The porch light timer is set to come on after sunset and off at late night.\n2. [id memory-n02] A bag of rice sits on the pantry floor, unopened since the last delivery.\n3. [id memory-n03] The spare batteries are in the hall closet, second box from the left.\n4. [id memory-n04] Library books go back on the first sunny morning of the week.\n5. [id memory-n05] The watering can stays by the back step, emptied after each use.\n\nRelated:\n- [id memory-n40] The hallway shelf was dusted last Thursday and the vacuum bag was replaced.\n\nQuestion: What color lining should I buy for it?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: There's a wooden box on the dresser. I keep the spare house key in it.\nUser: The latch still clicks twice. I'm replacing the felt this weekend.\n\nRecall:\n1. [id memory-n01] The porch light timer is set to come on after sunset and off at late night.\n2. [id memory-n02] A bag of rice sits on the pantry floor, unopened since the last delivery.\n3. [id memory-n03] The spare batteries are in the hall closet, second box from the left.\n4. [id memory-n04] Library books go back on the first sunny morning of the week.\n5. [id memory-n05] The watering can stays by the back step, emptied after each use.\n\nRelated:\n- [id memory-n40] The hallway shelf was dusted last Thursday and the vacuum bag was replaced.\n\nQuestion: What color lining should I buy for it?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "felt",
+          "parsed": {
+            "ok": false,
+            "matched": null,
+            "reason": "absent",
+            "present": []
+          },
+          "primary_ids": [
+            "memory-n01",
+            "memory-n02",
+            "memory-n03",
+            "memory-n04",
+            "memory-n05"
+          ]
+        }
+      },
+      "eval": {
+        "id": "h6-s1-box-verrin",
+        "stratum": "related-necessary",
+        "family": "E",
+        "held_out": false,
+        "A_correct": true,
+        "B_correct": false,
+        "D_correct": false,
+        "N_correct": false,
+        "b_to_a": true,
+        "a_to_b": false,
+        "a_to_d": true,
+        "drop_n_pass": false,
+        "drop_b_succeeds": false,
+        "valid": true,
+        "s1": true,
+        "s2": false
+      }
+    },
+    {
+      "id": "h6-s1-callsign-orbit",
+      "stratum": "related-necessary",
+      "family": "heldout-callsign",
+      "held_out": true,
+      "gold": {
+        "slot": "hardware_run_callsign",
+        "value": "orbit"
+      },
+      "primary_block": "1. [id memory-111] The hardware store Sam uses is the one on Binder Street, not the chain by the highway.\n2. [id memory-114] Parking for that shop is behind the building; the front curb is always full on Saturday.\n3. [id memory-117] The usual Saturday list is screws, painter's tape, and whatever the hinge bin is short on.\n4. [id memory-119] The radio lives on the hook by the back door, charged overnight.\n5. [id memory-122] Paint purchases go on the paper tab in the glove box, not the kitchen pad.",
+      "arms": {
+        "A": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: Saturday mornings I go to the shop on Binder Street for screws and paint.\n\nRecall:\n1. [id memory-111] The hardware store Sam uses is the one on Binder Street, not the chain by the highway.\n2. [id memory-114] Parking for that shop is behind the building; the front curb is always full on Saturday.\n3. [id memory-117] The usual Saturday list is screws, painter's tape, and whatever the hinge bin is short on.\n4. [id memory-119] The radio lives on the hook by the back door, charged overnight.\n5. [id memory-122] Paint purchases go on the paper tab in the glove box, not the kitchen pad.\n\nRelated:\n- [id memory-108] The Saturday hardware-store run is logged under the call-sign orbit.\n\nQuestion: When I radio that I'm leaving for the weekend shop that sells screws and paint, what call-sign do I use?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: Saturday mornings I go to the shop on Binder Street for screws and paint.\n\nRecall:\n1. [id memory-111] The hardware store Sam uses is the one on Binder Street, not the chain by the highway.\n2. [id memory-114] Parking for that shop is behind the building; the front curb is always full on Saturday.\n3. [id memory-117] The usual Saturday list is screws, painter's tape, and whatever the hinge bin is short on.\n4. [id memory-119] The radio lives on the hook by the back door, charged overnight.\n5. [id memory-122] Paint purchases go on the paper tab in the glove box, not the kitchen pad.\n\nRelated:\n- [id memory-108] The Saturday hardware-store run is logged under the call-sign orbit.\n\nQuestion: When I radio that I'm leaving for the weekend shop that sells screws and paint, what call-sign do I use?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "orbit",
+          "parsed": {
+            "ok": true,
+            "matched": "orbit",
+            "reason": "match",
+            "present": [
+              "orbit"
+            ]
+          },
+          "primary_ids": [
+            "memory-111",
+            "memory-114",
+            "memory-117",
+            "memory-119",
+            "memory-122"
+          ]
+        },
+        "B": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: Saturday mornings I go to the shop on Binder Street for screws and paint.\n\nRecall:\n1. [id memory-111] The hardware store Sam uses is the one on Binder Street, not the chain by the highway.\n2. [id memory-114] Parking for that shop is behind the building; the front curb is always full on Saturday.\n3. [id memory-117] The usual Saturday list is screws, painter's tape, and whatever the hinge bin is short on.\n4. [id memory-119] The radio lives on the hook by the back door, charged overnight.\n5. [id memory-122] Paint purchases go on the paper tab in the glove box, not the kitchen pad.\n\nRelated:\n- [id memory-123] The back-door hook was tightened last week after it sat crooked.\n\nQuestion: When I radio that I'm leaving for the weekend shop that sells screws and paint, what call-sign do I use?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: Saturday mornings I go to the shop on Binder Street for screws and paint.\n\nRecall:\n1. [id memory-111] The hardware store Sam uses is the one on Binder Street, not the chain by the highway.\n2. [id memory-114] Parking for that shop is behind the building; the front curb is always full on Saturday.\n3. [id memory-117] The usual Saturday list is screws, painter's tape, and whatever the hinge bin is short on.\n4. [id memory-119] The radio lives on the hook by the back door, charged overnight.\n5. [id memory-122] Paint purchases go on the paper tab in the glove box, not the kitchen pad.\n\nRelated:\n- [id memory-123] The back-door hook was tightened last week after it sat crooked.\n\nQuestion: When I radio that I'm leaving for the weekend shop that sells screws and paint, what call-sign do I use?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "None",
+          "parsed": {
+            "ok": false,
+            "matched": null,
+            "reason": "absent",
+            "present": []
+          },
+          "primary_ids": [
+            "memory-111",
+            "memory-114",
+            "memory-117",
+            "memory-119",
+            "memory-122"
+          ]
+        },
+        "D": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: Saturday mornings I go to the shop on Binder Street for screws and paint.\n\nRecall:\n1. [id memory-111] The hardware store Sam uses is the one on Binder Street, not the chain by the highway.\n2. [id memory-114] Parking for that shop is behind the building; the front curb is always full on Saturday.\n3. [id memory-117] The usual Saturday list is screws, painter's tape, and whatever the hinge bin is short on.\n4. [id memory-119] The radio lives on the hook by the back door, charged overnight.\n5. [id memory-122] Paint purchases go on the paper tab in the glove box, not the kitchen pad.\n\nRelated:\n- [id memory-108] The Saturday hardware-store run is logged under the call-sign quay.\n\nQuestion: When I radio that I'm leaving for the weekend shop that sells screws and paint, what call-sign do I use?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: Saturday mornings I go to the shop on Binder Street for screws and paint.\n\nRecall:\n1. [id memory-111] The hardware store Sam uses is the one on Binder Street, not the chain by the highway.\n2. [id memory-114] Parking for that shop is behind the building; the front curb is always full on Saturday.\n3. [id memory-117] The usual Saturday list is screws, painter's tape, and whatever the hinge bin is short on.\n4. [id memory-119] The radio lives on the hook by the back door, charged overnight.\n5. [id memory-122] Paint purchases go on the paper tab in the glove box, not the kitchen pad.\n\nRelated:\n- [id memory-108] The Saturday hardware-store run is logged under the call-sign quay.\n\nQuestion: When I radio that I'm leaving for the weekend shop that sells screws and paint, what call-sign do I use?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "quay",
+          "parsed": {
+            "ok": false,
+            "matched": null,
+            "reason": "wrong",
+            "present": [
+              "quay"
+            ]
+          },
+          "primary_ids": [
+            "memory-111",
+            "memory-114",
+            "memory-117",
+            "memory-119",
+            "memory-122"
+          ]
+        },
+        "N": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: Saturday mornings I go to the shop on Binder Street for screws and paint.\n\nRecall:\n1. [id memory-n01] The porch light timer is set to come on after sunset and off at late night.\n2. [id memory-n02] A bag of rice sits on the pantry floor, unopened since the last delivery.\n3. [id memory-n03] The spare batteries are in the hall closet, second box from the left.\n4. [id memory-n04] Library books go back on the first sunny morning of the week.\n5. [id memory-n05] The watering can stays by the back step, emptied after each use.\n\nRelated:\n- [id memory-n40] The hallway shelf was dusted last Thursday and the vacuum bag was replaced.\n\nQuestion: When I radio that I'm leaving for the weekend shop that sells screws and paint, what call-sign do I use?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: Saturday mornings I go to the shop on Binder Street for screws and paint.\n\nRecall:\n1. [id memory-n01] The porch light timer is set to come on after sunset and off at late night.\n2. [id memory-n02] A bag of rice sits on the pantry floor, unopened since the last delivery.\n3. [id memory-n03] The spare batteries are in the hall closet, second box from the left.\n4. [id memory-n04] Library books go back on the first sunny morning of the week.\n5. [id memory-n05] The watering can stays by the back step, emptied after each use.\n\nRelated:\n- [id memory-n40] The hallway shelf was dusted last Thursday and the vacuum bag was replaced.\n\nQuestion: When I radio that I'm leaving for the weekend shop that sells screws and paint, what call-sign do I use?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "None",
+          "parsed": {
+            "ok": false,
+            "matched": null,
+            "reason": "absent",
+            "present": []
+          },
+          "primary_ids": [
+            "memory-n01",
+            "memory-n02",
+            "memory-n03",
+            "memory-n04",
+            "memory-n05"
+          ]
+        }
+      },
+      "eval": {
+        "id": "h6-s1-callsign-orbit",
+        "stratum": "related-necessary",
+        "family": "heldout-callsign",
+        "held_out": true,
+        "A_correct": true,
+        "B_correct": false,
+        "D_correct": false,
+        "N_correct": false,
+        "b_to_a": true,
+        "a_to_b": false,
+        "a_to_d": true,
+        "drop_n_pass": false,
+        "drop_b_succeeds": false,
+        "valid": true,
+        "s1": true,
+        "s2": false
+      }
+    },
+    {
+      "id": "h6-s1-tab-wren",
+      "stratum": "related-necessary",
+      "family": "heldout-tab",
+      "held_out": true,
+      "gold": {
+        "slot": "tax_binder_tab",
+        "value": "wren"
+      },
+      "primary_block": "1. [id memory-131] The tall binder lives on the file crate, not in the desk drawer.\n2. [id memory-134] Tax envelopes are the ones with the metal clasp; household bills use the windowed kind.\n3. [id memory-137] The file crate sits under the south window, away from the radiator.\n4. [id memory-139] A spare set of tab inserts is in the stationery tin, still in the plastic.\n5. [id memory-143] The fence message from the neighbor is on a sticky note on the kettle.",
+      "arms": {
+        "A": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: The tax papers for this year are going in the tall binder on the file crate.\nUser: A neighbor dropped by about the fence, and I still need to answer them.\n\nRecall:\n1. [id memory-131] The tall binder lives on the file crate, not in the desk drawer.\n2. [id memory-134] Tax envelopes are the ones with the metal clasp; household bills use the windowed kind.\n3. [id memory-137] The file crate sits under the south window, away from the radiator.\n4. [id memory-139] A spare set of tab inserts is in the stationery tin, still in the plastic.\n5. [id memory-143] The fence message from the neighbor is on a sticky note on the kettle.\n\nRelated:\n- [id memory-132] The tax-year binder uses the tab labeled wren.\n\nQuestion: Which tab should I open to file this year's tax papers?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: The tax papers for this year are going in the tall binder on the file crate.\nUser: A neighbor dropped by about the fence, and I still need to answer them.\n\nRecall:\n1. [id memory-131] The tall binder lives on the file crate, not in the desk drawer.\n2. [id memory-134] Tax envelopes are the ones with the metal clasp; household bills use the windowed kind.\n3. [id memory-137] The file crate sits under the south window, away from the radiator.\n4. [id memory-139] A spare set of tab inserts is in the stationery tin, still in the plastic.\n5. [id memory-143] The fence message from the neighbor is on a sticky note on the kettle.\n\nRelated:\n- [id memory-132] The tax-year binder uses the tab labeled wren.\n\nQuestion: Which tab should I open to file this year's tax papers?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "wren",
+          "parsed": {
+            "ok": true,
+            "matched": "wren",
+            "reason": "match",
+            "present": [
+              "wren"
+            ]
+          },
+          "primary_ids": [
+            "memory-131",
+            "memory-134",
+            "memory-137",
+            "memory-139",
+            "memory-143"
+          ]
+        },
+        "B": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: The tax papers for this year are going in the tall binder on the file crate.\nUser: A neighbor dropped by about the fence, and I still need to answer them.\n\nRecall:\n1. [id memory-131] The tall binder lives on the file crate, not in the desk drawer.\n2. [id memory-134] Tax envelopes are the ones with the metal clasp; household bills use the windowed kind.\n3. [id memory-137] The file crate sits under the south window, away from the radiator.\n4. [id memory-139] A spare set of tab inserts is in the stationery tin, still in the plastic.\n5. [id memory-143] The fence message from the neighbor is on a sticky note on the kettle.\n\nRelated:\n- [id memory-144] The kettle sticky-note was moved so it wouldn't scorch.\n\nQuestion: Which tab should I open to file this year's tax papers?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: The tax papers for this year are going in the tall binder on the file crate.\nUser: A neighbor dropped by about the fence, and I still need to answer them.\n\nRecall:\n1. [id memory-131] The tall binder lives on the file crate, not in the desk drawer.\n2. [id memory-134] Tax envelopes are the ones with the metal clasp; household bills use the windowed kind.\n3. [id memory-137] The file crate sits under the south window, away from the radiator.\n4. [id memory-139] A spare set of tab inserts is in the stationery tin, still in the plastic.\n5. [id memory-143] The fence message from the neighbor is on a sticky note on the kettle.\n\nRelated:\n- [id memory-144] The kettle sticky-note was moved so it wouldn't scorch.\n\nQuestion: Which tab should I open to file this year's tax papers?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "The tall binder",
+          "parsed": {
+            "ok": false,
+            "matched": null,
+            "reason": "absent",
+            "present": []
+          },
+          "primary_ids": [
+            "memory-131",
+            "memory-134",
+            "memory-137",
+            "memory-139",
+            "memory-143"
+          ]
+        },
+        "D": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: The tax papers for this year are going in the tall binder on the file crate.\nUser: A neighbor dropped by about the fence, and I still need to answer them.\n\nRecall:\n1. [id memory-131] The tall binder lives on the file crate, not in the desk drawer.\n2. [id memory-134] Tax envelopes are the ones with the metal clasp; household bills use the windowed kind.\n3. [id memory-137] The file crate sits under the south window, away from the radiator.\n4. [id memory-139] A spare set of tab inserts is in the stationery tin, still in the plastic.\n5. [id memory-143] The fence message from the neighbor is on a sticky note on the kettle.\n\nRelated:\n- [id memory-132] The tax-year binder uses the tab labeled pike.\n\nQuestion: Which tab should I open to file this year's tax papers?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: The tax papers for this year are going in the tall binder on the file crate.\nUser: A neighbor dropped by about the fence, and I still need to answer them.\n\nRecall:\n1. [id memory-131] The tall binder lives on the file crate, not in the desk drawer.\n2. [id memory-134] Tax envelopes are the ones with the metal clasp; household bills use the windowed kind.\n3. [id memory-137] The file crate sits under the south window, away from the radiator.\n4. [id memory-139] A spare set of tab inserts is in the stationery tin, still in the plastic.\n5. [id memory-143] The fence message from the neighbor is on a sticky note on the kettle.\n\nRelated:\n- [id memory-132] The tax-year binder uses the tab labeled pike.\n\nQuestion: Which tab should I open to file this year's tax papers?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "pike",
+          "parsed": {
+            "ok": false,
+            "matched": null,
+            "reason": "wrong",
+            "present": [
+              "pike"
+            ]
+          },
+          "primary_ids": [
+            "memory-131",
+            "memory-134",
+            "memory-137",
+            "memory-139",
+            "memory-143"
+          ]
+        },
+        "N": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: The tax papers for this year are going in the tall binder on the file crate.\nUser: A neighbor dropped by about the fence, and I still need to answer them.\n\nRecall:\n1. [id memory-n01] The porch light timer is set to come on after sunset and off at late night.\n2. [id memory-n02] A bag of rice sits on the pantry floor, unopened since the last delivery.\n3. [id memory-n03] The spare batteries are in the hall closet, second box from the left.\n4. [id memory-n04] Library books go back on the first sunny morning of the week.\n5. [id memory-n05] The watering can stays by the back step, emptied after each use.\n\nRelated:\n- [id memory-n40] The hallway shelf was dusted last Thursday and the vacuum bag was replaced.\n\nQuestion: Which tab should I open to file this year's tax papers?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: The tax papers for this year are going in the tall binder on the file crate.\nUser: A neighbor dropped by about the fence, and I still need to answer them.\n\nRecall:\n1. [id memory-n01] The porch light timer is set to come on after sunset and off at late night.\n2. [id memory-n02] A bag of rice sits on the pantry floor, unopened since the last delivery.\n3. [id memory-n03] The spare batteries are in the hall closet, second box from the left.\n4. [id memory-n04] Library books go back on the first sunny morning of the week.\n5. [id memory-n05] The watering can stays by the back step, emptied after each use.\n\nRelated:\n- [id memory-n40] The hallway shelf was dusted last Thursday and the vacuum bag was replaced.\n\nQuestion: Which tab should I open to file this year's tax papers?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "tall binder",
+          "parsed": {
+            "ok": false,
+            "matched": null,
+            "reason": "absent",
+            "present": []
+          },
+          "primary_ids": [
+            "memory-n01",
+            "memory-n02",
+            "memory-n03",
+            "memory-n04",
+            "memory-n05"
+          ]
+        }
+      },
+      "eval": {
+        "id": "h6-s1-tab-wren",
+        "stratum": "related-necessary",
+        "family": "heldout-tab",
+        "held_out": true,
+        "A_correct": true,
+        "B_correct": false,
+        "D_correct": false,
+        "N_correct": false,
+        "b_to_a": true,
+        "a_to_b": false,
+        "a_to_d": true,
+        "drop_n_pass": false,
+        "drop_b_succeeds": false,
+        "valid": true,
+        "s1": true,
+        "s2": false
+      }
+    },
+    {
+      "id": "h6-s2-copper-labels",
+      "stratum": "primary-sufficient",
+      "family": "A",
+      "held_out": false,
+      "gold": {
+        "slot": "permanent_notebook_label_color",
+        "value": "copper"
+      },
+      "primary_block": "1. [id memory-03] The north alcove notebooks sit on the third shelf, behind the glass door.\n2. [id memory-08] Permanent notebooks use a cloth spine and a sewn binding; drafts use a spiral.\n3. [id memory-17] Sam uses copper for labels on notebooks he intends to keep permanently.\n4. [id memory-11] The label tape dispenser lives in the left desk drawer, next to the spare clips.\n5. [id memory-19] Last restock of label tape was on the eleventh; the roll is still more than half full.",
+      "arms": {
+        "A": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: I keep two kinds of notebooks on the north alcove shelves: drafts and the ones I intend to keep.\n\nRecall:\n1. [id memory-03] The north alcove notebooks sit on the third shelf, behind the glass door.\n2. [id memory-08] Permanent notebooks use a cloth spine and a sewn binding; drafts use a spiral.\n3. [id memory-17] Sam uses copper for labels on notebooks he intends to keep permanently.\n4. [id memory-11] The label tape dispenser lives in the left desk drawer, next to the spare clips.\n5. [id memory-19] Last restock of label tape was on the eleventh; the roll is still more than half full.\n\nRelated:\n- [id memory-21] The assigned color for permanent notebook labels is copper.\n\nQuestion: What color should I use for the permanent notebook labels?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: I keep two kinds of notebooks on the north alcove shelves: drafts and the ones I intend to keep.\n\nRecall:\n1. [id memory-03] The north alcove notebooks sit on the third shelf, behind the glass door.\n2. [id memory-08] Permanent notebooks use a cloth spine and a sewn binding; drafts use a spiral.\n3. [id memory-17] Sam uses copper for labels on notebooks he intends to keep permanently.\n4. [id memory-11] The label tape dispenser lives in the left desk drawer, next to the spare clips.\n5. [id memory-19] Last restock of label tape was on the eleventh; the roll is still more than half full.\n\nRelated:\n- [id memory-21] The assigned color for permanent notebook labels is copper.\n\nQuestion: What color should I use for the permanent notebook labels?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "copper",
+          "parsed": {
+            "ok": true,
+            "matched": "copper",
+            "reason": "match",
+            "present": [
+              "copper"
+            ]
+          },
+          "primary_ids": [
+            "memory-03",
+            "memory-08",
+            "memory-17",
+            "memory-11",
+            "memory-19"
+          ]
+        },
+        "B": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: I keep two kinds of notebooks on the north alcove shelves: drafts and the ones I intend to keep.\n\nRecall:\n1. [id memory-03] The north alcove notebooks sit on the third shelf, behind the glass door.\n2. [id memory-08] Permanent notebooks use a cloth spine and a sewn binding; drafts use a spiral.\n3. [id memory-17] Sam uses copper for labels on notebooks he intends to keep permanently.\n4. [id memory-11] The label tape dispenser lives in the left desk drawer, next to the spare clips.\n5. [id memory-19] Last restock of label tape was on the eleventh; the roll is still more than half full.\n\nRelated:\n- [id memory-40] The hallway clock was wound on Monday after it stopped.\n\nQuestion: What color should I use for the permanent notebook labels?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: I keep two kinds of notebooks on the north alcove shelves: drafts and the ones I intend to keep.\n\nRecall:\n1. [id memory-03] The north alcove notebooks sit on the third shelf, behind the glass door.\n2. [id memory-08] Permanent notebooks use a cloth spine and a sewn binding; drafts use a spiral.\n3. [id memory-17] Sam uses copper for labels on notebooks he intends to keep permanently.\n4. [id memory-11] The label tape dispenser lives in the left desk drawer, next to the spare clips.\n5. [id memory-19] Last restock of label tape was on the eleventh; the roll is still more than half full.\n\nRelated:\n- [id memory-40] The hallway clock was wound on Monday after it stopped.\n\nQuestion: What color should I use for the permanent notebook labels?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "copper",
+          "parsed": {
+            "ok": true,
+            "matched": "copper",
+            "reason": "match",
+            "present": [
+              "copper"
+            ]
+          },
+          "primary_ids": [
+            "memory-03",
+            "memory-08",
+            "memory-17",
+            "memory-11",
+            "memory-19"
+          ]
+        },
+        "D": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: I keep two kinds of notebooks on the north alcove shelves: drafts and the ones I intend to keep.\n\nRecall:\n1. [id memory-03] The north alcove notebooks sit on the third shelf, behind the glass door.\n2. [id memory-08] Permanent notebooks use a cloth spine and a sewn binding; drafts use a spiral.\n3. [id memory-17] Sam uses copper for labels on notebooks he intends to keep permanently.\n4. [id memory-11] The label tape dispenser lives in the left desk drawer, next to the spare clips.\n5. [id memory-19] Last restock of label tape was on the eleventh; the roll is still more than half full.\n\nRelated:\n- [id memory-21] The assigned color for permanent notebook labels is saffron.\n\nQuestion: What color should I use for the permanent notebook labels?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: I keep two kinds of notebooks on the north alcove shelves: drafts and the ones I intend to keep.\n\nRecall:\n1. [id memory-03] The north alcove notebooks sit on the third shelf, behind the glass door.\n2. [id memory-08] Permanent notebooks use a cloth spine and a sewn binding; drafts use a spiral.\n3. [id memory-17] Sam uses copper for labels on notebooks he intends to keep permanently.\n4. [id memory-11] The label tape dispenser lives in the left desk drawer, next to the spare clips.\n5. [id memory-19] Last restock of label tape was on the eleventh; the roll is still more than half full.\n\nRelated:\n- [id memory-21] The assigned color for permanent notebook labels is saffron.\n\nQuestion: What color should I use for the permanent notebook labels?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "saffron",
+          "parsed": {
+            "ok": false,
+            "matched": null,
+            "reason": "wrong",
+            "present": [
+              "saffron"
+            ]
+          },
+          "primary_ids": [
+            "memory-03",
+            "memory-08",
+            "memory-17",
+            "memory-11",
+            "memory-19"
+          ]
+        },
+        "N": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: I keep two kinds of notebooks on the north alcove shelves: drafts and the ones I intend to keep.\n\nRecall:\n1. [id memory-n01] The porch light timer is set to come on after sunset and off at late night.\n2. [id memory-n02] A bag of rice sits on the pantry floor, unopened since the last delivery.\n3. [id memory-n03] The spare batteries are in the hall closet, second box from the left.\n4. [id memory-n04] Library books go back on the first sunny morning of the week.\n5. [id memory-n05] The watering can stays by the back step, emptied after each use.\n\nRelated:\n- [id memory-n40] The hallway shelf was dusted last Thursday and the vacuum bag was replaced.\n\nQuestion: What color should I use for the permanent notebook labels?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: I keep two kinds of notebooks on the north alcove shelves: drafts and the ones I intend to keep.\n\nRecall:\n1. [id memory-n01] The porch light timer is set to come on after sunset and off at late night.\n2. [id memory-n02] A bag of rice sits on the pantry floor, unopened since the last delivery.\n3. [id memory-n03] The spare batteries are in the hall closet, second box from the left.\n4. [id memory-n04] Library books go back on the first sunny morning of the week.\n5. [id memory-n05] The watering can stays by the back step, emptied after each use.\n\nRelated:\n- [id memory-n40] The hallway shelf was dusted last Thursday and the vacuum bag was replaced.\n\nQuestion: What color should I use for the permanent notebook labels?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "Unknown",
+          "parsed": {
+            "ok": false,
+            "matched": null,
+            "reason": "absent",
+            "present": []
+          },
+          "primary_ids": [
+            "memory-n01",
+            "memory-n02",
+            "memory-n03",
+            "memory-n04",
+            "memory-n05"
+          ]
+        }
+      },
+      "eval": {
+        "id": "h6-s2-copper-labels",
+        "stratum": "primary-sufficient",
+        "family": "A",
+        "held_out": false,
+        "A_correct": true,
+        "B_correct": true,
+        "D_correct": false,
+        "N_correct": false,
+        "b_to_a": false,
+        "a_to_b": false,
+        "a_to_d": true,
+        "drop_n_pass": false,
+        "drop_b_succeeds": false,
+        "valid": true,
+        "s1": false,
+        "s2": true
+      }
+    },
+    {
+      "id": "h6-s2-envelope-614",
+      "stratum": "primary-sufficient",
+      "family": "B",
+      "held_out": false,
+      "gold": {
+        "slot": "archive_envelope_code",
+        "value": "614"
+      },
+      "primary_block": "1. [id memory-32] Sam assigned 614 as the code on the envelope that goes into the archive crate.\n2. [id memory-31] The archive crate lives under the bench in the mudroom, lid marked with a painted stripe.\n3. [id memory-33] Envelopes for the crate are the kraft ones with the metal clasp, not the windowed office kind.\n4. [id memory-36] Pickup for the crate is the morning after a restock, never the same day.\n5. [id memory-39] A spare clasp pack is in the mudroom hook-basket, third hook from the door.",
+      "arms": {
+        "A": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: The kraft clasp envelopes on the hall table are the ones that leave with the crate.\n\nRecall:\n1. [id memory-32] Sam assigned 614 as the code on the envelope that goes into the archive crate.\n2. [id memory-31] The archive crate lives under the bench in the mudroom, lid marked with a painted stripe.\n3. [id memory-33] Envelopes for the crate are the kraft ones with the metal clasp, not the windowed office kind.\n4. [id memory-36] Pickup for the crate is the morning after a restock, never the same day.\n5. [id memory-39] A spare clasp pack is in the mudroom hook-basket, third hook from the door.\n\nRelated:\n- [id memory-35] The number written on the archive-crate envelope is 614.\n\nQuestion: What code should I write on the envelope before it goes into the archive crate?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: The kraft clasp envelopes on the hall table are the ones that leave with the crate.\n\nRecall:\n1. [id memory-32] Sam assigned 614 as the code on the envelope that goes into the archive crate.\n2. [id memory-31] The archive crate lives under the bench in the mudroom, lid marked with a painted stripe.\n3. [id memory-33] Envelopes for the crate are the kraft ones with the metal clasp, not the windowed office kind.\n4. [id memory-36] Pickup for the crate is the morning after a restock, never the same day.\n5. [id memory-39] A spare clasp pack is in the mudroom hook-basket, third hook from the door.\n\nRelated:\n- [id memory-35] The number written on the archive-crate envelope is 614.\n\nQuestion: What code should I write on the envelope before it goes into the archive crate?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "614",
+          "parsed": {
+            "ok": true,
+            "matched": "614",
+            "reason": "match",
+            "present": [
+              "614"
+            ]
+          },
+          "primary_ids": [
+            "memory-32",
+            "memory-31",
+            "memory-33",
+            "memory-36",
+            "memory-39"
+          ]
+        },
+        "B": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: The kraft clasp envelopes on the hall table are the ones that leave with the crate.\n\nRecall:\n1. [id memory-32] Sam assigned 614 as the code on the envelope that goes into the archive crate.\n2. [id memory-31] The archive crate lives under the bench in the mudroom, lid marked with a painted stripe.\n3. [id memory-33] Envelopes for the crate are the kraft ones with the metal clasp, not the windowed office kind.\n4. [id memory-36] Pickup for the crate is the morning after a restock, never the same day.\n5. [id memory-39] A spare clasp pack is in the mudroom hook-basket, third hook from the door.\n\nRelated:\n- [id memory-45] The mudroom rug was shaken out on the porch.\n\nQuestion: What code should I write on the envelope before it goes into the archive crate?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: The kraft clasp envelopes on the hall table are the ones that leave with the crate.\n\nRecall:\n1. [id memory-32] Sam assigned 614 as the code on the envelope that goes into the archive crate.\n2. [id memory-31] The archive crate lives under the bench in the mudroom, lid marked with a painted stripe.\n3. [id memory-33] Envelopes for the crate are the kraft ones with the metal clasp, not the windowed office kind.\n4. [id memory-36] Pickup for the crate is the morning after a restock, never the same day.\n5. [id memory-39] A spare clasp pack is in the mudroom hook-basket, third hook from the door.\n\nRelated:\n- [id memory-45] The mudroom rug was shaken out on the porch.\n\nQuestion: What code should I write on the envelope before it goes into the archive crate?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "614",
+          "parsed": {
+            "ok": true,
+            "matched": "614",
+            "reason": "match",
+            "present": [
+              "614"
+            ]
+          },
+          "primary_ids": [
+            "memory-32",
+            "memory-31",
+            "memory-33",
+            "memory-36",
+            "memory-39"
+          ]
+        },
+        "D": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: The kraft clasp envelopes on the hall table are the ones that leave with the crate.\n\nRecall:\n1. [id memory-32] Sam assigned 614 as the code on the envelope that goes into the archive crate.\n2. [id memory-31] The archive crate lives under the bench in the mudroom, lid marked with a painted stripe.\n3. [id memory-33] Envelopes for the crate are the kraft ones with the metal clasp, not the windowed office kind.\n4. [id memory-36] Pickup for the crate is the morning after a restock, never the same day.\n5. [id memory-39] A spare clasp pack is in the mudroom hook-basket, third hook from the door.\n\nRelated:\n- [id memory-35] The number written on the archive-crate envelope is 271.\n\nQuestion: What code should I write on the envelope before it goes into the archive crate?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: The kraft clasp envelopes on the hall table are the ones that leave with the crate.\n\nRecall:\n1. [id memory-32] Sam assigned 614 as the code on the envelope that goes into the archive crate.\n2. [id memory-31] The archive crate lives under the bench in the mudroom, lid marked with a painted stripe.\n3. [id memory-33] Envelopes for the crate are the kraft ones with the metal clasp, not the windowed office kind.\n4. [id memory-36] Pickup for the crate is the morning after a restock, never the same day.\n5. [id memory-39] A spare clasp pack is in the mudroom hook-basket, third hook from the door.\n\nRelated:\n- [id memory-35] The number written on the archive-crate envelope is 271.\n\nQuestion: What code should I write on the envelope before it goes into the archive crate?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "614",
+          "parsed": {
+            "ok": true,
+            "matched": "614",
+            "reason": "match",
+            "present": [
+              "614"
+            ]
+          },
+          "primary_ids": [
+            "memory-32",
+            "memory-31",
+            "memory-33",
+            "memory-36",
+            "memory-39"
+          ]
+        },
+        "N": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: The kraft clasp envelopes on the hall table are the ones that leave with the crate.\n\nRecall:\n1. [id memory-n01] The porch light timer is set to come on after sunset and off at late night.\n2. [id memory-n02] A bag of rice sits on the pantry floor, unopened since the last delivery.\n3. [id memory-n03] The spare batteries are in the hall closet, second box from the left.\n4. [id memory-n04] Library books go back on the first sunny morning of the week.\n5. [id memory-n05] The watering can stays by the back step, emptied after each use.\n\nRelated:\n- [id memory-n40] The hallway shelf was dusted last Thursday and the vacuum bag was replaced.\n\nQuestion: What code should I write on the envelope before it goes into the archive crate?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: The kraft clasp envelopes on the hall table are the ones that leave with the crate.\n\nRecall:\n1. [id memory-n01] The porch light timer is set to come on after sunset and off at late night.\n2. [id memory-n02] A bag of rice sits on the pantry floor, unopened since the last delivery.\n3. [id memory-n03] The spare batteries are in the hall closet, second box from the left.\n4. [id memory-n04] Library books go back on the first sunny morning of the week.\n5. [id memory-n05] The watering can stays by the back step, emptied after each use.\n\nRelated:\n- [id memory-n40] The hallway shelf was dusted last Thursday and the vacuum bag was replaced.\n\nQuestion: What code should I write on the envelope before it goes into the archive crate?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "None",
+          "parsed": {
+            "ok": false,
+            "matched": null,
+            "reason": "absent",
+            "present": []
+          },
+          "primary_ids": [
+            "memory-n01",
+            "memory-n02",
+            "memory-n03",
+            "memory-n04",
+            "memory-n05"
+          ]
+        }
+      },
+      "eval": {
+        "id": "h6-s2-envelope-614",
+        "stratum": "primary-sufficient",
+        "family": "B",
+        "held_out": false,
+        "A_correct": true,
+        "B_correct": true,
+        "D_correct": true,
+        "N_correct": false,
+        "b_to_a": false,
+        "a_to_b": false,
+        "a_to_d": false,
+        "drop_n_pass": false,
+        "drop_b_succeeds": false,
+        "valid": true,
+        "s1": false,
+        "s2": true
+      }
+    },
+    {
+      "id": "h6-s2-room-norbrae",
+      "stratum": "primary-sufficient",
+      "family": "C",
+      "held_out": false,
+      "gold": {
+        "slot": "frosted_door_room_name",
+        "value": "norbrae"
+      },
+      "primary_block": "1. [id memory-51] The frosted door sticks in humid weather; a felt pad on the latch helps.\n2. [id memory-53] The kitchen side of that door has a hook for the spare apron.\n3. [id memory-56] The cleaner comes on alternate Fridays and brings their own vacuum.\n4. [id memory-58] The small room holds overflow linens, not food.\n5. [id memory-52] Sam named the frosted-door room off the kitchen Norbrae, and that is the name the cleaner is told to skip.",
+      "arms": {
+        "A": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: The small room off the kitchen has a frosted door and a painted nameplate.\n\nRecall:\n1. [id memory-51] The frosted door sticks in humid weather; a felt pad on the latch helps.\n2. [id memory-53] The kitchen side of that door has a hook for the spare apron.\n3. [id memory-56] The cleaner comes on alternate Fridays and brings their own vacuum.\n4. [id memory-58] The small room holds overflow linens, not food.\n5. [id memory-52] Sam named the frosted-door room off the kitchen Norbrae, and that is the name the cleaner is told to skip.\n\nRelated:\n- [id memory-55] The frosted-door room's skip-name for the cleaner is Norbrae.\n\nQuestion: When I tell the cleaner which room to skip, what name should I use for the frosted-door room?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: The small room off the kitchen has a frosted door and a painted nameplate.\n\nRecall:\n1. [id memory-51] The frosted door sticks in humid weather; a felt pad on the latch helps.\n2. [id memory-53] The kitchen side of that door has a hook for the spare apron.\n3. [id memory-56] The cleaner comes on alternate Fridays and brings their own vacuum.\n4. [id memory-58] The small room holds overflow linens, not food.\n5. [id memory-52] Sam named the frosted-door room off the kitchen Norbrae, and that is the name the cleaner is told to skip.\n\nRelated:\n- [id memory-55] The frosted-door room's skip-name for the cleaner is Norbrae.\n\nQuestion: When I tell the cleaner which room to skip, what name should I use for the frosted-door room?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "Norbrae",
+          "parsed": {
+            "ok": true,
+            "matched": "norbrae",
+            "reason": "match",
+            "present": [
+              "norbrae"
+            ]
+          },
+          "primary_ids": [
+            "memory-51",
+            "memory-53",
+            "memory-56",
+            "memory-58",
+            "memory-52"
+          ]
+        },
+        "B": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: The small room off the kitchen has a frosted door and a painted nameplate.\n\nRecall:\n1. [id memory-51] The frosted door sticks in humid weather; a felt pad on the latch helps.\n2. [id memory-53] The kitchen side of that door has a hook for the spare apron.\n3. [id memory-56] The cleaner comes on alternate Fridays and brings their own vacuum.\n4. [id memory-58] The small room holds overflow linens, not food.\n5. [id memory-52] Sam named the frosted-door room off the kitchen Norbrae, and that is the name the cleaner is told to skip.\n\nRelated:\n- [id memory-62] The porch swing chain was oiled this last weekend.\n\nQuestion: When I tell the cleaner which room to skip, what name should I use for the frosted-door room?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: The small room off the kitchen has a frosted door and a painted nameplate.\n\nRecall:\n1. [id memory-51] The frosted door sticks in humid weather; a felt pad on the latch helps.\n2. [id memory-53] The kitchen side of that door has a hook for the spare apron.\n3. [id memory-56] The cleaner comes on alternate Fridays and brings their own vacuum.\n4. [id memory-58] The small room holds overflow linens, not food.\n5. [id memory-52] Sam named the frosted-door room off the kitchen Norbrae, and that is the name the cleaner is told to skip.\n\nRelated:\n- [id memory-62] The porch swing chain was oiled this last weekend.\n\nQuestion: When I tell the cleaner which room to skip, what name should I use for the frosted-door room?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "Norbrae",
+          "parsed": {
+            "ok": true,
+            "matched": "norbrae",
+            "reason": "match",
+            "present": [
+              "norbrae"
+            ]
+          },
+          "primary_ids": [
+            "memory-51",
+            "memory-53",
+            "memory-56",
+            "memory-58",
+            "memory-52"
+          ]
+        },
+        "D": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: The small room off the kitchen has a frosted door and a painted nameplate.\n\nRecall:\n1. [id memory-51] The frosted door sticks in humid weather; a felt pad on the latch helps.\n2. [id memory-53] The kitchen side of that door has a hook for the spare apron.\n3. [id memory-56] The cleaner comes on alternate Fridays and brings their own vacuum.\n4. [id memory-58] The small room holds overflow linens, not food.\n5. [id memory-52] Sam named the frosted-door room off the kitchen Norbrae, and that is the name the cleaner is told to skip.\n\nRelated:\n- [id memory-55] The frosted-door room's skip-name for the cleaner is Kessit.\n\nQuestion: When I tell the cleaner which room to skip, what name should I use for the frosted-door room?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: The small room off the kitchen has a frosted door and a painted nameplate.\n\nRecall:\n1. [id memory-51] The frosted door sticks in humid weather; a felt pad on the latch helps.\n2. [id memory-53] The kitchen side of that door has a hook for the spare apron.\n3. [id memory-56] The cleaner comes on alternate Fridays and brings their own vacuum.\n4. [id memory-58] The small room holds overflow linens, not food.\n5. [id memory-52] Sam named the frosted-door room off the kitchen Norbrae, and that is the name the cleaner is told to skip.\n\nRelated:\n- [id memory-55] The frosted-door room's skip-name for the cleaner is Kessit.\n\nQuestion: When I tell the cleaner which room to skip, what name should I use for the frosted-door room?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "Kessit",
+          "parsed": {
+            "ok": false,
+            "matched": null,
+            "reason": "wrong",
+            "present": [
+              "kessit"
+            ]
+          },
+          "primary_ids": [
+            "memory-51",
+            "memory-53",
+            "memory-56",
+            "memory-58",
+            "memory-52"
+          ]
+        },
+        "N": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: The small room off the kitchen has a frosted door and a painted nameplate.\n\nRecall:\n1. [id memory-n01] The porch light timer is set to come on after sunset and off at late night.\n2. [id memory-n02] A bag of rice sits on the pantry floor, unopened since the last delivery.\n3. [id memory-n03] The spare batteries are in the hall closet, second box from the left.\n4. [id memory-n04] Library books go back on the first sunny morning of the week.\n5. [id memory-n05] The watering can stays by the back step, emptied after each use.\n\nRelated:\n- [id memory-n40] The hallway shelf was dusted last Thursday and the vacuum bag was replaced.\n\nQuestion: When I tell the cleaner which room to skip, what name should I use for the frosted-door room?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: The small room off the kitchen has a frosted door and a painted nameplate.\n\nRecall:\n1. [id memory-n01] The porch light timer is set to come on after sunset and off at late night.\n2. [id memory-n02] A bag of rice sits on the pantry floor, unopened since the last delivery.\n3. [id memory-n03] The spare batteries are in the hall closet, second box from the left.\n4. [id memory-n04] Library books go back on the first sunny morning of the week.\n5. [id memory-n05] The watering can stays by the back step, emptied after each use.\n\nRelated:\n- [id memory-n40] The hallway shelf was dusted last Thursday and the vacuum bag was replaced.\n\nQuestion: When I tell the cleaner which room to skip, what name should I use for the frosted-door room?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "The small room off the kitchen",
+          "parsed": {
+            "ok": false,
+            "matched": null,
+            "reason": "absent",
+            "present": []
+          },
+          "primary_ids": [
+            "memory-n01",
+            "memory-n02",
+            "memory-n03",
+            "memory-n04",
+            "memory-n05"
+          ]
+        }
+      },
+      "eval": {
+        "id": "h6-s2-room-norbrae",
+        "stratum": "primary-sufficient",
+        "family": "C",
+        "held_out": false,
+        "A_correct": true,
+        "B_correct": true,
+        "D_correct": false,
+        "N_correct": false,
+        "b_to_a": false,
+        "a_to_b": false,
+        "a_to_d": true,
+        "drop_n_pass": false,
+        "drop_b_succeeds": false,
+        "valid": true,
+        "s1": false,
+        "s2": true
+      }
+    },
+    {
+      "id": "h6-s2-marker-tavrin",
+      "stratum": "primary-sufficient",
+      "family": "D",
+      "held_out": false,
+      "gold": {
+        "slot": "grocery_list_marker",
+        "value": "tavrin"
+      },
+      "primary_block": "1. [id memory-71] Grocery lists are written on the pad that hangs by the fridge magnet.\n2. [id memory-72] Sam's preferred marker for the weekly grocery list is tavrin.\n3. [id memory-73] Markers live in the tin on the fridge; the tin also holds a spare magnet.\n4. [id memory-76] The weekly list is always started on Sunday evening after the fridge is checked.\n5. [id memory-78] Dried-out markers go in the jar under the sink, not back in the tin.",
+      "arms": {
+        "A": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: The grocery pad hangs by the fridge; markers live in the tin beside it.\n\nRecall:\n1. [id memory-71] Grocery lists are written on the pad that hangs by the fridge magnet.\n2. [id memory-72] Sam's preferred marker for the weekly grocery list is tavrin.\n3. [id memory-73] Markers live in the tin on the fridge; the tin also holds a spare magnet.\n4. [id memory-76] The weekly list is always started on Sunday evening after the fridge is checked.\n5. [id memory-78] Dried-out markers go in the jar under the sink, not back in the tin.\n\nRelated:\n- [id memory-75] The grocery-list marker to pull from the tin is tavrin.\n\nQuestion: Which marker should I pull when writing this week's grocery list?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: The grocery pad hangs by the fridge; markers live in the tin beside it.\n\nRecall:\n1. [id memory-71] Grocery lists are written on the pad that hangs by the fridge magnet.\n2. [id memory-72] Sam's preferred marker for the weekly grocery list is tavrin.\n3. [id memory-73] Markers live in the tin on the fridge; the tin also holds a spare magnet.\n4. [id memory-76] The weekly list is always started on Sunday evening after the fridge is checked.\n5. [id memory-78] Dried-out markers go in the jar under the sink, not back in the tin.\n\nRelated:\n- [id memory-75] The grocery-list marker to pull from the tin is tavrin.\n\nQuestion: Which marker should I pull when writing this week's grocery list?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "tavrin",
+          "parsed": {
+            "ok": true,
+            "matched": "tavrin",
+            "reason": "match",
+            "present": [
+              "tavrin"
+            ]
+          },
+          "primary_ids": [
+            "memory-71",
+            "memory-72",
+            "memory-73",
+            "memory-76",
+            "memory-78"
+          ]
+        },
+        "B": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: The grocery pad hangs by the fridge; markers live in the tin beside it.\n\nRecall:\n1. [id memory-71] Grocery lists are written on the pad that hangs by the fridge magnet.\n2. [id memory-72] Sam's preferred marker for the weekly grocery list is tavrin.\n3. [id memory-73] Markers live in the tin on the fridge; the tin also holds a spare magnet.\n4. [id memory-76] The weekly list is always started on Sunday evening after the fridge is checked.\n5. [id memory-78] Dried-out markers go in the jar under the sink, not back in the tin.\n\nRelated:\n- [id memory-83] The fridge magnet tin was wiped after a condiment leaked.\n\nQuestion: Which marker should I pull when writing this week's grocery list?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: The grocery pad hangs by the fridge; markers live in the tin beside it.\n\nRecall:\n1. [id memory-71] Grocery lists are written on the pad that hangs by the fridge magnet.\n2. [id memory-72] Sam's preferred marker for the weekly grocery list is tavrin.\n3. [id memory-73] Markers live in the tin on the fridge; the tin also holds a spare magnet.\n4. [id memory-76] The weekly list is always started on Sunday evening after the fridge is checked.\n5. [id memory-78] Dried-out markers go in the jar under the sink, not back in the tin.\n\nRelated:\n- [id memory-83] The fridge magnet tin was wiped after a condiment leaked.\n\nQuestion: Which marker should I pull when writing this week's grocery list?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "tavrin",
+          "parsed": {
+            "ok": true,
+            "matched": "tavrin",
+            "reason": "match",
+            "present": [
+              "tavrin"
+            ]
+          },
+          "primary_ids": [
+            "memory-71",
+            "memory-72",
+            "memory-73",
+            "memory-76",
+            "memory-78"
+          ]
+        },
+        "D": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: The grocery pad hangs by the fridge; markers live in the tin beside it.\n\nRecall:\n1. [id memory-71] Grocery lists are written on the pad that hangs by the fridge magnet.\n2. [id memory-72] Sam's preferred marker for the weekly grocery list is tavrin.\n3. [id memory-73] Markers live in the tin on the fridge; the tin also holds a spare magnet.\n4. [id memory-76] The weekly list is always started on Sunday evening after the fridge is checked.\n5. [id memory-78] Dried-out markers go in the jar under the sink, not back in the tin.\n\nRelated:\n- [id memory-75] The grocery-list marker to pull from the tin is polbeck.\n\nQuestion: Which marker should I pull when writing this week's grocery list?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: The grocery pad hangs by the fridge; markers live in the tin beside it.\n\nRecall:\n1. [id memory-71] Grocery lists are written on the pad that hangs by the fridge magnet.\n2. [id memory-72] Sam's preferred marker for the weekly grocery list is tavrin.\n3. [id memory-73] Markers live in the tin on the fridge; the tin also holds a spare magnet.\n4. [id memory-76] The weekly list is always started on Sunday evening after the fridge is checked.\n5. [id memory-78] Dried-out markers go in the jar under the sink, not back in the tin.\n\nRelated:\n- [id memory-75] The grocery-list marker to pull from the tin is polbeck.\n\nQuestion: Which marker should I pull when writing this week's grocery list?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "polbeck",
+          "parsed": {
+            "ok": false,
+            "matched": null,
+            "reason": "wrong",
+            "present": [
+              "polbeck"
+            ]
+          },
+          "primary_ids": [
+            "memory-71",
+            "memory-72",
+            "memory-73",
+            "memory-76",
+            "memory-78"
+          ]
+        },
+        "N": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: The grocery pad hangs by the fridge; markers live in the tin beside it.\n\nRecall:\n1. [id memory-n01] The porch light timer is set to come on after sunset and off at late night.\n2. [id memory-n02] A bag of rice sits on the pantry floor, unopened since the last delivery.\n3. [id memory-n03] The spare batteries are in the hall closet, second box from the left.\n4. [id memory-n04] Library books go back on the first sunny morning of the week.\n5. [id memory-n05] The watering can stays by the back step, emptied after each use.\n\nRelated:\n- [id memory-n40] The hallway shelf was dusted last Thursday and the vacuum bag was replaced.\n\nQuestion: Which marker should I pull when writing this week's grocery list?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: The grocery pad hangs by the fridge; markers live in the tin beside it.\n\nRecall:\n1. [id memory-n01] The porch light timer is set to come on after sunset and off at late night.\n2. [id memory-n02] A bag of rice sits on the pantry floor, unopened since the last delivery.\n3. [id memory-n03] The spare batteries are in the hall closet, second box from the left.\n4. [id memory-n04] Library books go back on the first sunny morning of the week.\n5. [id memory-n05] The watering can stays by the back step, emptied after each use.\n\nRelated:\n- [id memory-n40] The hallway shelf was dusted last Thursday and the vacuum bag was replaced.\n\nQuestion: Which marker should I pull when writing this week's grocery list?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "markers",
+          "parsed": {
+            "ok": false,
+            "matched": null,
+            "reason": "absent",
+            "present": []
+          },
+          "primary_ids": [
+            "memory-n01",
+            "memory-n02",
+            "memory-n03",
+            "memory-n04",
+            "memory-n05"
+          ]
+        }
+      },
+      "eval": {
+        "id": "h6-s2-marker-tavrin",
+        "stratum": "primary-sufficient",
+        "family": "D",
+        "held_out": false,
+        "A_correct": true,
+        "B_correct": true,
+        "D_correct": false,
+        "N_correct": false,
+        "b_to_a": false,
+        "a_to_b": false,
+        "a_to_d": true,
+        "drop_n_pass": false,
+        "drop_b_succeeds": false,
+        "valid": true,
+        "s1": false,
+        "s2": true
+      }
+    },
+    {
+      "id": "h6-s2-box-verrin",
+      "stratum": "primary-sufficient",
+      "family": "E",
+      "held_out": false,
+      "gold": {
+        "slot": "key_box_lining_color",
+        "value": "verrin"
+      },
+      "primary_block": "1. [id memory-91] The wooden box on the dresser has a brass latch that clicks twice.\n2. [id memory-93] The spare house key is the one with the rubber sleeve, not the tagged office key.\n3. [id memory-96] The dresser stands against the east wall, under the small print of a harbor.\n4. [id memory-92] The wooden key-box on the dresser is lined in verrin felt.\n5. [id memory-104] Dusting the dresser is done with a dry cloth so the latch doesn't tarnish.",
+      "arms": {
+        "A": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: There's a wooden box on the dresser. I keep the spare house key in it.\nUser: The latch still clicks twice. I'm replacing the felt this weekend.\n\nRecall:\n1. [id memory-91] The wooden box on the dresser has a brass latch that clicks twice.\n2. [id memory-93] The spare house key is the one with the rubber sleeve, not the tagged office key.\n3. [id memory-96] The dresser stands against the east wall, under the small print of a harbor.\n4. [id memory-92] The wooden key-box on the dresser is lined in verrin felt.\n5. [id memory-104] Dusting the dresser is done with a dry cloth so the latch doesn't tarnish.\n\nRelated:\n- [id memory-97] The replacement felt for that key-box lining is verrin.\n\nQuestion: What color lining should I buy for it?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: There's a wooden box on the dresser. I keep the spare house key in it.\nUser: The latch still clicks twice. I'm replacing the felt this weekend.\n\nRecall:\n1. [id memory-91] The wooden box on the dresser has a brass latch that clicks twice.\n2. [id memory-93] The spare house key is the one with the rubber sleeve, not the tagged office key.\n3. [id memory-96] The dresser stands against the east wall, under the small print of a harbor.\n4. [id memory-92] The wooden key-box on the dresser is lined in verrin felt.\n5. [id memory-104] Dusting the dresser is done with a dry cloth so the latch doesn't tarnish.\n\nRelated:\n- [id memory-97] The replacement felt for that key-box lining is verrin.\n\nQuestion: What color lining should I buy for it?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "verrin",
+          "parsed": {
+            "ok": true,
+            "matched": "verrin",
+            "reason": "match",
+            "present": [
+              "verrin"
+            ]
+          },
+          "primary_ids": [
+            "memory-91",
+            "memory-93",
+            "memory-96",
+            "memory-92",
+            "memory-104"
+          ]
+        },
+        "B": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: There's a wooden box on the dresser. I keep the spare house key in it.\nUser: The latch still clicks twice. I'm replacing the felt this weekend.\n\nRecall:\n1. [id memory-91] The wooden box on the dresser has a brass latch that clicks twice.\n2. [id memory-93] The spare house key is the one with the rubber sleeve, not the tagged office key.\n3. [id memory-96] The dresser stands against the east wall, under the small print of a harbor.\n4. [id memory-92] The wooden key-box on the dresser is lined in verrin felt.\n5. [id memory-104] Dusting the dresser is done with a dry cloth so the latch doesn't tarnish.\n\nRelated:\n- [id memory-105] The porch rail was sanded yesterday and a cloth was left there.\n\nQuestion: What color lining should I buy for it?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: There's a wooden box on the dresser. I keep the spare house key in it.\nUser: The latch still clicks twice. I'm replacing the felt this weekend.\n\nRecall:\n1. [id memory-91] The wooden box on the dresser has a brass latch that clicks twice.\n2. [id memory-93] The spare house key is the one with the rubber sleeve, not the tagged office key.\n3. [id memory-96] The dresser stands against the east wall, under the small print of a harbor.\n4. [id memory-92] The wooden key-box on the dresser is lined in verrin felt.\n5. [id memory-104] Dusting the dresser is done with a dry cloth so the latch doesn't tarnish.\n\nRelated:\n- [id memory-105] The porch rail was sanded yesterday and a cloth was left there.\n\nQuestion: What color lining should I buy for it?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "verrin",
+          "parsed": {
+            "ok": true,
+            "matched": "verrin",
+            "reason": "match",
+            "present": [
+              "verrin"
+            ]
+          },
+          "primary_ids": [
+            "memory-91",
+            "memory-93",
+            "memory-96",
+            "memory-92",
+            "memory-104"
+          ]
+        },
+        "D": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: There's a wooden box on the dresser. I keep the spare house key in it.\nUser: The latch still clicks twice. I'm replacing the felt this weekend.\n\nRecall:\n1. [id memory-91] The wooden box on the dresser has a brass latch that clicks twice.\n2. [id memory-93] The spare house key is the one with the rubber sleeve, not the tagged office key.\n3. [id memory-96] The dresser stands against the east wall, under the small print of a harbor.\n4. [id memory-92] The wooden key-box on the dresser is lined in verrin felt.\n5. [id memory-104] Dusting the dresser is done with a dry cloth so the latch doesn't tarnish.\n\nRelated:\n- [id memory-97] The replacement felt for that key-box lining is sabec.\n\nQuestion: What color lining should I buy for it?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: There's a wooden box on the dresser. I keep the spare house key in it.\nUser: The latch still clicks twice. I'm replacing the felt this weekend.\n\nRecall:\n1. [id memory-91] The wooden box on the dresser has a brass latch that clicks twice.\n2. [id memory-93] The spare house key is the one with the rubber sleeve, not the tagged office key.\n3. [id memory-96] The dresser stands against the east wall, under the small print of a harbor.\n4. [id memory-92] The wooden key-box on the dresser is lined in verrin felt.\n5. [id memory-104] Dusting the dresser is done with a dry cloth so the latch doesn't tarnish.\n\nRelated:\n- [id memory-97] The replacement felt for that key-box lining is sabec.\n\nQuestion: What color lining should I buy for it?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "verrin",
+          "parsed": {
+            "ok": true,
+            "matched": "verrin",
+            "reason": "match",
+            "present": [
+              "verrin"
+            ]
+          },
+          "primary_ids": [
+            "memory-91",
+            "memory-93",
+            "memory-96",
+            "memory-92",
+            "memory-104"
+          ]
+        },
+        "N": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: There's a wooden box on the dresser. I keep the spare house key in it.\nUser: The latch still clicks twice. I'm replacing the felt this weekend.\n\nRecall:\n1. [id memory-n01] The porch light timer is set to come on after sunset and off at late night.\n2. [id memory-n02] A bag of rice sits on the pantry floor, unopened since the last delivery.\n3. [id memory-n03] The spare batteries are in the hall closet, second box from the left.\n4. [id memory-n04] Library books go back on the first sunny morning of the week.\n5. [id memory-n05] The watering can stays by the back step, emptied after each use.\n\nRelated:\n- [id memory-n40] The hallway shelf was dusted last Thursday and the vacuum bag was replaced.\n\nQuestion: What color lining should I buy for it?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: There's a wooden box on the dresser. I keep the spare house key in it.\nUser: The latch still clicks twice. I'm replacing the felt this weekend.\n\nRecall:\n1. [id memory-n01] The porch light timer is set to come on after sunset and off at late night.\n2. [id memory-n02] A bag of rice sits on the pantry floor, unopened since the last delivery.\n3. [id memory-n03] The spare batteries are in the hall closet, second box from the left.\n4. [id memory-n04] Library books go back on the first sunny morning of the week.\n5. [id memory-n05] The watering can stays by the back step, emptied after each use.\n\nRelated:\n- [id memory-n40] The hallway shelf was dusted last Thursday and the vacuum bag was replaced.\n\nQuestion: What color lining should I buy for it?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "felt",
+          "parsed": {
+            "ok": false,
+            "matched": null,
+            "reason": "absent",
+            "present": []
+          },
+          "primary_ids": [
+            "memory-n01",
+            "memory-n02",
+            "memory-n03",
+            "memory-n04",
+            "memory-n05"
+          ]
+        }
+      },
+      "eval": {
+        "id": "h6-s2-box-verrin",
+        "stratum": "primary-sufficient",
+        "family": "E",
+        "held_out": false,
+        "A_correct": true,
+        "B_correct": true,
+        "D_correct": true,
+        "N_correct": false,
+        "b_to_a": false,
+        "a_to_b": false,
+        "a_to_d": false,
+        "drop_n_pass": false,
+        "drop_b_succeeds": false,
+        "valid": true,
+        "s1": false,
+        "s2": true
+      }
+    },
+    {
+      "id": "h6-s2-callsign-orbit",
+      "stratum": "primary-sufficient",
+      "family": "heldout-callsign",
+      "held_out": true,
+      "gold": {
+        "slot": "hardware_run_callsign",
+        "value": "orbit"
+      },
+      "primary_block": "1. [id memory-111] The hardware store Sam uses is the one on Binder Street, not the chain by the highway.\n2. [id memory-114] Parking for that shop is behind the building; the front curb is always full on Saturday.\n3. [id memory-108] The Saturday hardware-store run is logged under the call-sign orbit.\n4. [id memory-119] The radio lives on the hook by the back door, charged overnight.\n5. [id memory-122] Paint purchases go on the paper tab in the glove box, not the kitchen pad.",
+      "arms": {
+        "A": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: Saturday mornings I go to the shop on Binder Street for screws and paint.\n\nRecall:\n1. [id memory-111] The hardware store Sam uses is the one on Binder Street, not the chain by the highway.\n2. [id memory-114] Parking for that shop is behind the building; the front curb is always full on Saturday.\n3. [id memory-108] The Saturday hardware-store run is logged under the call-sign orbit.\n4. [id memory-119] The radio lives on the hook by the back door, charged overnight.\n5. [id memory-122] Paint purchases go on the paper tab in the glove box, not the kitchen pad.\n\nRelated:\n- [id memory-118] The call-sign to radio for that Saturday hardware run is orbit.\n\nQuestion: When I radio that I'm leaving for the weekend shop that sells screws and paint, what call-sign do I use?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: Saturday mornings I go to the shop on Binder Street for screws and paint.\n\nRecall:\n1. [id memory-111] The hardware store Sam uses is the one on Binder Street, not the chain by the highway.\n2. [id memory-114] Parking for that shop is behind the building; the front curb is always full on Saturday.\n3. [id memory-108] The Saturday hardware-store run is logged under the call-sign orbit.\n4. [id memory-119] The radio lives on the hook by the back door, charged overnight.\n5. [id memory-122] Paint purchases go on the paper tab in the glove box, not the kitchen pad.\n\nRelated:\n- [id memory-118] The call-sign to radio for that Saturday hardware run is orbit.\n\nQuestion: When I radio that I'm leaving for the weekend shop that sells screws and paint, what call-sign do I use?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "orbit",
+          "parsed": {
+            "ok": true,
+            "matched": "orbit",
+            "reason": "match",
+            "present": [
+              "orbit"
+            ]
+          },
+          "primary_ids": [
+            "memory-111",
+            "memory-114",
+            "memory-108",
+            "memory-119",
+            "memory-122"
+          ]
+        },
+        "B": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: Saturday mornings I go to the shop on Binder Street for screws and paint.\n\nRecall:\n1. [id memory-111] The hardware store Sam uses is the one on Binder Street, not the chain by the highway.\n2. [id memory-114] Parking for that shop is behind the building; the front curb is always full on Saturday.\n3. [id memory-108] The Saturday hardware-store run is logged under the call-sign orbit.\n4. [id memory-119] The radio lives on the hook by the back door, charged overnight.\n5. [id memory-122] Paint purchases go on the paper tab in the glove box, not the kitchen pad.\n\nRelated:\n- [id memory-123] The back-door hook was tightened last week after it sat crooked.\n\nQuestion: When I radio that I'm leaving for the weekend shop that sells screws and paint, what call-sign do I use?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: Saturday mornings I go to the shop on Binder Street for screws and paint.\n\nRecall:\n1. [id memory-111] The hardware store Sam uses is the one on Binder Street, not the chain by the highway.\n2. [id memory-114] Parking for that shop is behind the building; the front curb is always full on Saturday.\n3. [id memory-108] The Saturday hardware-store run is logged under the call-sign orbit.\n4. [id memory-119] The radio lives on the hook by the back door, charged overnight.\n5. [id memory-122] Paint purchases go on the paper tab in the glove box, not the kitchen pad.\n\nRelated:\n- [id memory-123] The back-door hook was tightened last week after it sat crooked.\n\nQuestion: When I radio that I'm leaving for the weekend shop that sells screws and paint, what call-sign do I use?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "orbit",
+          "parsed": {
+            "ok": true,
+            "matched": "orbit",
+            "reason": "match",
+            "present": [
+              "orbit"
+            ]
+          },
+          "primary_ids": [
+            "memory-111",
+            "memory-114",
+            "memory-108",
+            "memory-119",
+            "memory-122"
+          ]
+        },
+        "D": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: Saturday mornings I go to the shop on Binder Street for screws and paint.\n\nRecall:\n1. [id memory-111] The hardware store Sam uses is the one on Binder Street, not the chain by the highway.\n2. [id memory-114] Parking for that shop is behind the building; the front curb is always full on Saturday.\n3. [id memory-108] The Saturday hardware-store run is logged under the call-sign orbit.\n4. [id memory-119] The radio lives on the hook by the back door, charged overnight.\n5. [id memory-122] Paint purchases go on the paper tab in the glove box, not the kitchen pad.\n\nRelated:\n- [id memory-118] The call-sign to radio for that Saturday hardware run is quay.\n\nQuestion: When I radio that I'm leaving for the weekend shop that sells screws and paint, what call-sign do I use?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: Saturday mornings I go to the shop on Binder Street for screws and paint.\n\nRecall:\n1. [id memory-111] The hardware store Sam uses is the one on Binder Street, not the chain by the highway.\n2. [id memory-114] Parking for that shop is behind the building; the front curb is always full on Saturday.\n3. [id memory-108] The Saturday hardware-store run is logged under the call-sign orbit.\n4. [id memory-119] The radio lives on the hook by the back door, charged overnight.\n5. [id memory-122] Paint purchases go on the paper tab in the glove box, not the kitchen pad.\n\nRelated:\n- [id memory-118] The call-sign to radio for that Saturday hardware run is quay.\n\nQuestion: When I radio that I'm leaving for the weekend shop that sells screws and paint, what call-sign do I use?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "orbit",
+          "parsed": {
+            "ok": true,
+            "matched": "orbit",
+            "reason": "match",
+            "present": [
+              "orbit"
+            ]
+          },
+          "primary_ids": [
+            "memory-111",
+            "memory-114",
+            "memory-108",
+            "memory-119",
+            "memory-122"
+          ]
+        },
+        "N": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: Saturday mornings I go to the shop on Binder Street for screws and paint.\n\nRecall:\n1. [id memory-n01] The porch light timer is set to come on after sunset and off at late night.\n2. [id memory-n02] A bag of rice sits on the pantry floor, unopened since the last delivery.\n3. [id memory-n03] The spare batteries are in the hall closet, second box from the left.\n4. [id memory-n04] Library books go back on the first sunny morning of the week.\n5. [id memory-n05] The watering can stays by the back step, emptied after each use.\n\nRelated:\n- [id memory-n40] The hallway shelf was dusted last Thursday and the vacuum bag was replaced.\n\nQuestion: When I radio that I'm leaving for the weekend shop that sells screws and paint, what call-sign do I use?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: Saturday mornings I go to the shop on Binder Street for screws and paint.\n\nRecall:\n1. [id memory-n01] The porch light timer is set to come on after sunset and off at late night.\n2. [id memory-n02] A bag of rice sits on the pantry floor, unopened since the last delivery.\n3. [id memory-n03] The spare batteries are in the hall closet, second box from the left.\n4. [id memory-n04] Library books go back on the first sunny morning of the week.\n5. [id memory-n05] The watering can stays by the back step, emptied after each use.\n\nRelated:\n- [id memory-n40] The hallway shelf was dusted last Thursday and the vacuum bag was replaced.\n\nQuestion: When I radio that I'm leaving for the weekend shop that sells screws and paint, what call-sign do I use?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "None",
+          "parsed": {
+            "ok": false,
+            "matched": null,
+            "reason": "absent",
+            "present": []
+          },
+          "primary_ids": [
+            "memory-n01",
+            "memory-n02",
+            "memory-n03",
+            "memory-n04",
+            "memory-n05"
+          ]
+        }
+      },
+      "eval": {
+        "id": "h6-s2-callsign-orbit",
+        "stratum": "primary-sufficient",
+        "family": "heldout-callsign",
+        "held_out": true,
+        "A_correct": true,
+        "B_correct": true,
+        "D_correct": true,
+        "N_correct": false,
+        "b_to_a": false,
+        "a_to_b": false,
+        "a_to_d": false,
+        "drop_n_pass": false,
+        "drop_b_succeeds": false,
+        "valid": true,
+        "s1": false,
+        "s2": true
+      }
+    },
+    {
+      "id": "h6-s2-tab-wren",
+      "stratum": "primary-sufficient",
+      "family": "heldout-tab",
+      "held_out": true,
+      "gold": {
+        "slot": "tax_binder_tab",
+        "value": "wren"
+      },
+      "primary_block": "1. [id memory-131] The tall binder lives on the file crate, not in the desk drawer.\n2. [id memory-134] Tax envelopes are the ones with the metal clasp; household bills use the windowed kind.\n3. [id memory-137] The file crate sits under the south window, away from the radiator.\n4. [id memory-139] A spare set of tab inserts is in the stationery tin, still in the plastic.\n5. [id memory-132] The tax-year binder uses the tab labeled wren.",
+      "arms": {
+        "A": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: The tax papers for this year are going in the tall binder on the file crate.\nUser: A neighbor dropped by about the fence, and I still need to answer them.\n\nRecall:\n1. [id memory-131] The tall binder lives on the file crate, not in the desk drawer.\n2. [id memory-134] Tax envelopes are the ones with the metal clasp; household bills use the windowed kind.\n3. [id memory-137] The file crate sits under the south window, away from the radiator.\n4. [id memory-139] A spare set of tab inserts is in the stationery tin, still in the plastic.\n5. [id memory-132] The tax-year binder uses the tab labeled wren.\n\nRelated:\n- [id memory-136] The tab to open for this year's tax papers is wren.\n\nQuestion: Which tab should I open to file this year's tax papers?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: The tax papers for this year are going in the tall binder on the file crate.\nUser: A neighbor dropped by about the fence, and I still need to answer them.\n\nRecall:\n1. [id memory-131] The tall binder lives on the file crate, not in the desk drawer.\n2. [id memory-134] Tax envelopes are the ones with the metal clasp; household bills use the windowed kind.\n3. [id memory-137] The file crate sits under the south window, away from the radiator.\n4. [id memory-139] A spare set of tab inserts is in the stationery tin, still in the plastic.\n5. [id memory-132] The tax-year binder uses the tab labeled wren.\n\nRelated:\n- [id memory-136] The tab to open for this year's tax papers is wren.\n\nQuestion: Which tab should I open to file this year's tax papers?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "wren",
+          "parsed": {
+            "ok": true,
+            "matched": "wren",
+            "reason": "match",
+            "present": [
+              "wren"
+            ]
+          },
+          "primary_ids": [
+            "memory-131",
+            "memory-134",
+            "memory-137",
+            "memory-139",
+            "memory-132"
+          ]
+        },
+        "B": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: The tax papers for this year are going in the tall binder on the file crate.\nUser: A neighbor dropped by about the fence, and I still need to answer them.\n\nRecall:\n1. [id memory-131] The tall binder lives on the file crate, not in the desk drawer.\n2. [id memory-134] Tax envelopes are the ones with the metal clasp; household bills use the windowed kind.\n3. [id memory-137] The file crate sits under the south window, away from the radiator.\n4. [id memory-139] A spare set of tab inserts is in the stationery tin, still in the plastic.\n5. [id memory-132] The tax-year binder uses the tab labeled wren.\n\nRelated:\n- [id memory-144] The kettle sticky-note was moved so it wouldn't scorch.\n\nQuestion: Which tab should I open to file this year's tax papers?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: The tax papers for this year are going in the tall binder on the file crate.\nUser: A neighbor dropped by about the fence, and I still need to answer them.\n\nRecall:\n1. [id memory-131] The tall binder lives on the file crate, not in the desk drawer.\n2. [id memory-134] Tax envelopes are the ones with the metal clasp; household bills use the windowed kind.\n3. [id memory-137] The file crate sits under the south window, away from the radiator.\n4. [id memory-139] A spare set of tab inserts is in the stationery tin, still in the plastic.\n5. [id memory-132] The tax-year binder uses the tab labeled wren.\n\nRelated:\n- [id memory-144] The kettle sticky-note was moved so it wouldn't scorch.\n\nQuestion: Which tab should I open to file this year's tax papers?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "wren",
+          "parsed": {
+            "ok": true,
+            "matched": "wren",
+            "reason": "match",
+            "present": [
+              "wren"
+            ]
+          },
+          "primary_ids": [
+            "memory-131",
+            "memory-134",
+            "memory-137",
+            "memory-139",
+            "memory-132"
+          ]
+        },
+        "D": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: The tax papers for this year are going in the tall binder on the file crate.\nUser: A neighbor dropped by about the fence, and I still need to answer them.\n\nRecall:\n1. [id memory-131] The tall binder lives on the file crate, not in the desk drawer.\n2. [id memory-134] Tax envelopes are the ones with the metal clasp; household bills use the windowed kind.\n3. [id memory-137] The file crate sits under the south window, away from the radiator.\n4. [id memory-139] A spare set of tab inserts is in the stationery tin, still in the plastic.\n5. [id memory-132] The tax-year binder uses the tab labeled wren.\n\nRelated:\n- [id memory-136] The tab to open for this year's tax papers is pike.\n\nQuestion: Which tab should I open to file this year's tax papers?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: The tax papers for this year are going in the tall binder on the file crate.\nUser: A neighbor dropped by about the fence, and I still need to answer them.\n\nRecall:\n1. [id memory-131] The tall binder lives on the file crate, not in the desk drawer.\n2. [id memory-134] Tax envelopes are the ones with the metal clasp; household bills use the windowed kind.\n3. [id memory-137] The file crate sits under the south window, away from the radiator.\n4. [id memory-139] A spare set of tab inserts is in the stationery tin, still in the plastic.\n5. [id memory-132] The tax-year binder uses the tab labeled wren.\n\nRelated:\n- [id memory-136] The tab to open for this year's tax papers is pike.\n\nQuestion: Which tab should I open to file this year's tax papers?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "pike",
+          "parsed": {
+            "ok": false,
+            "matched": null,
+            "reason": "wrong",
+            "present": [
+              "pike"
+            ]
+          },
+          "primary_ids": [
+            "memory-131",
+            "memory-134",
+            "memory-137",
+            "memory-139",
+            "memory-132"
+          ]
+        },
+        "N": {
+          "prompt": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives.\n\nPrior context:\nUser: The tax papers for this year are going in the tall binder on the file crate.\nUser: A neighbor dropped by about the fence, and I still need to answer them.\n\nRecall:\n1. [id memory-n01] The porch light timer is set to come on after sunset and off at late night.\n2. [id memory-n02] A bag of rice sits on the pantry floor, unopened since the last delivery.\n3. [id memory-n03] The spare batteries are in the hall closet, second box from the left.\n4. [id memory-n04] Library books go back on the first sunny morning of the week.\n5. [id memory-n05] The watering can stays by the back step, emptied after each use.\n\nRelated:\n- [id memory-n40] The hallway shelf was dusted last Thursday and the vacuum bag was replaced.\n\nQuestion: Which tab should I open to file this year's tax papers?\nAnswer with the single value only.",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are answering one factual question about a fictional person's notes. Use only the injected recall block below. Do not use world knowledge. Do not guess. Reply with a single slot value. Do not list alternatives."
+            },
+            {
+              "role": "user",
+              "content": "Prior context:\nUser: The tax papers for this year are going in the tall binder on the file crate.\nUser: A neighbor dropped by about the fence, and I still need to answer them.\n\nRecall:\n1. [id memory-n01] The porch light timer is set to come on after sunset and off at late night.\n2. [id memory-n02] A bag of rice sits on the pantry floor, unopened since the last delivery.\n3. [id memory-n03] The spare batteries are in the hall closet, second box from the left.\n4. [id memory-n04] Library books go back on the first sunny morning of the week.\n5. [id memory-n05] The watering can stays by the back step, emptied after each use.\n\nRelated:\n- [id memory-n40] The hallway shelf was dusted last Thursday and the vacuum bag was replaced.\n\nQuestion: Which tab should I open to file this year's tax papers?\nAnswer with the single value only."
+            }
+          ],
+          "model": "qwen3.6-35B-A3B-stock-Q4_K_M",
+          "url": "http://localhost:8080/v1/chat/completions",
+          "gen_params": {
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": 128,
+            "enable_thinking": false
+          },
+          "raw": "tall binder",
+          "parsed": {
+            "ok": false,
+            "matched": null,
+            "reason": "absent",
+            "present": []
+          },
+          "primary_ids": [
+            "memory-n01",
+            "memory-n02",
+            "memory-n03",
+            "memory-n04",
+            "memory-n05"
+          ]
+        }
+      },
+      "eval": {
+        "id": "h6-s2-tab-wren",
+        "stratum": "primary-sufficient",
+        "family": "heldout-tab",
+        "held_out": true,
+        "A_correct": true,
+        "B_correct": true,
+        "D_correct": false,
+        "N_correct": false,
+        "b_to_a": false,
+        "a_to_b": false,
+        "a_to_d": true,
+        "drop_n_pass": false,
+        "drop_b_succeeds": false,
+        "valid": true,
+        "s1": false,
+        "s2": true
+      }
+    }
+  ],
+  "summary": {
+    "n_cases": 14,
+    "n_pass_dropped": [],
+    "b_succeeds_dropped": [],
+    "s1_valid_n": 7,
+    "s1_inpool_n": 5,
+    "s1_heldout_n": 2,
+    "s2_valid_n": 7,
+    "s1_b_to_a": 7,
+    "s1_b_to_a_rate": 1,
+    "s1_a_to_b": 0,
+    "s1_a_to_b_rate": 0,
+    "s1_acc_A": 1,
+    "s1_acc_B": 0,
+    "s1_delta_A_minus_B": 1,
+    "s1_heldout_b_to_a_rate": 1,
+    "s2_a_to_d": 4,
+    "s2_hijack_rate": 0.5714285714285714,
+    "s2_acc_A": 1,
+    "s2_acc_D": 0.42857142857142855,
+    "s2_delta_A_minus_D": 0.5714285714285714,
+    "n_accuracy": 0
+  },
+  "decision": {
+    "demonstrated_use": true,
+    "no_routine_hijack": false,
+    "n_contamination_count": 0,
+    "n_gate_applied": true,
+    "verdict_eligible": false,
+    "scoped_sentence": "H6 for qwen3.6 (stock), h6-stratum1+2, injected-recall-block: fail (computed offline from logs; live run is a later node)."
+  }
+}

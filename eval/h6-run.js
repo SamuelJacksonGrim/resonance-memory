@@ -343,7 +343,7 @@ function applyDecisionRule(summary) {
     verdict_eligible: !!use && !!hijack,
     scoped_sentence: "H6 for qwen3.6 (stock), h6-stratum1+2, injected-recall-block: "
       + ((use && hijack) ? "pass" : "fail")
-      + " (computed offline from logs; live run is a later node).",
+      + " (use=" + (use ? "yes" : "no") + ", no-routine-hijack=" + (hijack ? "yes" : "no") + ").",
   };
 }
 
