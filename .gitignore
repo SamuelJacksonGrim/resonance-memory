@@ -39,3 +39,12 @@ spike/rm-07-sqlite/tmp/
 # Generated at build time (assets baked into the exe)
 embedded-assets.js
 eval/soak/last-run.json
+
+# --- AI-agent delegation scratch (machine-specific; keep out of history) ---
+# Colleague briefs copied into worktrees for the delegate loop, and any local
+# task logs. These are per-machine and must never be committed. (Committed
+# research artifacts — prereg docs, results, the replayable h6-live-log.json —
+# are tracked deliberately and live under docs/ and eval/.)
+AGENTS.md
+grok-*.txt
+*.task-output
