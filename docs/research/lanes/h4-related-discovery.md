@@ -294,3 +294,6 @@ replicable. It is not a ship.
 - Corpora are fixtures; embeddings cached and committed.
 - AGPL-3.0 header on new source (`eval/h4-related-run.js`).
 - No fifth verb. Primary = cosine.
+
+---
+**Related:** part of the [activation & consumption campaign](../README.md) — the [research index](../README.md) holds the full tree: Lane A/B/C → decider → [[H4]] → [[H6]] → [[S2v2]]. See also the sibling lanes and `docs/phases/` (H6 prereg · contract · result · S2v2).

@@ -127,3 +127,6 @@ NEXT node, run only if S2v2 shows peer/inverted. Not this experiment.
 at n≥10×2 — right, or want a McNemar-style paired test on the α/β pairs instead of a pooled
 rate? (2) should a case where α and β disagree in a way consistent with position-not-channel be
 flagged separately? (3) minimum N for the power you'd trust.*
+
+---
+**Related:** part of the [activation & consumption campaign](../research/README.md) — the [research index](../research/README.md) holds the full tree (Lane A/B/C · [[H4]] · [[H6]] · [[S2v2]]).

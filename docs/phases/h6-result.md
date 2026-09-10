@@ -93,3 +93,6 @@ Fixtures frozen (GPT-audited, commit `d7cbcef`). Harness/parser/audit-checker ga
 507/0 · golden 27/31 no-regression · audit-check 14/14 mechanical-pass · primary identity held
 on all 14 across A/B/D. Driver = stock qwen3.6-35B-A3B Q4_K_M on `:8080`, greedy. Log:
 `h6-live-log.json`. Nothing promoted to canonical; branch `rm-h6-prereg` off main.
+
+---
+**Related:** part of the [activation & consumption campaign](../research/README.md) — the [research index](../research/README.md) holds the full tree (Lane A/B/C · [[H4]] · [[H6]] · [[S2v2]]).

@@ -172,3 +172,6 @@ distance — so it tests generalization, not pattern memorization.
 A(primary+correct Related) → correct; B(primary+filler) → wrong. `B wrong → A correct` is the
 evidence Related carried information primary did not. **No claim stronger than that attaches to
 a fixture.**
+
+---
+**Related:** part of the [activation & consumption campaign](../research/README.md) — the [research index](../research/README.md) holds the full tree (Lane A/B/C · [[H4]] · [[H6]] · [[S2v2]]).

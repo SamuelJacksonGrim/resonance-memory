@@ -185,3 +185,6 @@ Related: constraint-rescue remains the working associative path (golden ROC 1/4 
 - Did not put constraint-typing into the combiner (Related: already gates on `is_constraint`; folding that into rank would be a different design).
 - Did not implement Phase 2.3/2.4 on the *graph* (spread-time competition, homeostatic edge weights). Combiner-time L1 is a readout, not a substrate change.
 - Did not run Lane A's multi-turn corpus — that is the next round, and the reason these numbers are framed as a shape + a prediction rather than a gate.
+
+---
+**Related:** part of the [activation & consumption campaign](../README.md) — the [research index](../README.md) holds the full tree: Lane A/B/C → decider → [[H4]] → [[H6]] → [[S2v2]]. See also the sibling lanes and `docs/phases/` (H6 prereg · contract · result · S2v2).

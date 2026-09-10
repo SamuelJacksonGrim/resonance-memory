@@ -187,3 +187,6 @@ identical across A/B/D. No conclusion beyond the scoped H6 result may be attache
 *Locked prior to harness construction. Reconciliation of two independent pre-registrations;
 the paired-transition falsifier and the Stratum-1 derivation-prohibition are the deltas that
 make a small-corpus result and a possible false-null auditable.*
+
+---
+**Related:** part of the [activation & consumption campaign](../research/README.md) — the [research index](../research/README.md) holds the full tree (Lane A/B/C · [[H4]] · [[H6]] · [[S2v2]]).

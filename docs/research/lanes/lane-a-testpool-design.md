@@ -412,3 +412,6 @@ it out of rank, and stop calling fusion the next slice.
   by pointing at recall@k alone.
 
 Neither lane should add these cases to `golden.json`.
+
+---
+**Related:** part of the [activation & consumption campaign](../README.md) — the [research index](../README.md) holds the full tree: Lane A/B/C → decider → [[H4]] → [[H6]] → [[S2v2]]. See also the sibling lanes and `docs/phases/` (H6 prereg · contract · result · S2v2).

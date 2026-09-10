@@ -150,3 +150,6 @@ node eval/measure.js --corpus hub-vs-apex  --warm-rank --warm-rank-shape l1 --wa
 
 Lane handoffs: `grok/handoffs/task-20260909-075628.md` (pool),
 `…-075632.md` (combiner), `…-075636.md` (edges).
+
+---
+**Related:** part of the [activation & consumption campaign](../README.md) — the [research index](../README.md) holds the full tree: Lane A/B/C → decider → [[H4]] → [[H6]] → [[S2v2]]. See also the sibling lanes and `docs/phases/` (H6 prereg · contract · result · S2v2).

@@ -243,3 +243,6 @@ Knobs shipped behind flags, default byte-identical:
 
 Eval/tests pin the constants. Production `server.js` reads env +
 `resonance-memory.config.json`.
+
+---
+**Related:** part of the [activation & consumption campaign](../README.md) — the [research index](../README.md) holds the full tree: Lane A/B/C → decider → [[H4]] → [[H6]] → [[S2v2]]. See also the sibling lanes and `docs/phases/` (H6 prereg · contract · result · S2v2).
