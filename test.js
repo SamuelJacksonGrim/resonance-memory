@@ -4656,11 +4656,20 @@ test("export is not an MCP tool (four verbs stay four)", () => {
 section("A/B grok rig (offline invariants)");
 require("./eval/ab-grok/check.js").runChecks(test, assert);
 
+// ------------------------------------------------ H6 prereg (offline only)
+// Parser dry-run, audit-checker, stub-driver harness. Never contacts qwen.
+section("H6 prereg (offline: parser, audit-checker, stub harness)");
+const h6self = require("./eval/h6-selftest.js");
+h6self.runSync(test, assert);
+
 // ------------------------------------------------ edit() embedding safety
 // An embedder outage is transient; losing an embedding is not.
 // createCore already required above (warm-field section)
 
 async function asyncTests() {
+  section("H6 prereg async (stub driver, fail-loud)");
+  await h6self.runAsync(atest, assert);
+
   // ------------------------------------------------- RM-07 slice 2a migrator
   section("JSONL→SQLite migrator (RM-07 slice 2a, 10-step protocol)");
 

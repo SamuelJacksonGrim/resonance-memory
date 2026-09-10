@@ -105,6 +105,13 @@ stable; sophistication grows in the substrate, not in the API.
   also on `node test.js`) refuse Dana-leaks, accept-token-in-question grader
   leaks, and a recency window that still contains "buried" plants. Not a fifth
   verb; not on the RM-00 golden path.
+- **H6 instrument (fixtures + parser + audit-checker + harness).** Offline
+  only: Stratum-1/2 corpora with embedded machine-checkable audit objects,
+  a deterministic slot parser, a static checker that prints verified vs
+  author-asserted channels, and an injected-recall harness with stub /
+  replay / fail-loud driver-down. Live qwen3.6 generation is gated
+  (`--live`) until the fixtures are audited. `kind: "h6"` is skipped by
+  RM-00 and `eval/measure.js`. See `eval/h6-build-notes.md`.
 - **PR-path CI.** `.github/workflows/ci.yml` runs the deterministic
   gate (`node test.js` + `node eval/run.js`) on every push to `main`
   and every pull request, so a regression is caught when it lands,
