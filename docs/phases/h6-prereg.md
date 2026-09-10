@@ -67,7 +67,7 @@ paraphrase, (c) logical entailment, (d) arithmetic / temporal composition, (e) e
 over a small candidate set. "Not present verbatim" is **not** sufficient; derivability is
 forbidden. This guards against a **false CUT**: if primary secretly entails the answer, B
 succeeds, no transition fires, and the null is an artifact. A Stratum-1 case is **valid only
-if B empirically fails** (across both drivers); a case where B succeeds is dropped — it cannot
+if B empirically fails** (on the driver); a case where B succeeds is dropped — it cannot
 distinguish "Related unused" from "primary leaked."
 
 ### Stratum 2 — Primary-sufficient / Related-adversarial (tests HIJACK)
@@ -84,14 +84,30 @@ under N is contaminated by priors/guessability and is removed *before* H6 scorin
 the synthetic fact is actually supplied by retrieval, making the whole experiment auditable.
 Favor exact, arbitrary, slot-checkable values over common knowledge.
 
-## Live-driver protocol
+## Consumption format (pre-run decision — injected block, not tool-call)
 
-First live-generation eval in the campaign (prior lanes were offline/cached-embedding). Driver
-runs the normal local serving path (`serve-qwen.ps1`, greedy decode, fixed seed where the
-stack supports it). The harness MUST: fail loudly if the driver is down (never silently score
-0); log per arm the exact prompt, model id/config, generation params, raw output, parsed
-answer; support replay; and **assert primary IDs + order identical across A/B/D before
-generating**. A/B/D generated independently from otherwise-identical inputs.
+The consumption format under test is the **recall block injected directly into context** —
+the exact `primary + Related:` string RM returns — **not** a live `recall_memory` tool-call by
+the driver. This is *forced* by the "primary byte-identical across A/B/D" requirement: a driver
+that tool-calls could vary its own primary set between arms, destroying the control. Injection
+also removes the tool-calling path entirely, which sidesteps the known degradation of tool-call
+behavior in abliterated/fine-tuned qwen variants (irrelevant here — we inject, the driver only
+reads and answers). Verdicts are scoped to this format; live-tool-call consumption is a separate
+future node.
+
+## Live-driver protocol (pre-run decision — single driver: stock qwen3.6)
+
+First live-generation eval in the campaign (prior lanes were offline/cached-embedding).
+**Driver = stock `qwen3.6-35B-A3B`** (not an abliterated/heretic variant — this is a
+utilization test, we want clean instruction-following), served via `serve-qwen.ps1`, greedy
+decode, fixed seed where the stack supports it. **Single driver by decision (Samuel, pre-run):**
+cross-driver replication is *deferred to a later node*, not part of this run — so the verdict is
+explicitly scoped to qwen3.6 and claims nothing about other drivers (see Scope). Within-driver
+generalization is still required via the held-out slice. The harness MUST: fail loudly if the
+driver is down (never silently score 0); log per arm the exact injected prompt, model id/config,
+generation params, raw output, parsed answer; support replay; and **assert primary IDs + order
+identical across A/B/D before generating**. A/B/D generated independently from otherwise-identical
+inputs.
 
 ## Answer scoring
 
@@ -141,10 +157,11 @@ H6 **earns adoption for this driver/corpus/format** iff **all three**:
 
 ## Scope & replication
 
-Primary verdict is always **"H6 for [driver], [corpus], [consumption format]: pass/fail."** A
-second driver is a **replication layer**, not evidence that silently broadens the first
-driver's claim. First-driver pass + second-driver fail → report exactly that; never average
-drivers into a universal result.
+Primary verdict is always **"H6 for qwen3.6 (stock), [corpus], injected-recall-block:
+pass/fail."** This run is **single-driver by decision**; a second driver is a **deferred
+replication node**, not part of this experiment, and its absence means the verdict claims
+nothing about other drivers. If a second driver is later run: first-driver pass + second-driver
+fail → report exactly that; never average drivers into a universal result.
 
 ## What H6 does NOT establish
 
