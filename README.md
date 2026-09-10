@@ -37,26 +37,35 @@ That's the honest hard part of memory, and it's built in. (Some distinctions sti
 
 ## Get started (about 60 seconds)
 
-**Download the binary for your OS** from [Releases](https://github.com/SamuelJacksonGrim/resonance-memory/releases): `resonance-memory.exe` (Windows x64), `resonance-memory-linux-x64` (Linux), `resonance-memory-macos-arm64` (Apple Silicon). Node is baked in; you do not install Node. Checksums are in `SHA256SUMS`. The binaries are unsigned — Windows SmartScreen / macOS Gatekeeper will warn; see [`docs/BUILDING.md`](docs/BUILDING.md).
+**Download the binary for your OS** from [Releases](https://github.com/SamuelJacksonGrim/resonance-memory/releases): `resonance-memory.exe` (Windows x64), `resonance-memory-linux-x64` (Linux), `resonance-memory-macos-arm64` (Apple Silicon). Node is baked in; you do not install Node. Checksums are in `SHA256SUMS`.
+
+**The binary is unsigned** (code-signing certs cost money). The OS will warn. That is expected, not a virus.
+
+- **Windows:** double-click `resonance-memory.exe`. If you see **"Windows protected your PC"**, click **More info → Run anyway**. No console window appears — that's on purpose.
+- **macOS:** do **not** double-click a downloaded copy (Gatekeeper blocks it). Right-click → **Open** → **Open**, or System Settings → Privacy & Security → **Open Anyway**. Terminal: `xattr -d com.apple.quarantine resonance-memory-macos-arm64` then `chmod +x` and run it.
+- **Linux:** `chmod +x resonance-memory-linux-x64 && ./resonance-memory-linux-x64`.
+
+A page opens in your browser at `http://127.0.0.1:9090/`.
 
 **One-time: give it a "meaning engine."** Resonance finds things by meaning, borrowed from a tiny helper model in **LM Studio**. Search for **`nomic-embed-text-v1.5`** (~80 MB), download it, make sure LM Studio's local server is running. LM Studio loads it automatically the first time your AI saves a memory. *(No LM Studio? Memory still works — it just matches on exact words instead of meaning.)*
 
 Then:
 
-1. **Launch the binary** (Windows: double-click `resonance-memory.exe` — no console window, on purpose. Linux/macOS: `chmod +x` and run it). A page opens in your browser at `http://127.0.0.1:9090/`.
-2. Click **Connect** next to your app (LM Studio or Claude Desktop).
-3. **Restart that app once** so it picks up the memory.
+1. Click **Connect** next to your app (LM Studio or Claude Desktop). Using **Claude Code, Cursor, Continue, Hermes**, or anything else that speaks MCP? Open *Using Claude Code, Cursor, Continue, Hermes, or another MCP app?* on that page and paste the JSON into the app's MCP config.
+2. **Restart that app once** so it picks up the memory.
+3. **First thing worth doing:** in your next chat, tell it a few things worth keeping — who you are, a rule it should follow, the project you're in — and say **remember that**. The panel has a **Copy a starter prompt** button if you want a template.
 
 Done. Your AI can save and recall memories on its own. Click **Show demo graph** to watch example memories cluster and link before you connect anything.
 
 ## Good to know
 
 - **Four abilities, that's the whole interface** — save, recall, edit, delete. It never gets more complicated than that; a small model can't misuse it.
-- **Completely private.** Everything — memories, meaning-fingerprints, the graph — lives in a file on your machine under your user folder. No servers, no telemetry, no account.
+- **Completely private.** Everything — memories, meaning-fingerprints, the graph — lives in a file on your machine. Default: `%USERPROFILE%\.resonance-memory\resonance-memory.db` (Windows) or `~/.resonance-memory/resonance-memory.db` (macOS/Linux). An older build that stored this under `~/.lmstudio/` copies it here on first start (the original is left in place as a backup). Export in the app is the backup; to move the store, copy that file (and `resonance-memory.config.json` beside it) or use Export / Import. No servers, no telemetry, no account.
 - **It scales.** Everything sits in a fast local database (SQLite), so recall stays quick whether you've saved a hundred things or a hundred thousand. An older text-file store upgrades itself safely on first open, keeping a backup.
-- **Take your memory anywhere.** **Export my memories** in the app (or `--export`) writes a `.zip` you own — including a plain `memories.jsonl` any other tool can read. **Import memories** brings it back on any machine (a button in the app, or `--import`). Your learned associations only travel when you explicitly ask them to.
+- **Take your memory anywhere.** **Export my memories** in the app (or `--export`) writes a `.zip` you own — including a plain `memories.jsonl` any other tool can read. **Import memories** brings it back on any machine (a button in the app, or `--import`). Your learned associations only travel when you explicitly ask them to. The control panel's **Terminal commands** list has the rest (`--migrate`, `--dedup-existing`, `--export-jsonl`, …) — exact command, what it does, and when.
 - **Choose your embedder.** Recall geometry depends on the model; the app lets you pick your embedder and applies its tuning. More options means no single model can lock you in.
-- **"Windows protected your PC"?** SmartScreen being cautious about an unsigned program (certs cost money). **More info → Run anyway.** The whole thing is open source — read every line.
+- **"Windows protected your PC"?** SmartScreen being cautious about an unsigned program (certs cost money). **More info → Run anyway.**
+- **macOS "cannot be opened because it is from an unidentified developer"?** Gatekeeper. Right-click → **Open** → **Open**, or System Settings → Privacy & Security → **Open Anyway**. The whole thing is open source — read every line.
 - **The associative field** has a switch in the app; the memory works either way.
 
 ## What's coming: the Grimoire

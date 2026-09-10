@@ -32,7 +32,7 @@
  *   and the kill are the load-bearing bits, not a courtesy.
  *
  * Isolated store (MEMORY_FILE_PATH in a tmpdir) so CI does not touch the
- * runner's real ~/.lmstudio tree. Windows GUI-subsystem binaries still
+ * runner's real ~/.resonance-memory tree. Windows GUI-subsystem binaries still
  * speak stdio when spawned with pipes (same as an MCP client).
  *
  * Not a fifth MCP verb. Not on the recall path. Zero runtime deps.

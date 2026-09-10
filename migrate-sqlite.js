@@ -64,13 +64,12 @@
 const fs = require("fs");
 const path = require("path");
 const readline = require("readline");
-const { sqlitePathFor } = require("./store.js");
+const { sqlitePathFor, resolveStorePath } = require("./store.js");
 const { SqliteStore } = require("./store-sqlite.js");
 const { AccessLog, normalize, hasVector } = require("./record.js");
 
 function defaultStorePath() {
-  return process.env.MEMORY_FILE_PATH ||
-    path.join(process.env.USERPROFILE || process.env.HOME || ".", ".lmstudio", "resonance-memory.jsonl");
+  return resolveStorePath();
 }
 
 function parseArgs(argv) {
@@ -92,7 +91,7 @@ const USAGE = [
   "  --json     machine-readable result on stdout",
   "  --help     this message",
   "",
-  "Store path defaults to MEMORY_FILE_PATH, then ~/.lmstudio/resonance-memory.jsonl.",
+  "Store path defaults to MEMORY_FILE_PATH, then ~/.resonance-memory/resonance-memory.jsonl.",
   "Opt-in CLI. First-open auto-migrate lives in openStore() (slice 4) and",
   "calls this same protocol. The .bak is a recovery snapshot, not the",
   "sovereignty export (that's --export-jsonl).",

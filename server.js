@@ -45,8 +45,8 @@
 const fs = require("fs");
 const path = require("path");
 const { hebbianDecayType, openEdgeStore } = require("./edges.js");
-const { openStore } = require("./store.js");
-const { createCore, readDedupThresholds, readFieldMinSim, readConstraintGate,
+const { openStore, resolveStorePath } = require("./store.js");
+const { createCore, defaultGetEdges, readDedupThresholds, readFieldMinSim, readConstraintGate,
   readSaveTimeK, readSaveTimeMinCos, readRecallBind, readRecallBindK, readRecallBindMinCos,
 } = require("./memory-core.js");
 const extract = require("./extract.js");
@@ -65,8 +65,7 @@ function baseDir() {
   try { const sea = require("node:sea"); if (sea.isSea()) return path.dirname(process.execPath); } catch { }
   return __dirname;
 }
-const STORE_PATH = process.env.MEMORY_FILE_PATH ||
-  path.join(process.env.USERPROFILE || process.env.HOME || ".", ".lmstudio", "resonance-memory.jsonl");
+const STORE_PATH = resolveStorePath();
 // Runtime state lives WITH the data (not next to the exe), matching panel.js so the
 // panel toggle and the server read the same file.
 const CONFIG_PATH = process.env.RESONANCE_MEMORY_CONFIG ||

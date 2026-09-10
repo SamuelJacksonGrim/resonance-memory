@@ -5,7 +5,7 @@ so related ones read together — check the status line on each rather than the 
 leaves this list only when it is *fixed*, not when it is understood; if it's understood but
 unfixed, it stays here with an owner in the backlog.
 
-**Current:** 6 fixed (`BUG-001`, `002`, `003`, `006`, `007`, `008`) · 2 open (`BUG-004`, `005`) ·
+**Current:** 7 fixed (`BUG-001`, `002`, `003`, `004`, `006`, `007`, `008`) · 1 open (`BUG-005`) ·
 2 on the watch list (`W-03`, `W-04`; `W-01` was dismissed, `W-02` was fixed).
 
 **Severity:** `critical` data loss / corruption · `high` user-visible breakage ·
@@ -105,11 +105,23 @@ for `RM-00` in miniature.
 ---
 
 ## `BUG-004` — Store path defaults to `~/.lmstudio/` even for Claude-only users
-**Severity:** low · **Status:** 🔲 open · **Owner:** `RM-11`
+**Severity:** low · **Status:** ✅ **fixed** · **Owner:** `RM-11`
 
-A user who only runs Claude Desktop gets their memories in a directory named for a product
-they don't have installed. Cosmetic, but confusing, and awkward to change later without a
-migration. Already noted under "Known limitations" in the changelog.
+A user who only runs Claude Desktop got their memories in a directory named for a product
+they don't have installed. Cosmetic, but the fix touches user data, so the mover is the
+load-bearing part.
+
+### Fix
+Default store is `~/.resonance-memory/resonance-memory.jsonl` (SQLite sibling `.db`), same
+home-dotdir convention the rest of the codebase already used on every OS. On startup, if
+`MEMORY_FILE_PATH` is unset, the old `~/.lmstudio/` store exists, and the new location
+does not, `resolveStorePath()` copies the store files (jsonl / sqlite + wal + sidecars +
+config) with a staging dir + in-flight marker, verifies, and leaves the original in place
+as a backup. Both-exist: new wins, old untouched. A failed copy wipes dest artifacts and
+fail-opens to the legacy path (retry next start). Env `MEMORY_FILE_PATH` still wins
+outright — no relocate.
+
+**Tests:** `test.js` → "BUG-004 default store location + legacy ~/.lmstudio/ relocate".
 
 ---
 
@@ -118,9 +130,10 @@ migration. Already noted under "Known limitations" in the changelog.
 
 First launch shows a scary OS warning. For a product whose core pitch is "trust this with your
 private memories," an "unknown publisher" dialog is a real adoption tax. The RM-11 release
-matrix now *ships* the unsigned binaries (plus Gatekeeper/SmartScreen guidance in the
-Release body and `docs/BUILDING.md`); it cannot silence the OS. Signing / notarization
-is the remainder of `RM-11`.
+matrix now *ships* the unsigned binaries. RM-20 put the click-path in the 60-second
+docs (README / `READ ME FIRST.txt` / Release notes: Windows **More info → Run anyway**,
+macOS right-click **Open** / `xattr`) so a stranger is not surprised; it still cannot
+silence the OS. Signing / notarization is the remainder of `RM-11`.
 
 ---
 

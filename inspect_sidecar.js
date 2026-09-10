@@ -37,7 +37,7 @@
  */
 
 const fs = require("fs");
-const path = require("path");
+const { resolveStorePath } = require("./store.js");
 
 // Inlined (identical to field.js) so this script is standalone and portable -
 // drop it next to any resonance-memory store and it runs with zero dependencies.
@@ -48,8 +48,7 @@ function cosine(a, b) {
   return na && nb ? dot / (Math.sqrt(na) * Math.sqrt(nb)) : 0;
 }
 
-const STORE_PATH = process.env.MEMORY_FILE_PATH ||
-  path.join(process.env.USERPROFILE || process.env.HOME || ".", ".lmstudio", "resonance-memory.jsonl");
+const STORE_PATH = resolveStorePath();
 const EDGES_PATH = STORE_PATH + ".edges.json";
 const ASSOC_PATH = STORE_PATH + ".assoc.json";
 // Prefer the live sidecar; fall back to a leftover .assoc.json so an upgraded

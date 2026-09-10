@@ -36,15 +36,14 @@
 
 const fs = require("fs");
 const path = require("path");
-const { JsonlStore } = require("./store.js");
+const { JsonlStore, resolveStorePath } = require("./store.js");
 const { readDedupThresholds, dedupExisting } = require("./memory-core.js");
 
 const EMBED_URL = process.env.EMBED_ENDPOINT || "http://localhost:1234/v1/embeddings";
 const EMBED_MODEL = process.env.EMBED_MODEL || "text-embedding-nomic-embed-text-v1.5";
 
 function defaultStorePath() {
-  return process.env.MEMORY_FILE_PATH ||
-    path.join(process.env.USERPROFILE || process.env.HOME || ".", ".lmstudio", "resonance-memory.jsonl");
+  return resolveStorePath();
 }
 
 function parseArgs(argv) {
@@ -157,7 +156,7 @@ const USAGE = [
   "  --json     machine-readable plan on stdout",
   "  --help     this message",
   "",
-  "Store path defaults to MEMORY_FILE_PATH, then ~/.lmstudio/resonance-memory.jsonl.",
+  "Store path defaults to MEMORY_FILE_PATH, then ~/.resonance-memory/resonance-memory.jsonl.",
   "Thresholds: live-config dedup_hi/dedup_lo, else RESONANCE_DEDUP_HI/LO, else 0.95/0.88.",
 ].join("\n");
 

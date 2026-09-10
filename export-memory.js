@@ -52,7 +52,7 @@
 const fs = require("fs");
 const path = require("path");
 const { ZipWriter } = require("./zip.js");
-const { JsonlStore, resolveStoreBackend, sqlitePathFor } = require("./store.js");
+const { JsonlStore, resolveStoreBackend, sqlitePathFor, resolveStorePath } = require("./store.js");
 const { normalize, isVector } = require("./record.js");
 const {
   SIDECAR_KIND, SIDECAR_VERSION, migrateAssoc, readLegacyAssoc, sidecarKind,
@@ -72,8 +72,7 @@ function packageVersion() {
 }
 
 function defaultStorePath() {
-  return process.env.MEMORY_FILE_PATH ||
-    path.join(process.env.USERPROFILE || process.env.HOME || ".", ".lmstudio", "resonance-memory.jsonl");
+  return resolveStorePath();
 }
 
 function defaultOutDir(storePath) {

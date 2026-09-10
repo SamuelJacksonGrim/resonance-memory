@@ -26,13 +26,21 @@
  *   - draws the association graph (your memories, or a synthetic demo),
  *   - first-run empty-store nudge (RM-20): when the user store has zero
  *     current memories, offer a starter prompt and a "connected but never
- *     saved" hint. Not an MCP tool.
+ *     saved" hint. Connect one-clicks LM Studio / Claude Desktop; other MCP
+ *     clients get a copy-paste snippet (same command/args Connect writes).
+ *     The live store file is shown on the page (not buried in uninstall copy).
+ *     Not an MCP tool.
  *   - exports YOUR store as a zip (RM-07 slice 2c; shells export-memory.js, never
  *     demo-seed.jsonl; not an MCP tool — a model that can dump the store is an
  *     exfil path),
  *   - imports a zip or memories.jsonl (RM-17 panel button: confirm modal,
  *     POST /api/import shells runImport(), --with-edges checkbox default-off,
  *     heartbeat pause + yield like export; not an MCP tool),
+ *   - Terminal commands: a closed-by-default reference of every flag entry.js
+ *     actually dispatches (arg parser is the authority). Copy-paste uses this
+ *     binary (the exe, or `node entry.js` from source — never `node panel.js`).
+ *     Mutating ops name the dry-run default and say to export first. Not a
+ *     fifth MCP verb, and not a second page — the panel is one card.
  *   - W-02: Host must be loopback, Origin (when present) must be this panel,
  *     mutating POSTs require a per-process token baked into the page. Settles
  *     the CSRF / DNS-rebinding ship-gate before RM-12 documents the HTTP
@@ -56,7 +64,7 @@ const field = require("./field.js");
 const engine = require("./engine.js");
 const { openEdgeStore } = require("./edges.js");
 const { normalize, isCurrent, isVector } = require("./record.js");
-const { openStore } = require("./store.js");
+const { openStore, liveStoreFile, resolveStorePath } = require("./store.js");
 const { readFieldMinSim } = require("./memory-core.js");
 const { pairConflictFn, resolveEntities } = require("./entity.js");
 const extract = require("./extract.js");
@@ -68,8 +76,7 @@ function baseDir() {
   try { const sea = require("node:sea"); if (sea.isSea()) return path.dirname(process.execPath); } catch { }
   return __dirname;
 }
-const STORE_PATH = process.env.MEMORY_FILE_PATH ||
-  path.join(process.env.USERPROFILE || process.env.HOME || ".", ".lmstudio", "resonance-memory.jsonl");
+const STORE_PATH = resolveStorePath();
 // Keep runtime state WITH the data (not next to the exe) so the downloaded exe leaves
 // nothing beside itself, and the field on/off setting survives moving the exe.
 const CONFIG_PATH = process.env.RESONANCE_MEMORY_CONFIG ||
@@ -98,6 +105,23 @@ function pickPromptBlock(md) {
   const s = String(md || "");
   const m = s.match(/```[^\n]*\n([\s\S]*?)\n```/);
   return (m ? m[1] : s).trim();
+}
+
+function quoteCliArg(p) {
+  const s = String(p || "");
+  if (!s) return s;
+  if (/[\s"]/.test(s)) return '"' + s.replace(/"/g, '\\"') + '"';
+  return s;
+}
+// Flags on this page are argv of THIS binary. Passing them to panel.js
+// itself is not a thing — entry.js is the dispatcher. Bake the real
+// prefix so a copy-paste in a terminal does what the label says.
+function cliPrefix() {
+  try {
+    const sea = require("node:sea");
+    if (sea.isSea()) return quoteCliArg(process.execPath);
+  } catch { /* source tree */ }
+  return quoteCliArg(process.execPath) + " " + quoteCliArg(path.join(__dirname, "entry.js"));
 }
 
 function readConfig() { try { return JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8")); } catch { return {}; } }
@@ -307,6 +331,21 @@ const PAGE = `<!doctype html>
   .firstrun .label { margin-bottom: 4px; }
   .firstrun .hint { margin: 0 0 8px; color: #5b4a20; }
   .firstrun button { margin-top: 2px; }
+  details.mcpother { margin: 8px 0 12px; padding: 10px 14px; border-radius: 12px;
+    background: #f7f8fa; border: 1px solid rgba(0,0,0,.05); }
+  details.mcpother summary { cursor: pointer; font-weight: 600; font-size: 13px; }
+  pre.mcp { font-family: ui-monospace, Consolas, monospace; font-size: 11.5px;
+    background: #fff; padding: 10px 12px; border-radius: 8px; overflow: auto;
+    white-space: pre-wrap; word-break: break-all; margin: 8px 0;
+    border: 1px solid rgba(0,0,0,.06); }
+  .cli-cmd { margin: 14px 0 0; padding-top: 12px; border-top: 1px solid rgba(0,0,0,.06); }
+  .cli-cmd:first-of-type { border-top: none; padding-top: 4px; }
+  .cli-cmd .cname { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+  .cli-cmd .copyrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 6px; }
+  .cli-cmd .hint { margin: 6px 0 0; }
+  .cli-flags { font-family: ui-monospace, Consolas, monospace; font-size: 11.5px; color: #4b5563; }
+  .datapath { font-family: ui-monospace, Consolas, monospace; font-size: 11.5px;
+    background: rgba(0,0,0,.06); padding: 1px 5px; border-radius: 5px; word-break: break-all; }
   @media (prefers-color-scheme: dark) {
     body { background: #16181c; color: #e6e8eb; }
     .card { background: #1f2227; border-color: rgba(255,255,255,.07); box-shadow: 0 12px 40px rgba(0,0,0,.4); }
@@ -328,6 +367,11 @@ const PAGE = `<!doctype html>
     .toast code { background: rgba(255,255,255,.08); }
     .firstrun { background: #3a2f12; border-color: rgba(240,198,116,.25); }
     .firstrun .hint { color: #f0c674; }
+    details.mcpother { background: #171a1e; border-color: rgba(255,255,255,.06); }
+    pre.mcp { background: #1f2227; border-color: rgba(255,255,255,.08); }
+    .datapath { background: rgba(255,255,255,.08); }
+    .cli-cmd { border-top-color: rgba(255,255,255,.06); }
+    .cli-flags { color: #9aa1ab; }
   }
 </style></head>
 <body>
@@ -336,6 +380,15 @@ const PAGE = `<!doctype html>
     <p class="sub">A local memory for your AI. Nothing leaves this machine.</p>
 
     <div id="clients" class="clients sec"></div>
+    <details class="mcpother" id="mcpOther">
+      <summary>Using Claude Code, Cursor, Continue, Hermes, or another MCP app?</summary>
+      <div class="hint" style="margin:8px 0">One-click Connect above covers LM Studio and Claude Desktop. For everything else, paste this into the app's MCP config (same command the Connect button writes). Then restart that app.</div>
+      <pre class="mcp" id="mcpJson"></pre>
+      <button type="button" id="mcpCopy">Copy JSON</button>
+      <span id="mcpCopyMsg" class="hint" style="margin-left:8px"></span>
+      <div class="hint" style="margin-top:10px"><b>Claude Code CLI:</b> <code id="mcpClaudeCli" class="datapath"></code></div>
+      <div class="hint" style="margin-top:6px"><b>Hermes:</b> same command and args, but YAML under <code>mcp_servers</code> (not <code>mcpServers</code>) in <code>~/.hermes/config.yaml</code>.</div>
+    </details>
 
     <div id="firstRun" class="firstrun" hidden>
       <div class="label" id="firstRunTitle">Nothing saved yet</div>
@@ -379,7 +432,7 @@ const PAGE = `<!doctype html>
     <div class="row" id="exportRow" style="margin-top:10px">
       <div>
         <div class="label">Your memories</div>
-        <div class="hint">Download a zip of everything stored on this machine, or restore one from another machine. Nothing is sent anywhere.</div>
+        <div class="hint">They live on this machine at <code id="dataPath" class="datapath">&hellip;</code> &mdash; Export is the backup; nothing is sent anywhere. To move them, copy that file (and the small <code>resonance-memory.config.json</code> beside it) or use Export / Import. Flags the buttons don&rsquo;t cover (<code>--migrate</code>, <code>--dedup-existing</code>, raw jsonl) are under <b>Terminal commands</b> below.</div>
         <div id="exportToast" class="toast" hidden></div>
         <div id="importToast" class="toast" hidden></div>
         <div id="exportBusy" class="busy-note" hidden>Exporting&hellip; (this can take a minute at large N)</div>
@@ -410,6 +463,82 @@ const PAGE = `<!doctype html>
       </div>
     </div>
 
+    <details class="mcpother" id="cliCmds">
+      <summary>Terminal commands</summary>
+      <div class="hint" style="margin:8px 0">These are flags on the same program that opened this page. Paste them in a terminal. They are <b>not</b> MCP tools &mdash; your AI never sees them. There is no top-level <code>--help</code> (that just reopens this panel); each command below accepts <code>--help</code>. Add <code>--json</code> for machine-readable stdout. Default store is <code>MEMORY_FILE_PATH</code>, else <code>~/.resonance-memory/resonance-memory.jsonl</code> (SQLite lives beside that as <code>.db</code>). An existing <code>~/.lmstudio/</code> store is copied here on first start.</div>
+
+      <div class="cli-cmd">
+        <div class="cname">This panel</div>
+        <pre class="mcp"><span class="cli-prefix"></span></pre>
+        <div class="copyrow"><button type="button" data-cli-copy="">Copy</button><span class="hint cli-copy-msg"></span></div>
+        <div class="hint">No flag. Double-clicking the exe does the same.</div>
+      </div>
+
+      <div class="cli-cmd">
+        <div class="cname">MCP server <code>--mcp</code></div>
+        <pre class="mcp"><span class="cli-prefix"></span> --mcp</pre>
+        <div class="copyrow"><button type="button" data-cli-copy="--mcp">Copy</button><span class="hint cli-copy-msg"></span></div>
+        <div class="hint">Runs the memory server over stdio for an AI client. <b>Connect</b> writes this for you. Do not run it in a normal terminal unless you want a JSON-RPC server with no UI.</div>
+      </div>
+
+      <div class="cli-cmd">
+        <div class="cname">Connect apps <code>--install</code></div>
+        <pre class="mcp"><span class="cli-prefix"></span> --install</pre>
+        <div class="copyrow"><button type="button" data-cli-copy="--install">Copy</button><span class="hint cli-copy-msg"></span></div>
+        <div class="hint">Wires LM Studio and Claude Desktop (if present) to this program. Same as <b>Connect</b>. Leaves a <code>.bak</code> of each config. Other clients: paste the snippet above, not this flag.</div>
+      </div>
+
+      <div class="cli-cmd">
+        <div class="cname">Disconnect apps <code>--uninstall</code></div>
+        <pre class="mcp"><span class="cli-prefix"></span> --uninstall</pre>
+        <div class="copyrow"><button type="button" data-cli-copy="--uninstall">Copy</button><span class="hint cli-copy-msg"></span></div>
+        <div class="hint">Disconnects those apps. Same as <b>Disconnect</b>. <b>Does not delete your memories.</b></div>
+      </div>
+
+      <div class="cli-cmd">
+        <div class="cname">Export a zip <code>--export</code> <span class="pill on">read-only</span></div>
+        <pre class="mcp"><span class="cli-prefix"></span> --export</pre>
+        <div class="copyrow"><button type="button" data-cli-copy="--export">Copy</button><span class="hint cli-copy-msg"></span></div>
+        <div class="hint">Writes a <code>.zip</code> of YOUR memories (default: Desktop; never overwrites &mdash; <code>Name (2).zip</code>). The store is not mutated. The <b>Export my memories</b> button shells this same engine.</div>
+        <div class="hint cli-flags">--name &lt;n&gt; &nbsp; --out &lt;dir&gt; &nbsp; --json &nbsp; [store.jsonl]</div>
+      </div>
+
+      <div class="cli-cmd">
+        <div class="cname">Export raw jsonl <code>--export-jsonl</code> <span class="pill on">read-only</span></div>
+        <pre class="mcp"><span class="cli-prefix"></span> --export-jsonl</pre>
+        <div class="copyrow"><button type="button" data-cli-copy="--export-jsonl">Copy</button><span class="hint cli-copy-msg"></span></div>
+        <div class="hint">Writes the raw <code>memories.jsonl</code> (the scripting primitive the zip wraps). Also read-only. No panel button &mdash; the button is the zip.</div>
+        <div class="hint cli-flags">--out &lt;file-or-dir&gt; &nbsp; --json &nbsp; [store.jsonl]</div>
+      </div>
+
+      <div class="cli-cmd">
+        <div class="cname">Import memories <code>--import</code> <span class="pill warn">writes with --apply</span></div>
+        <pre class="mcp"><span class="cli-prefix"></span> --import &lt;zip-or-jsonl&gt;</pre>
+        <div class="copyrow"><button type="button" data-cli-copy="--import &lt;zip-or-jsonl&gt;">Copy</button><span class="hint cli-copy-msg"></span></div>
+        <div class="hint">Dry-run is the default (prints the plan, writes nothing). <code>--apply</code> restores into an <b>empty</b> store. A store that already has memories needs <code>--merge</code> (existing kept). <code>--with-edges</code> restores learned associations &mdash; off on purpose; a planted sidecar is an injection path, and only an RM export zip qualifies. <code>--replace-edges</code> overwrites dest associations. The <b>Import memories</b> button shells this same engine.</div>
+        <div class="hint cli-flags">--apply &nbsp; --merge &nbsp; --into &lt;store&gt; &nbsp; --with-edges &nbsp; --replace-edges &nbsp; --json</div>
+        <div class="hint"><b>Export a backup first</b> before <code>--apply</code>. Does not re-run the secret guard (exports are unsanitized on purpose).</div>
+      </div>
+
+      <div class="cli-cmd">
+        <div class="cname">Migrate JSONL &rarr; SQLite <code>--migrate</code> <span class="pill warn">writes the store</span></div>
+        <pre class="mcp"><span class="cli-prefix"></span> --migrate</pre>
+        <div class="copyrow"><button type="button" data-cli-copy="--migrate">Copy</button><span class="hint cli-copy-msg"></span></div>
+        <div class="hint">Streams a JSONL store into a sibling <code>.db</code>. The original is renamed to <code>.jsonl.bak</code> (recovery snapshot, not deleted). Ids and history are preserved. Failure before the <code>.db</code> rename leaves the JSONL live. New installs already use SQLite; first-open of an old JSONL auto-migrates the same way &mdash; this flag is the opt-in &ldquo;do it now.&rdquo; <code>--migrate-sqlite</code> is the same command.</div>
+        <div class="hint cli-flags">--json &nbsp; [store.jsonl]</div>
+        <div class="hint"><b>Export a backup first.</b> After migrate, an older exe opening the <code>.bak</code> sees a stale store.</div>
+      </div>
+
+      <div class="cli-cmd">
+        <div class="cname">Dedup an old store <code>--dedup-existing</code> <span class="pill warn">writes with --apply</span></div>
+        <pre class="mcp"><span class="cli-prefix"></span> --dedup-existing</pre>
+        <div class="copyrow"><button type="button" data-cli-copy="--dedup-existing">Copy</button><span class="hint cli-copy-msg"></span></div>
+        <div class="hint">For stores written before cosine-banded dedup. Dry-run is the default. <code>--apply</code> is one durable rewrite: restatements confirm, near-duplicates merge. Losers are kept with <code>superseded_by</code> &mdash; not a hard delete. A second <code>--apply</code> is a no-op.</div>
+        <div class="hint cli-flags">--apply &nbsp; --json &nbsp; [store.jsonl]</div>
+        <div class="hint"><b>Export a backup first</b> before <code>--apply</code>.</div>
+      </div>
+    </details>
+
     <div class="support">
       <div class="label">Support the Architect</div>
       <div class="why">If this is useful to you, it stays free &mdash; but coffee helps it keep improving.</div>
@@ -419,7 +548,7 @@ const PAGE = `<!doctype html>
 
     <div class="foot">
       <div><b>For weaker models</b> that forget to save or recall: <a href="#" id="spBtn">copy a ready-made system prompt</a> and paste it into your app's system-prompt box. <span id="spMsg"></span></div>
-      <div style="margin-top:11px"><b>Removing it?</b> Click <b>Disconnect</b> next to each app above, then delete <code>resonance-memory.exe</code> &mdash; that's the whole app. Your memories live at <code id="storePath">&hellip;</code> and stay put unless you delete that file too. SQLite is one <code>.db</code> (facts, access counts, and learned associations). A JSONL pin still has the small <code>.edges.json</code> / <code>.access.json</code> companions beside it (and a leftover <code>.assoc.json</code> if an older build wrote one).</div>
+      <div style="margin-top:11px"><b>Removing it?</b> Click <b>Disconnect</b> next to each app above, then delete <code>resonance-memory.exe</code> &mdash; that's the whole app. Your memories live at <code id="storePath">&hellip;</code> and stay put unless you delete that file too. SQLite (the default) is one <code>.db</code>. A JSONL pin still has the small <code>.edges.json</code> / <code>.access.json</code> companions beside the <code>.jsonl</code> (and a leftover <code>.assoc.json</code> if an older build wrote one).</div>
       <div style="margin-top:11px">The field and extraction switches apply instantly &mdash; no restart. This panel closes itself a few seconds after you close the tab.</div>
     </div>
   </div>
@@ -463,6 +592,8 @@ const PAGE = `<!doctype html>
   </div>
 <script>
   var RM_PANEL_TOKEN = ${JSON.stringify(PANEL_TOKEN)};
+  var MCP_SNIPPET = ${JSON.stringify(install.mcpSnippet())};
+  var CLI_PREFIX = ${JSON.stringify(cliPrefix())};
   (function(){
     var nativeFetch = window.fetch.bind(window);
     window.fetch = function(url, opts){
@@ -536,7 +667,13 @@ const PAGE = `<!doctype html>
     var s = await (await fetch('/api/state')).json();
     tog.checked = s.field;
     renderExtract(s);
-    if(s.store){ var sp = document.getElementById('storePath'); if(sp) sp.textContent = s.store; }
+    var live = s.store_live || s.store;
+    if(live){
+      ['storePath','dataPath'].forEach(function(id){
+        var el = document.getElementById(id);
+        if(el) el.textContent = live;
+      });
+    }
     firstRunMemories = typeof s.memories === 'number' ? s.memories : null;
     renderFirstRun();
     loadEmbedder();
@@ -917,8 +1054,13 @@ const PAGE = `<!doctype html>
       var btn = c.installed ? '<button data-id="'+c.id+'" data-act="disconnect">Disconnect</button>'
         : (c.present ? '<button class="primary" data-id="'+c.id+'" data-act="connect">Connect</button>' : '');
       return '<div class="client"><div><div class="cname">'+c.name+'</div>'+status+'</div>'+btn+'</div>';
-    }).join('') + '<div class="hint" style="margin-bottom:4px">After connecting, restart that app once so it loads your memory.</div>';
+    }).join('') + '<div class="hint" style="margin-bottom:4px">After connecting, <b>restart that app once</b> so it loads your memory. Don\\u2019t see your app? Open the snippet below.</div>';
     firstRunConnected = list.some(function(c){ return c.installed; });
+    var other = document.getElementById('mcpOther');
+    // Auto-open only when Connect has nothing to click. Never force-close —
+    // a Connect click would otherwise collapse a snippet they just opened
+    // for Cursor/Hermes.
+    if(other && !list.some(function(c){ return c.present; })) other.open = true;
     renderFirstRun();
     el.querySelectorAll('button').forEach(function(b){
       b.addEventListener('click', async function(){
@@ -929,6 +1071,47 @@ const PAGE = `<!doctype html>
       });
     });
   }
+
+  (function setupMcpSnippet(){
+    var sn = MCP_SNIPPET || {};
+    var pre = document.getElementById('mcpJson');
+    if(pre) pre.textContent = sn.json || '';
+    var cli = document.getElementById('mcpClaudeCli');
+    if(cli) cli.textContent = sn.claudeCli || '';
+    var btn = document.getElementById('mcpCopy'), msg = document.getElementById('mcpCopyMsg');
+    if(btn){
+      btn.addEventListener('click', async function(){
+        try {
+          await navigator.clipboard.writeText(sn.json || '');
+          if(msg) msg.textContent = 'copied \\u2014 paste into your app\\u2019s MCP config';
+        } catch(e){
+          if(msg) msg.textContent = 'copy failed \\u2014 select the JSON above';
+        }
+        setTimeout(function(){ if(msg) msg.textContent=''; }, 4000);
+      });
+    }
+  })();
+
+  (function setupCliCmds(){
+    var prefix = CLI_PREFIX || '';
+    document.querySelectorAll('.cli-prefix').forEach(function(el){ el.textContent = prefix; });
+    var root = document.getElementById('cliCmds');
+    if(!root) return;
+    root.addEventListener('click', async function(ev){
+      var btn = ev.target.closest('[data-cli-copy]');
+      if(!btn) return;
+      var args = btn.getAttribute('data-cli-copy') || '';
+      var text = prefix + (args ? ' ' + args : '');
+      var msg = btn.parentElement && btn.parentElement.querySelector('.cli-copy-msg');
+      try {
+        await navigator.clipboard.writeText(text);
+        if(msg) msg.textContent = 'copied';
+      } catch(e){
+        if(msg) msg.textContent = 'copy failed \\u2014 select the command';
+      }
+      setTimeout(function(){ if(msg) msg.textContent=''; }, 4000);
+    });
+  })();
 
   demoBtn.addEventListener('click', function(){
     showDemo = !showDemo;
@@ -1435,6 +1618,7 @@ const server = http.createServer((req, res) => {
     extract.probeChatCapability({ modelsUrl: extract.modelsUrl(EMBED_URL) }).then(async (probe) => {
       const memories = await memCount();
       res.writeHead(200, { "Content-Type": "application/json" });
+      const loc = liveStoreFile(STORE_PATH, readConfig());
       res.end(JSON.stringify({
         field: fieldOn(),
         extract_llm: extractOn(),
@@ -1442,13 +1626,17 @@ const server = http.createServer((req, res) => {
         extract_model: probe.model,
         memories,
         store: STORE_PATH,
+        store_live: loc.live,
+        store_backend: loc.backend,
       }));
     }).catch(async () => {
       const memories = await memCount();
+      const loc = liveStoreFile(STORE_PATH, readConfig());
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({
         field: fieldOn(), extract_llm: extractOn(), extract_capable: false,
         extract_model: null, memories, store: STORE_PATH,
+        store_live: loc.live, store_backend: loc.backend,
       }));
     });
     return;

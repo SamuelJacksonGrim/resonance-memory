@@ -95,6 +95,29 @@ stable; sophistication grows in the substrate, not in the API.
   `eval/RESULTS.md` ("RM-03 measurement seed").
 
 ### Changed
+- **BUG-004 — default store is `~/.resonance-memory/`, not `~/.lmstudio/`.**
+  Same home-dotdir convention (including Windows), RM-owned name. On first
+  start, if `MEMORY_FILE_PATH` is unset, the old location has a store, and
+  the new one does not, the store files are **copied** (jsonl / sqlite + WAL
+  + sidecars + config) via a staging dir and an in-flight marker, verified,
+  and the original is left in place as a backup. Both locations occupied:
+  new wins, old untouched. A failed copy wipes dest artifacts and fail-opens
+  to the legacy path so a hiccup cannot hide memories. `MEMORY_FILE_PATH`
+  still wins outright. Not a fifth MCP verb; not the RM-07 JSONL→SQLite
+  `--migrate` (that's a format conversion of a store already at its path).
+- **RM-20 installer / first-run polish.** A stranger's first hour was the
+  remaining product tax: Connect was a dead end unless they ran LM Studio or
+  Claude Desktop; the unsigned-binary scare sat in `BUILDING.md` instead of
+  the 60-second path; the live store file was buried under "Removing it?"
+  and named the configured `.jsonl` stem, not the SQLite `.db` a new user
+  actually gets. The panel now ships a copy-paste MCP snippet (same
+  `selfLaunch()` Connect writes) for Claude Code / Cursor / Continue /
+  Hermes; README + `READ ME FIRST.txt` walk through SmartScreen (**More
+  info → Run anyway**) and Gatekeeper (right-click **Open** / `xattr`)
+  *before* "launch the binary"; **Your memories** shows the live file and
+  names Export as the backup. One-click Connect is unchanged. Signing stays
+  `RM-11` / `BUG-005`. The `~/.lmstudio/` folder wart is `BUG-004` (fixed
+  in this unreleased slice).
 - **Weak-model system prompt rewritten + the copy button fixed.** The optional
   `system-prompt.md` block is now tighter and priority-ordered — recall-before-you-answer
   leads, save-what-lasts and keep-it-clean follow — so a small model that forgets to reach
@@ -103,6 +126,14 @@ stable; sophistication grows in the substrate, not in the API.
   handing over the "paste the block below…" intro too).
 
 ### Added
+- **Terminal commands on the control panel.** A closed-by-default
+  reference lists every flag `entry.js` actually dispatches (`--mcp`,
+  `--install` / `--uninstall`, `--export` / `--export-jsonl`, `--import`,
+  `--migrate` / `--migrate-sqlite`, `--dedup-existing`) with the exact
+  command, what it does, and when you'd use it. Copy-paste uses this
+  binary (the exe, or `node entry.js` from source). Mutating ops name
+  the dry-run default and say to export first. Not a fifth MCP verb;
+  the panel is still one card.
 - **Independent A/B value rig (Grok).** `eval/ab-grok/` is a second, disjoint
   scenario (fictional user Jules Marin — not Dana) measuring cold vs equal-budget
   recency vs Resonance Memory under modest local drivers (`gpt-oss-20b`,
@@ -555,7 +586,6 @@ First packaged, double-click build. Everything below is the baseline going forwa
   "run anyway" on first launch.
 - The **macOS binary must be built on a Mac** (SEA is per-platform); only the Windows
   build ships today.
-- The data directory currently defaults to `~/.lmstudio/…` even for Claude-only users.
 - The associative field is **off by default** pending validation on a real corpus.
 
 ---

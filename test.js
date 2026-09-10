@@ -776,8 +776,10 @@ test("recall backfill of a vectorless row does NOT increment embedding_version",
 section("SqliteStore (RM-07 drop-in) + Store conformance");
 
 const {
-  SqliteStore, openStore, resolveStoreBackend, sqlitePathFor,
+  SqliteStore, openStore, resolveStoreBackend, sqlitePathFor, liveStoreFile,
+  defaultStorePath, legacyLmstudioStorePath, resolveStorePath,
 } = require("./store.js");
+const install = require("./install.js");
 
 function sqliteAvailable() {
   try { require("node:sqlite"); return true; } catch { return false; }
@@ -4429,6 +4431,8 @@ test("release notes: unsigned + Gatekeeper/SmartScreen; rc banner on prerelease"
   assert.ok(/#readme/.test(stable), "notes link the README walkthrough (a downloader may never find it on the repo page)");
   assert.ok(/remembers?\b.*\byou|memory that survives|lasting, private memory/i.test(stable), "notes actually say what RM is, not just how to run it");
   assert.ok(/do \*\*not\*\* need to install Node prior to download/.test(stable), "Node wording is the requested phrasing");
+  assert.ok(/Claude Code/.test(stable) && /Hermes/.test(stable), "release notes name the other-MCP paste path");
+  assert.ok(/resonance-memory\.db/.test(stable), "release notes say where the data lives");
   const rc = releaseMeta.releaseNotes({ tag: "v0.2.0-rc1", pkgVersion: "0.2.0" });
   assert.ok(/pre-release/i.test(rc));
   assert.ok(rc.includes("v0.2.0-rc1"));
@@ -4718,6 +4722,297 @@ test("panel page source ships first-run empty-store copy (RM-20)", () => {
   assert.ok(src.includes("Copy a starter prompt"), "seed-prompt button");
   assert.ok(src.includes("Connected, but nothing saved yet"), "connected-but-empty hint");
   assert.ok(/remember that/i.test(src), "tells the user the phrase that triggers a save");
+});
+
+test("panel page source ships MCP snippet + live store path (RM-20 polish)", () => {
+  const src = fs.readFileSync(path.join(__dirname, "panel.js"), "utf8");
+  assert.ok(src.includes("mcpSnippet"), "bakes install.mcpSnippet into the page");
+  assert.ok(src.includes("Copy JSON"), "copy-paste control for other MCP clients");
+  assert.ok(/Claude Code/.test(src) && /Hermes/.test(src), "names the clients Connect does not one-click");
+  assert.ok(/mcp_servers/.test(src), "Hermes YAML key is named so they do not paste JSON into YAML");
+  assert.ok(src.includes('id="dataPath"'), "live store path is on Your memories, not only in uninstall copy");
+  assert.ok(src.includes("store_live"), "/api/state reports the live file");
+  assert.ok(/Export is the backup/.test(src), "backup path is named next to the file");
+});
+
+test("panel page source ships a Terminal commands reference of real entry.js flags", () => {
+  // Failure: a stranger looking for --export has to read source, or we
+  // document a flag entry.js does not dispatch (or skip a real one).
+  const entry = fs.readFileSync(path.join(__dirname, "entry.js"), "utf8");
+  const src = fs.readFileSync(path.join(__dirname, "panel.js"), "utf8");
+  assert.ok(src.includes("Terminal commands"), "section is named");
+  assert.ok(src.includes('id="cliCmds"'), "closed-by-default details, matching the MCP snippet");
+  const flags = [
+    "--mcp", "--install", "--uninstall",
+    "--export", "--export-jsonl",
+    "--import", "--migrate", "--migrate-sqlite",
+    "--dedup-existing",
+  ];
+  for (const f of flags) {
+    assert.ok(entry.includes(JSON.stringify(f)) || entry.includes("'" + f + "'") || entry.includes(f),
+      "entry.js actually dispatches " + f);
+    assert.ok(src.includes(f), "panel documents " + f);
+  }
+  assert.ok(/dry-run is the default/i.test(src), "import/dedup name the dry-run default");
+  assert.ok(/Export a backup first/i.test(src), "mutating ops tell you to export first");
+  assert.ok(/Does not delete your memories/.test(src), "uninstall is honest about the store");
+  assert.ok(/writes with --apply/.test(src), "apply is named as the write switch");
+  assert.ok(src.includes("cliPrefix") && src.includes("CLI_PREFIX"),
+    "copy-paste prefix is this binary, not a guessed name");
+  assert.ok(/entry\.js/.test(src), "from source, commands go through entry.js");
+  assert.ok(!/node panel\.js --/.test(src), "must not teach node panel.js --flag (that is not the dispatcher)");
+  assert.ok(/not.*MCP tools/i.test(src), "CLI stays off the four verbs");
+  assert.ok(/planted sidecar is an injection path/.test(src), "0009 refusal is named on --with-edges");
+});
+
+test("mcpSnippet is the same launch Connect writes, and is MCP not the panel", () => {
+  const launch = install.selfLaunch();
+  const sn = install.mcpSnippet();
+  assert.strictEqual(sn.command, launch.command);
+  assert.deepStrictEqual(sn.args, launch.args);
+  const parsed = JSON.parse(sn.json);
+  const entry = parsed.mcpServers["resonance-memory"];
+  assert.ok(entry, "JSON is a mergeable mcpServers fragment");
+  assert.strictEqual(entry.command, launch.command);
+  assert.deepStrictEqual(entry.args, launch.args);
+  // Failure: a stranger pastes a snippet that launches the exe with no --mcp
+  // and gets the control panel instead of the four verbs.
+  assert.ok(
+    entry.args.includes("--mcp") || /server\.js$/i.test(entry.args[0] || ""),
+    "snippet must launch the MCP server, not the panel"
+  );
+  const sea = install.mcpSnippet({ command: "C:\\\\fake\\\\resonance-memory.exe", args: ["--mcp"] });
+  assert.ok(JSON.parse(sea.json).mcpServers["resonance-memory"].args.includes("--mcp"),
+    "an exe snippet without --mcp would open the panel");
+  assert.ok(/claude mcp add --scope user/.test(sn.claudeCli), "Claude Code CLI is user-scope, not a per-project surprise");
+  assert.ok(/^mcp_servers:/m.test(sn.hermesYaml), "Hermes is YAML under mcp_servers");
+  assert.ok(!/"mcpServers"/.test(sn.hermesYaml), "Hermes YAML must not use the JSON key");
+});
+
+test("install writes selfLaunch, preserves other servers, leaves .bak", () => {
+  const dir = tmp("install-" + Math.random().toString(36).slice(2));
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, "mcp.json");
+  fs.writeFileSync(file, JSON.stringify({ mcpServers: { other: { command: "keep-me" } } }, null, 2));
+  const prev = process.env.RESONANCE_MEMORY_CONFIGS_JSON;
+  process.env.RESONANCE_MEMORY_CONFIGS_JSON = JSON.stringify([{ id: "t", name: "T", file }]);
+  try {
+    const r = install.install("t");
+    assert.ok(r.ok, r.message || "install should succeed when the client file exists");
+    const cfg = JSON.parse(fs.readFileSync(file, "utf8"));
+    assert.strictEqual(cfg.mcpServers.other.command, "keep-me", "other servers stay");
+    assert.deepStrictEqual(cfg.mcpServers["resonance-memory"], install.selfLaunch());
+    assert.ok(fs.existsSync(file + ".bak"), "leaves a .bak");
+    const bak = JSON.parse(fs.readFileSync(file + ".bak", "utf8"));
+    assert.strictEqual(bak.mcpServers.other.command, "keep-me");
+    assert.ok(!bak.mcpServers["resonance-memory"], "bak is pre-connect");
+  } finally {
+    if (prev === undefined) delete process.env.RESONANCE_MEMORY_CONFIGS_JSON;
+    else process.env.RESONANCE_MEMORY_CONFIGS_JSON = prev;
+  }
+});
+
+section("BUG-004 default store location + legacy ~/.lmstudio/ relocate");
+
+function withEnv(key, value, fn) {
+  const prev = process.env[key];
+  const had = Object.prototype.hasOwnProperty.call(process.env, key);
+  try {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+    return fn();
+  } finally {
+    if (!had) delete process.env[key];
+    else process.env[key] = prev;
+  }
+}
+
+function fakeHome(name) {
+  const home = tmp("bug004-" + (name || Math.random().toString(36).slice(2)));
+  fs.mkdirSync(home, { recursive: true });
+  return home;
+}
+
+function writeLegacyJsonl(home, text) {
+  const jsonl = legacyLmstudioStorePath(home);
+  fs.mkdirSync(path.dirname(jsonl), { recursive: true });
+  fs.writeFileSync(jsonl, text, "utf8");
+  return jsonl;
+}
+
+test("compiled-in default is ~/.resonance-memory/, not ~/.lmstudio/", () => {
+  const home = fakeHome("shape");
+  const neu = defaultStorePath(home);
+  const old = legacyLmstudioStorePath(home);
+  assert.ok(neu.indexOf(".resonance-memory") >= 0, "new dir is RM-owned");
+  assert.ok(neu.indexOf(".lmstudio") < 0, "new default must not sit under .lmstudio");
+  assert.ok(old.indexOf(".lmstudio") >= 0, "legacy path stays findable for relocate");
+  assert.strictEqual(path.basename(neu), "resonance-memory.jsonl");
+  assert.strictEqual(path.basename(old), "resonance-memory.jsonl");
+});
+
+test("old-exists / new-absent → copied; source left intact (jsonl)", () => {
+  withEnv("MEMORY_FILE_PATH", undefined, () => {
+    const home = fakeHome("copy-jsonl");
+    const body = '{"id":1,"text":"keep me"}\n';
+    const src = writeLegacyJsonl(home, body);
+    fs.writeFileSync(src + ".access.json", '{"1":3}\n', "utf8");
+    fs.writeFileSync(path.join(path.dirname(src), "resonance-memory.config.json"),
+      '{"field":true}\n', "utf8");
+    const logs = [];
+    const resolved = resolveStorePath({ home, log: (m) => logs.push(m) });
+    const dest = defaultStorePath(home);
+    assert.strictEqual(resolved, dest, "resolver returns the new default");
+    assert.strictEqual(fs.readFileSync(dest, "utf8"), body, "jsonl bytes match");
+    assert.ok(fs.existsSync(src), "source jsonl is NOT deleted");
+    assert.strictEqual(fs.readFileSync(src, "utf8"), body, "source jsonl bytes unchanged");
+    assert.ok(fs.existsSync(dest + ".access.json"), "access sidecar copied");
+    assert.strictEqual(
+      fs.readFileSync(path.join(path.dirname(dest), "resonance-memory.config.json"), "utf8"),
+      '{"field":true}\n',
+      "live config copied so the field toggle survives"
+    );
+    assert.ok(!fs.existsSync(path.join(path.dirname(dest), ".relocating-from-lmstudio")),
+      "marker removed after success");
+    assert.ok(logs.some((m) => /copied memories/.test(m)), "stderr names the copy");
+  });
+});
+
+test("both-exist → new wins, old untouched (no overwrite)", () => {
+  withEnv("MEMORY_FILE_PATH", undefined, () => {
+    const home = fakeHome("both");
+    const src = writeLegacyJsonl(home, '{"id":1,"text":"legacy"}\n');
+    const dest = defaultStorePath(home);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.writeFileSync(dest, '{"id":2,"text":"already at new"}\n', "utf8");
+    const resolved = resolveStorePath({ home, log() {} });
+    assert.strictEqual(resolved, dest);
+    assert.strictEqual(fs.readFileSync(dest, "utf8"), '{"id":2,"text":"already at new"}\n',
+      "dest must not be overwritten");
+    assert.strictEqual(fs.readFileSync(src, "utf8"), '{"id":1,"text":"legacy"}\n',
+      "source must not be touched");
+  });
+});
+
+test("MEMORY_FILE_PATH wins: no relocate, even when a legacy store exists", () => {
+  const home = fakeHome("env");
+  const src = writeLegacyJsonl(home, '{"id":1,"text":"legacy"}\n');
+  const pinned = path.join(home, "pinned", "mem.jsonl");
+  fs.mkdirSync(path.dirname(pinned), { recursive: true });
+  fs.writeFileSync(pinned, '{"id":9,"text":"pinned"}\n', "utf8");
+  withEnv("MEMORY_FILE_PATH", pinned, () => {
+    const resolved = resolveStorePath({ home, log() {} });
+    assert.strictEqual(resolved, pinned, "env override is the path");
+    assert.ok(!fs.existsSync(defaultStorePath(home)), "must not copy into the new default");
+    assert.strictEqual(fs.readFileSync(src, "utf8"), '{"id":1,"text":"legacy"}\n');
+  });
+});
+
+test("neither exists → new default path, no files created (new user)", () => {
+  withEnv("MEMORY_FILE_PATH", undefined, () => {
+    const home = fakeHome("fresh");
+    const resolved = resolveStorePath({ home, log() {} });
+    assert.strictEqual(resolved, defaultStorePath(home));
+    assert.ok(!fs.existsSync(resolved), "resolver must not mkdir/create a store");
+    assert.ok(!fs.existsSync(path.dirname(resolved)), "do not create the dest dir until a real write");
+  });
+});
+
+test("failed relocate fail-opens to legacy; dest left empty so next start retries", () => {
+  withEnv("MEMORY_FILE_PATH", undefined, () => {
+    const home = fakeHome("failopen");
+    const src = writeLegacyJsonl(home, '{"id":1,"text":"legacy"}\n');
+    // A file where the dest directory should be: mkdir of destDir throws.
+    const destDir = path.dirname(defaultStorePath(home));
+    fs.writeFileSync(destDir, "not-a-directory", "utf8");
+    const logs = [];
+    const resolved = resolveStorePath({ home, log: (m) => logs.push(m) });
+    assert.strictEqual(resolved, src, "fail-open keeps serving the legacy store");
+    assert.strictEqual(fs.readFileSync(src, "utf8"), '{"id":1,"text":"legacy"}\n',
+      "source still intact");
+    assert.ok(logs.some((m) => /failed|using the legacy store/.test(m)));
+  });
+});
+
+test("incomplete relocate (marker present) is discarded and retried from source", () => {
+  withEnv("MEMORY_FILE_PATH", undefined, () => {
+    const home = fakeHome("marker");
+    const src = writeLegacyJsonl(home, '{"id":1,"text":"real"}\n');
+    const dest = defaultStorePath(home);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.writeFileSync(dest, '{"id":0,"text":"torn copy"}\n', "utf8");
+    fs.writeFileSync(path.join(path.dirname(dest), ".relocating-from-lmstudio"), "in-flight\n");
+    const resolved = resolveStorePath({ home, log() {} });
+    assert.strictEqual(resolved, dest);
+    assert.strictEqual(fs.readFileSync(dest, "utf8"), '{"id":1,"text":"real"}\n',
+      "torn dest was wiped and recopied from source");
+    assert.strictEqual(fs.readFileSync(src, "utf8"), '{"id":1,"text":"real"}\n');
+    assert.ok(!fs.existsSync(path.join(path.dirname(dest), ".relocating-from-lmstudio")));
+  });
+});
+
+if (sqliteAvailable()) {
+  test("old-exists / new-absent copies a sqlite store (row count verified; source kept)", () => {
+    withEnv("MEMORY_FILE_PATH", undefined, () => {
+      const home = fakeHome("copy-sqlite");
+      const srcJsonl = legacyLmstudioStorePath(home);
+      const srcDb = sqlitePathFor(srcJsonl);
+      fs.mkdirSync(path.dirname(srcDb), { recursive: true });
+      const s = new SqliteStore(srcDb);
+      s.add(normalize({ id: 7, text: "sqlite keep me", embedding: [1, 0] }));
+      s.add(normalize({ id: 8, text: "also keep", embedding: [0, 1] }));
+      s.close();
+      const resolved = resolveStorePath({ home, log() {} });
+      const destDb = sqlitePathFor(defaultStorePath(home));
+      assert.strictEqual(resolved, defaultStorePath(home));
+      assert.ok(fs.existsSync(destDb), "dest .db exists");
+      const dest = new SqliteStore(destDb, { readOnly: true });
+      try {
+        const recs = dest.all();
+        assert.strictEqual(recs.length, 2);
+        assert.strictEqual(recs.find((r) => r.id === 7).text, "sqlite keep me");
+      } finally { dest.close(); }
+      const src = new SqliteStore(srcDb, { readOnly: true });
+      try {
+        assert.strictEqual(src.all().length, 2, "source sqlite still has both rows");
+      } finally { src.close(); }
+    });
+  });
+}
+
+test("liveStoreFile names the .db a new sqlite user actually gets (not the jsonl stem)", () => {
+  const dir = tmp("live-store-" + Math.random().toString(36).slice(2));
+  fs.mkdirSync(dir, { recursive: true });
+  const jsonl = path.join(dir, "resonance-memory.jsonl");
+  const db = path.join(dir, "resonance-memory.db");
+  // New user, sqlite default, neither file exists yet.
+  const fresh = liveStoreFile(jsonl, { store: "sqlite" });
+  assert.strictEqual(fresh.backend, "sqlite");
+  assert.strictEqual(fresh.live, db, "new user is pointed at the .db, not a jsonl that will never appear");
+  assert.strictEqual(fresh.configured, jsonl);
+  fs.writeFileSync(db, "sqlite-placeholder");
+  assert.strictEqual(liveStoreFile(jsonl, { store: "sqlite" }).live, db, "existing .db wins");
+  fs.writeFileSync(jsonl, "{}\n");
+  assert.strictEqual(liveStoreFile(jsonl, { store: "jsonl" }).live, jsonl, "jsonl pin is honest");
+  fs.unlinkSync(db);
+  assert.strictEqual(liveStoreFile(jsonl, { store: "sqlite" }).live, jsonl, "leftover jsonl (fail-open / not-yet-migrated) is the live file");
+});
+
+test("README + READ ME FIRST put SmartScreen/Gatekeeper in the first-run path", () => {
+  const readme = fs.readFileSync(path.join(__dirname, "README.md"), "utf8");
+  const first = fs.readFileSync(path.join(__dirname, "READ ME FIRST.txt"), "utf8");
+  assert.ok(/More info/.test(readme) && /Run anyway/.test(readme), "README names the SmartScreen clicks");
+  assert.ok(/Right-click/.test(readme) && /Open Anyway/.test(readme), "README names the Gatekeeper clicks, not just BUILDING.md");
+  assert.ok(/resonance-memory\.db/.test(readme), "README names the live sqlite file");
+  assert.ok(/Default:.*\.resonance-memory/.test(readme), "README default path is the RM-owned dir (BUG-004)");
+  assert.ok(/first thing worth doing/i.test(readme), "README still names the first chat action");
+  assert.ok(/Claude Code/.test(readme) && /Hermes/.test(readme), "README Connect step names the other-MCP path");
+  assert.ok(/More info/.test(first) && /Run anyway/.test(first), "READ ME FIRST prepares them for SmartScreen before double-click");
+  assert.ok(/resonance-memory\.db/.test(first), "READ ME FIRST names where the data lives");
+  assert.ok(/\.resonance-memory/.test(first), "READ ME FIRST names the RM-owned data dir (BUG-004)");
+  const bat = fs.readFileSync(path.join(__dirname, "uninstall.bat"), "utf8");
+  assert.ok(/resonance-memory\.db/.test(bat), "uninstall.bat points at the sqlite default, not only the jsonl stem");
+  assert.ok(/\\.resonance-memory\\/.test(bat), "uninstall.bat points at the new default, not only .lmstudio");
 });
 
 test("panel page source ships embedder selector + /api/embedder (not a browser test)", () => {
@@ -5744,6 +6039,9 @@ async function asyncTests() {
         const page = await (await fetch(panel.url + "/")).text();
         assert.ok(page.includes("Export my memories"));
         assert.ok(/read-only/i.test(page));
+        assert.ok(page.includes("Terminal commands"), "CLI reference is on the served page");
+        assert.ok(page.includes("--dedup-existing"), "a maintenance flag the buttons don't cover is listed");
+        assert.ok(page.includes("entry.js"), "dev prefix is node + entry.js (cliPrefix ran), not panel.js --export");
         const prev = await (await fetch(panel.url + "/api/export")).json();
         assert.strictEqual(prev.demo, false);
         assert.strictEqual(prev.busy, false);

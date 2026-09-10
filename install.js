@@ -22,6 +22,11 @@
  *
  * It adds an `mcpServers["resonance-memory"]` entry that launches THIS executable in
  * --mcp mode, preserving any other servers already configured, and leaves a .bak.
+ *
+ * One-click covers LM Studio and Claude Desktop (known config paths). Everyone
+ * else — Claude Code, Cursor, Continue, Hermes, … — gets a copy-paste snippet
+ * from mcpSnippet() so we do not guess their config file. Hermes is YAML under
+ * mcp_servers, not JSON mcpServers; one-click would be a second writer.
  */
 
 const fs = require("fs");
@@ -35,6 +40,28 @@ function isSea() { try { return require("node:sea").isSea(); } catch { return fa
 function selfLaunch() {
   if (isSea()) return { command: process.execPath, args: ["--mcp"] };
   return { command: process.execPath, args: [path.join(__dirname, "server.js")] };
+}
+
+// Copy-paste launch for MCP clients we do not auto-wire. Same command/args
+// Connect writes. A snippet without --mcp (on the exe) would open the panel
+// instead of the server — that is the failure this exists to prevent.
+function mcpSnippet(launch) {
+  launch = launch || selfLaunch();
+  const command = String(launch.command || "");
+  const args = Array.isArray(launch.args) ? launch.args.slice() : [];
+  const json = JSON.stringify({
+    mcpServers: { "resonance-memory": { command, args } },
+  }, null, 2);
+  const quoted = /\s/.test(command) ? "\"" + command.replace(/"/g, "\\\"") + "\"" : command;
+  const claudeCli = "claude mcp add --scope user --transport stdio resonance-memory -- "
+    + quoted + (args.length ? " " + args.join(" ") : "");
+  const hermesYaml = [
+    "mcp_servers:",
+    "  resonance-memory:",
+    "    command: " + JSON.stringify(command),
+    "    args: " + JSON.stringify(args),
+  ].join("\n");
+  return { command, args, json, claudeCli, hermesYaml };
 }
 
 // Known MCP clients and where their config lives (overridable for tests via env).
@@ -91,7 +118,7 @@ function uninstallOne(c) {
 
 function install(targetId) {
   const targets = detect().filter((c) => c.present && (!targetId || c.id === targetId));
-  if (!targets.length) return { ok: false, results: [], message: "No supported AI app found (looked for LM Studio and Claude Desktop)." };
+  if (!targets.length) return { ok: false, results: [], message: "No supported AI app found (looked for LM Studio and Claude Desktop). Paste the MCP snippet from the control panel into your client's config." };
   return { ok: true, results: targets.map((c) => installOne(c)) };
 }
 
@@ -100,4 +127,4 @@ function uninstall(targetId) {
   return { ok: true, results: targets.map((c) => uninstallOne(c)) };
 }
 
-module.exports = { detect, install, uninstall, selfLaunch, clientConfigs };
+module.exports = { detect, install, uninstall, selfLaunch, mcpSnippet, clientConfigs };

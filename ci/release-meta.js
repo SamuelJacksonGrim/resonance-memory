@@ -240,6 +240,10 @@ function releaseNotes(opts) {
   lines.push("- **macOS Gatekeeper:** Right-click → **Open** → **Open**, or System Settings → Privacy & Security → **Open Anyway**, or `xattr -d com.apple.quarantine resonance-memory-macos-arm64`. Then `chmod +x`.");
   lines.push("- **Linux:** `chmod +x resonance-memory-linux-x64 && ./resonance-memory-linux-x64`. If `Permission denied` after chmod, the execute bit may not stick on some mounts — copy the file somewhere executable (`~/bin`). Not Alpine.");
   lines.push("");
+  lines.push("A page opens at `http://127.0.0.1:9090/`. **Connect** one-clicks LM Studio or Claude Desktop; other MCP clients (Claude Code, Cursor, Continue, Hermes) paste the JSON snippet on that page. Restart the app once.");
+  lines.push("");
+  lines.push("Your memories live on this machine at `~/.resonance-memory/resonance-memory.db` (Windows: `%USERPROFILE%\\.resonance-memory\\resonance-memory.db`). A leftover `~/.lmstudio/` store is copied here on first start (the original is left in place). Export in the app is the backup. Nothing is uploaded.");
+  lines.push("");
   lines.push("Full notes, including how to build from source: [`docs/BUILDING.md`](" + building + ").");
   lines.push("");
   lines.push("## What this is");

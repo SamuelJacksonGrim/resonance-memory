@@ -220,7 +220,7 @@ Not substrate work; what makes it runnable by anyone. Scope + acceptance: `BACKL
 | `RM-17` | Export / import / backup | ✅ — zip export 2b + panel 2c; `--import` CLI (dry-run default, `--apply`, `--with-edges` opt-in); panel import button shipped (confirm modal, shells `runImport()`, with-edges default-off) |
 | `RM-18` | Encryption at rest (optional) | ⬜ |
 | `RM-19` | Recall explainability | ⬜ — near-free once 2.2 tracing exists |
-| `RM-20` | First-run quality | 🟡 — panel empty-store nudge + starter prompt shipped; panel import button names the "zip from another machine" hole |
+| `RM-20` | First-run quality | 🟡 — empty-store nudge + Connect snippet for other MCP clients + unsigned first-run in the 60-second path + live store path on the panel + `BUG-004` data dir (`~/.resonance-memory/`, auto-copy from `~/.lmstudio/`); signing remains `RM-11` |
 | `RM-14` | Hosted / enterprise | ⛔ **deliberately deferred** — a separate product with a separate name |
 
 ---
