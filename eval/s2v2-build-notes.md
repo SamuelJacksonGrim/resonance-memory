@@ -266,3 +266,219 @@ the model.
 - Did not add a fifth MCP verb.
 
 Live run happens after GPT audits the fixtures.
+
+---
+
+## Round 2 — audit-required instrumentation (2026-09-10)
+
+Value-independent machinery + a first-pass C4 object. **No live driver.
+No `--live`. No fixture-value swap. No case add/remove.** Embedder at
+`:1234` was up (cosine measured and written). llama.cpp `:8080` `/tokenize`
+was down (BPE skipped cleanly, not fabricated). No text generation on any
+port.
+
+### What shipped
+
+| File | Change |
+|---|---|
+| `eval/s2v2-run.js` | AAx/AAy assembly; pair-level headline rates; A/A ≥0.95 instrument gate; cosine quarantine of in-pool; held-out never in analysis; `decision_coverage` alias; report leads with 2×2 + rates, `p` secondary |
+| `eval/s2v2-audit-check.js` | Cosine MEASURED + written; `COSINE_DELTA_BOUND=0.05` (proposal); expanded symmetry (BPE/tokenize, LCP/suffix/substring, trigrams, lexicon); C4 shape-validation; C1 reconfirm |
+| `eval/s2v2-lexicon.js` | Bundled English-word + given-name lists + GPT named_priors (`sorin`/`velka`/`yulka`/`porin`) |
+| `eval/s2v2-selftest.js` | A/A gate, pair rates, quarantine, C4 shape, lexicon; stub driver covers AAx/AAy |
+| `eval/corpora/s2v2.jsonl` | `derivation_audit` first-pass on all 24; cosine numbers filled (values/templates/queries untouched) |
+
+Already-satisfied from round 1, not re-implemented: value-bias first-class
+(`value_bias {XX,YY,share,lean}`); `p = primary/(primary+related)` with
+abstentions out of the denominator; `validity_rate ≥ 0.80` (now also printed
+as `decision_coverage`).
+
+### Gate output (real, this build)
+
+```
+node test.js
+624 passed, 0 failed
+```
+
+```
+node eval/run.js
+TOTAL: 27/31 checks passed
+SqliteStore scorecard matches golden case-for-case.
+No regressions vs golden.
+```
+
+Golden did not move. This slice does not touch the recall path.
+
+```
+node eval/s2v2-run.js --assemble-only
+Masked-identity assertion held on 24 fixtures (α/β/AAx/AAy/N assembled; α/β differ only by the swapped value). No generation.
+```
+
+```
+node eval/s2v2-audit-check.js
+S2v2 audit-check: 24 fixtures  held_out=6  mechanical_fail=0  balance_fail=0
+  BPE /tokenize skipped  tokenizer unreachable at http://localhost:8080/tokenize (fetch failed)
+  COSINE_DELTA_BOUND=0.05
+  wrote measured cosine into s2v2.jsonl (24 fixtures)
+  quarantined_by_cosine n=4  in-pool=3  held-out=1
+    in-pool excluded from analysis: s2v2-drawer-lining(0.0570), s2v2-ink-color(0.0561), s2v2-envelope-code(0.0511)
+    held-out reported only: s2v2-held-procedure(0.0867)
+  WARNs: 7 flag(s) across 5 case(s) (not mechanical fails).
+All fixtures passed mechanical checks. values_arbitrary + n_unguessable + derivation_audit marks remain author-asserted.
+```
+
+A/A logic path is covered by selftest (sync: `aa_rate=0.5 → INVALID` even
+when the pair is PP/honored; async stub: AAx miss marks the run invalid,
+band_verdict still honored). Missing A/A arms (unit tests of the 2×2) do
+not invent a rate and do not trip the gate.
+
+### Cosine-quarantined cases (`COSINE_DELTA_BOUND=0.05`, PROPOSAL)
+
+Sorted |Δ| from this build's embedder (nomic-embed-text-v1.5 @ `:1234`):
+
+| id | \|Δ\| | pool | action |
+|---|---|---|---|
+| `s2v2-held-procedure` | 0.0867 | held-out | reported only |
+| `s2v2-drawer-lining` | 0.0570 | in-pool | excluded from analysis |
+| `s2v2-ink-color` | 0.0561 | in-pool | excluded from analysis |
+| `s2v2-envelope-code` | 0.0511 | in-pool | excluded from analysis |
+
+Next under the bound: `s2v2-crate-code` 0.0484. **Values were not repaired.**
+Quarantining 3 in-pool leaves 15 in-pool if all N-clean — at the
+behavioral-adequacy floor with no headroom. Adding ~4 symmetric in-pool
+cases is a freeze-time decision; this round must not add them.
+
+### Lexical / BPE WARNs (flags, not auto-fails)
+
+BPE: skipped (`:8080` down). Differing token IDs would not have been a fail
+anyway; only a BPE-**count** asymmetry WARNs.
+
+Lexical / code-family (7 WARNs, 5 cases):
+
+- `s2v2-archive-color` x=`sorin` — named_prior, Romanian given name
+- `s2v2-archive-color` y=`velka` — named_prior, Czech/Slovak *velká*
+- `s2v2-held-stencil` x=`yulka` — named_prior, Slavic diminutive
+- `s2v2-held-stencil` y=`porin` — named_prior, protein name
+- `s2v2-envelope-code` / `s2v2-gate-code` / `s2v2-crate-code` — code-family:
+  query asks for a "code"; values are name-like
+
+No intra-pair LCP/suffix/substring ≥3 and no trigram Jaccard ≥0.25 on the
+current values. Shared-substring machinery is in and selftested
+(`torcek`/`tormin` LCP=`tor`).
+
+### C4 first-pass (author-asserted, pending GPT)
+
+Every fixture has `derivation_audit.{X,Y}` with all 7 paths marked
+`impossible|possible|derivable` plus a one-line justification. Checker
+validates **shape only** and reconfirms C1 (literal span absence). It does
+not judge derivability.
+
+Conservative rule used: `impossible` only when I am sure the value cannot
+be reconstructed from the non-answer context; else `possible`.
+
+`world_knowledge=possible` on four GPT-named tokens only:
+
+- `s2v2-archive-color` X=sorin, Y=velka
+- `s2v2-held-stencil` X=yulka, Y=porin
+
+All other paths on all 24 cases: `impossible`. `held-anaphora` anaphora path
+is **impossible** on my read (query `it` binds to the wooden box, not to
+`belkun`/`nyssom`); justification names the GPT flag so you can upgrade
+or drop. See disagreement #3.
+
+### What stays AUTHOR-ASSERTED for GPT
+
+| Claim | Who confirms | Notes |
+|---|---|---|
+| **derivation_audit path marks (C4)** | GPT | Author first-pass. Prereg: drop any path marked `possible`/`derivable`. Checker does not drop. |
+| **values_arbitrary** | GPT | Invented / prior-free? Mechanical absence ≠ prior-freeness. |
+| **n_unguessable** | live N-arm | Both x and y must fail under N. |
+| **lexical_class tag** | GPT | Author tag `invented-name`. Lexicon hits are flags on top. |
+| **held-out structural freshness** | GPT | Unchanged from round 1. |
+| **template does not privilege by subtle framing** | GPT | Regex still only catches `unusual`/`correct`/… |
+
+### Freeze-decisions left to humans (not this round)
+
+1. **`COSINE_DELTA_BOUND` value.** 0.05 is a labeled proposal. Do not treat
+   it as final. Changing it to keep/drop cases is the post-hoc this round
+   exists to prevent.
+2. **Real-word / code-family value re-selection.** Flagged, not swapped:
+   `sorin`, `velka`, `yulka`, `porin`, and the three code-family pairs.
+3. **Whether to add ~4 in-pool cases** after quarantine leaves ~15. Prereg
+   names this; this round must not add them.
+4. **C4 final marks** — GPT reviews the first-pass and drops `possible`.
+5. **Whether name-class priors are a C4 drop or an N-arm concern** (see
+   disagreement #3).
+
+### Disagreements / underspecification (round 2)
+
+1. **Held-out is out of the main estimate.** Round 1 folded held-out into
+   `analysis_n`. v2 says held-out is reported, never folded in. I excluded
+   it (`analysis_admissible = pair-complete ∩ N-clean ∩ in-pool ∩ not-
+   cosine-quarantined`). Headline `p` is over that same population so the
+   2×2 and `p` cannot disagree by construction. `decision_coverage` stays
+   over all α/β (held-out, quarantined, incomplete pairs included) —
+   coverage is "did the driver commit", not the estimate. A/A is over all
+   assembled AAx/AAy, including held-out and quarantined.
+
+2. **Floor-unmet label is `underdetermined`, not `inconclusive`.** v2:
+   report the channel result but classify the run underdetermined. Band
+   verdict is still in `band_verdict` / "would-be". Selftests pin it. The
+   band keys themselves (`honored` / `peer` / `inverted` / `value-biased`)
+   are unchanged — brief said no behavior change to the decision rule. v2
+   print-labels (PRIMARY-CHANNEL DOMINANT / …) are not swapped in; that
+   is a freeze-time wording call.
+
+3. **C4 `world_knowledge=possible` on name-class priors.** Honest read:
+   `sorin` cannot be *reconstructed from crate logistics*. A Romanian-name
+   prior is exactly what the N-arm (and the lexicon WARN) already catch.
+   Marking `possible` here means GPT's "drop any possible" rule would
+   drop `archive-color` and `held-stencil` for a reason N already covers.
+   I marked `possible` because the brief said conservative-else-possible
+   and GPT named those four tokens. **My recommendation:** mark those
+   `world_knowledge` paths `impossible` on C4, keep the lexical WARN + N
+   gate, do not drop the cases. Your call.
+
+4. **A/A is five arms per case, not new fixture content.** AAx primary
+   byte-equals α primary; AAx Related = β Related = T(X). Masked-identity
+   asserts that. Parser unchanged (still X/Y/neither); scoring is
+   `AAx must emit X`, `AAy must emit Y`. A/A is not in `p` or the 2×2.
+
+5. **BPE skip is not a freeze blocker on my side, but it is a gap.** The
+   expanded symmetry audit is otherwise live (substring/affix/trigram/
+   lexicon). Re-run `node eval/s2v2-audit-check.js` when `:8080` is up to
+   fill token counts/IDs. I will not fake them.
+
+6. **`validity_rate` kept as a field**, `decision_coverage` is the same
+   number. Printed report uses `decision_coverage`. Don't want a silent
+   rename that breaks a replay log reader.
+
+### Failure signatures tested (round 2 additions)
+
+- Pair-level rates: (2 PP + 1 RR + 1 XX) → consistency 0.75, following 2/3;
+  XX+YY only → consistency 0, following null.
+- A/A: AAx must be X, AAy must be Y; `aa_rate=0.5` → verdict `invalid`
+  even when the pair is PP and would-be honored; A/A not counted in `p`.
+- Stub AAx miss → INVALID, `instrument_ok=false`, `band_verdict=honored`.
+- Value-bias XX with healthy A/A still reports `value-biased` (instrument
+  fine, experimental result is the bias).
+- Cosine `|Δ|=0.06` in-pool excluded; `|Δ|=0.04` kept; held-out with tiny
+  Δ still excluded from analysis.
+- C4 shape: missing object / empty justification / invalid mark `maybe` /
+  missing path all mechanical-FAIL; author mark `possible` is valid shape
+  (checker does not drop).
+- Lexicon: `sorin`/`velka`/`yulka`/`porin` hit named_prior; `lodan` misses;
+  `green` is english_word; `alice` is given_name; archive-color still
+  mechanical-PASS (hit = WARN).
+- AAx/AAy assemble on every fixture; AAx Related carries T(X) not T(Y).
+
+### What this slice did not do
+
+- Did not call qwen / any `/v1/chat/completions`. Did not pass `--live`.
+- Did not re-select or swap any fixture value. Did not add or remove cases.
+- Did not change `COSINE_DELTA_BOUND` from 0.05 or treat it as final.
+- Did not fabricate BPE token ids (`:8080` down).
+- Did not change `golden.json` or the RM-00 case set.
+- Did not add a fifth MCP verb.
+
+Live run still waits on freeze: cosine bound, value re-selection, C4 GPT
+marks.

@@ -9,7 +9,7 @@
  * (at your option) any later version. See <https://www.gnu.org/licenses/>.
  */
 /*
- * eval/s2v2-audit-check.js — static, offline fixture checker for S2v2.
+ * eval/s2v2-audit-check.js — static fixture checker for S2v2 (round 2).
  *
  * Makes the embedded audit object inspectable instead of trusted. Per case
  * it verifies what CAN be verified without a model, and it PRINTS the split
@@ -17,22 +17,30 @@
  *
  *   MECHANICAL (this file):
  *     audit-object shape, template shared + single {value}, x/y distinct
- *     and absent from distractors/query/turns/N, value_symmetry chars/tokens
- *     recomputed, distractors favor neither, parser well-formed, primary_ids
- *     match constructed order, answer_index in range, no expect/gate tripwire
+ *     and absent from distractors/query/turns/N (C1 literal-span-absence),
+ *     value_symmetry chars/tokens recomputed, distractors favor neither,
+ *     parser well-formed, primary_ids match constructed order, answer_index
+ *     in range, no expect/gate tripwire, derivation_audit SHAPE (not the
+ *     marks — those are author-asserted)
  *
- *   COSINE (optional, embedder if reachable; never a hard-fail):
- *     cos(T(x), Q), cos(T(y), Q), |Δ| — printed, worst-first. The max-delta
- *     cutoff is frozen by a human/GPT at audit time, not by this checker.
+ *   COSINE (embedder if reachable; never a hard-fail, never a value repair):
+ *     MEASURES cos(T(x), Q), cos(T(y), Q), |Δ| and WRITES them into the
+ *     fixture jsonl (replace nulls). Cases with |Δ| > COSINE_DELTA_BOUND
+ *     are quarantined (flagged, not repaired). Bound is a PROPOSAL.
+ *
+ *   VALUE-SYMMETRY expanded (GPT #6/#10): real BPE via /tokenize (skip if
+ *     down), shared substrings/affixes/trigrams, reference-lexical flags.
+ *     Hits are WARNs, never auto-fails. Do not swap values.
  *
  *   AUTHOR-ASSERTED, pending GPT:
  *     values_arbitrary justifications (why prior-free)
+ *     derivation_audit path marks (C4 joint-derivation; first-pass author)
  *
  *   AUTHOR-ASSERTED, pending live driver:
  *     n_unguessable (both x and y must fail N)
  *
- * This checker CANNOT judge prior-freeness or N-unguessability. It will
- * not pretend to.
+ * This checker CANNOT judge prior-freeness, N-unguessability, or
+ * derivability. It will not pretend to.
  *
  *   node eval/s2v2-audit-check.js
  */
@@ -42,10 +50,48 @@
 const fs = require("fs");
 const path = require("path");
 const { normalize, hasSpan, tokenCount } = require("./h6-parse.js");
+const { lookupLexical, NAMED_PRIORS } = require("./s2v2-lexicon.js");
 
 const CORPUS = path.join(__dirname, "corpora", "s2v2.jsonl");
 
 const PRIVILEGE_RE = /\b(unusual|unique|correct|true|actual|official|authentic|privileged|authoritative|stale|better|right answer|wrong answer)\b/i;
+
+/*
+ * COSINE_DELTA_BOUND = 0.05
+ *
+ * PROPOSAL, not frozen. Human freeze-time decision (GPT/Samuel sign-off).
+ * Construction rationale (prereg v2): the two answer-sentences differ by
+ * exactly one meaningless pseudo-word; query-alignment must come from the
+ * shared template, so swapping the value may not shift query-cosine by
+ * more than ~0.05 or the value is itself carrying query-alignment.
+ *
+ * Do NOT change this constant to keep or drop cases. Do NOT repair fixture
+ * values to land under it. A human may change it at freeze time.
+ */
+const COSINE_DELTA_BOUND = 0.05;
+
+const DERIVATION_PATHS = [
+  "lexical_cue",
+  "semantic_cue",
+  "synonym_alias",
+  "anaphora",
+  "composition_of_memories",
+  "world_knowledge",
+  "numeric_pattern",
+];
+const DERIVATION_MARKS = new Set(["impossible", "possible", "derivable"]);
+
+const GPT_NAMED_VALUES = ["sorin", "velka", "yulka", "porin"];
+const CODE_FAMILY = "code";
+
+const DEFAULT_TOKENIZE_URL = "http://localhost:8080/tokenize";
+
+// BPE-count |Δ| >= this is "gross" asymmetry (WARN, not fail). Differing
+// token IDs are expected and are never a fail.
+const BPE_GROSS_COUNT_DELTA = 2;
+const AFFIX_WARN_LEN = 3;
+const SUBSTRING_WARN_LEN = 3;
+const TRIGRAM_JACCARD_WARN = 0.25;
 
 function readJsonl(file) {
   const raw = fs.readFileSync(file, "utf8");
@@ -190,10 +236,48 @@ function checkShape(fix, errs, mechanical) {
     "value_symmetry keys present");
 
   const cos = audit.cosine || {};
-  const cosNull = (v) => v === null || v === undefined;
-  mark("audit_cosine_null",
-    cos && typeof cos === "object" && cosNull(cos.cos_x_q) && cosNull(cos.cos_y_q) && cosNull(cos.abs_delta),
-    "cosine left null for audit-time fill (do not fabricate)");
+  const cosOk = (v) => v === null || v === undefined || (typeof v === "number" && Number.isFinite(v));
+  mark("audit_cosine_shape",
+    cos && typeof cos === "object" && cosOk(cos.cos_x_q) && cosOk(cos.cos_y_q) && cosOk(cos.abs_delta),
+    "cosine fields number-or-null (measured when embedder up; never fabricate)");
+  if (typeof cos.cos_x_q === "number" && typeof cos.cos_y_q === "number"
+      && typeof cos.abs_delta === "number") {
+    const expect = Math.abs(cos.cos_x_q - cos.cos_y_q);
+    const close = Math.abs(expect - cos.abs_delta) <= 1e-5;
+    mark("audit_cosine_delta_consistent", close,
+      "abs_delta=" + cos.abs_delta + " |cos_x-cos_y|=" + expect);
+  }
+
+  checkDerivationShape(audit.derivation_audit, mark);
+}
+
+function checkDerivationShape(da, mark) {
+  const present = da && typeof da === "object";
+  mark("derivation_audit_present", present,
+    present ? "object present" : "missing derivation_audit (C4 first-pass required)");
+  if (!present) return;
+
+  const just = typeof da.justification === "string" && da.justification.trim();
+  mark("derivation_audit_justification", !!just,
+    just ? "justification non-empty" : "justification missing/empty");
+
+  for (const side of ["X", "Y"]) {
+    const block = da[side];
+    const okBlock = block && typeof block === "object";
+    mark("derivation_audit_" + side + "_present", okBlock,
+      okBlock ? side + " marks present" : "missing " + side + " path marks");
+    if (!okBlock) continue;
+    const missing = [];
+    const bad = [];
+    for (const p of DERIVATION_PATHS) {
+      if (!Object.prototype.hasOwnProperty.call(block, p)) missing.push(p);
+      else if (!DERIVATION_MARKS.has(block[p])) bad.push(p + "=" + JSON.stringify(block[p]));
+    }
+    mark("derivation_audit_" + side + "_paths", missing.length === 0 && bad.length === 0,
+      missing.length || bad.length
+        ? ("missing=[" + missing.join(",") + "] invalid=[" + bad.join(",") + "]")
+        : "all 7 paths marked ∈ {impossible,possible,derivable}");
+  }
 }
 
 function constructedPrimaryIds(fix) {
@@ -236,6 +320,12 @@ function checkAbsenceAndSymmetry(fix, errs, mechanical) {
   const yInQ = hasSpan(qctx, y);
   pushMark(mechanical, errs, "values_absent_from_query", !xInQ && !yInQ,
     "x_in_query_or_turns=" + xInQ + " y_in_query_or_turns=" + yInQ);
+
+  // C1 reconfirm (GPT audit #7): literal span absence is the mechanical
+  // half of joint-derivation. The checker does not judge C4 marks.
+  pushMark(mechanical, errs, "c1_literal_span_absence",
+    !xInDist && !yInDist && !xInQ && !yInQ,
+    "C1 = values absent from distractors AND query/turns");
 
   const xInN = nAll.some((t) => hasSpan(t, x));
   const yInN = nAll.some((t) => hasSpan(t, y));
@@ -290,6 +380,7 @@ function checkAbsenceAndSymmetry(fix, errs, mechanical) {
 
 function authorMap(fix) {
   const audit = fix.audit || {};
+  const da = audit.derivation_audit || {};
   return {
     values_arbitrary: {
       asserted: audit.values_arbitrary,
@@ -302,6 +393,13 @@ function authorMap(fix) {
       asserted: audit.n_unguessable,
       pending: "live N-arm (drop if N emits X or Y)",
       note: "both x and y must fail under N; N→X/Y/neither is recorded as a token-prior diagnostic",
+    },
+    derivation_audit: {
+      pending: "GPT C4 mark (author first-pass; drop any path marked possible/derivable)",
+      justification: da.justification || null,
+      X: da.X || null,
+      Y: da.Y || null,
+      note: "checker validates SHAPE only; marks are author-asserted, not judged",
     },
   };
 }
@@ -413,6 +511,258 @@ function checkCorpusBalance(fixtures) {
   };
 }
 
+function longestCommonPrefix(a, b) {
+  const x = String(a == null ? "" : a).toLowerCase();
+  const y = String(b == null ? "" : b).toLowerCase();
+  let i = 0;
+  while (i < x.length && i < y.length && x[i] === y[i]) i++;
+  return x.slice(0, i);
+}
+
+function longestCommonSuffix(a, b) {
+  const x = String(a == null ? "" : a).toLowerCase();
+  const y = String(b == null ? "" : b).toLowerCase();
+  let i = 0;
+  while (i < x.length && i < y.length && x[x.length - 1 - i] === y[y.length - 1 - i]) i++;
+  return i ? x.slice(x.length - i) : "";
+}
+
+function longestCommonSubstring(a, b) {
+  const x = String(a == null ? "" : a).toLowerCase();
+  const y = String(b == null ? "" : b).toLowerCase();
+  let best = "";
+  for (let i = 0; i < x.length; i++) {
+    for (let j = 0; j < y.length; j++) {
+      let k = 0;
+      while (i + k < x.length && j + k < y.length && x[i + k] === y[j + k]) k++;
+      if (k > best.length) best = x.slice(i, i + k);
+    }
+  }
+  return best;
+}
+
+function charTrigrams(s) {
+  const t = String(s == null ? "" : s).toLowerCase();
+  const set = new Set();
+  if (t.length < 3) return set;
+  for (let i = 0; i <= t.length - 3; i++) set.add(t.slice(i, i + 3));
+  return set;
+}
+
+function trigramJaccard(a, b) {
+  const A = charTrigrams(a);
+  const B = charTrigrams(b);
+  if (!A.size && !B.size) return 1;
+  if (!A.size || !B.size) return 0;
+  let inter = 0;
+  for (const g of A) if (B.has(g)) inter++;
+  return inter / (A.size + B.size - inter);
+}
+
+function utf8Bytes(s) {
+  return Buffer.byteLength(String(s == null ? "" : s), "utf8");
+}
+
+function cosineDeltaOf(fix) {
+  const c = fix && fix.audit && fix.audit.cosine;
+  if (!c || c.abs_delta == null) return null;
+  const n = Number(c.abs_delta);
+  return Number.isFinite(n) ? n : null;
+}
+
+function isCosineQuarantined(fix, bound) {
+  const b = bound == null ? COSINE_DELTA_BOUND : bound;
+  const d = cosineDeltaOf(fix);
+  return d != null && d > b;
+}
+
+function round6(x) {
+  if (x == null || !Number.isFinite(x)) return null;
+  return Number(Number(x).toFixed(6));
+}
+
+function tokenizeUrl() {
+  return process.env.S2V2_TOKENIZE_URL || DEFAULT_TOKENIZE_URL;
+}
+
+function parseTokenIds(json) {
+  if (!json) return null;
+  const raw = json.tokens != null ? json.tokens
+    : (json.token_ids != null ? json.token_ids : null);
+  if (!Array.isArray(raw) || !raw.length) return null;
+  return raw.map((t) => {
+    if (typeof t === "number" && Number.isFinite(t)) return t;
+    if (t && typeof t === "object") {
+      if (typeof t.id === "number") return t.id;
+      if (typeof t.token === "number") return t.token;
+    }
+    const n = Number(t);
+    return Number.isFinite(n) ? n : t;
+  });
+}
+
+async function tryTokenize(text, timeoutMs) {
+  const url = tokenizeUrl();
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content: String(text), add_special: false }),
+    signal: AbortSignal.timeout(timeoutMs || 2500),
+  });
+  if (!res || !res.ok) {
+    throw new Error("HTTP " + (res ? res.status : "no-response") + " from " + url);
+  }
+  const json = await res.json();
+  const ids = parseTokenIds(json);
+  if (!ids) throw new Error("tokenize returned no token ids");
+  return ids;
+}
+
+async function tokenizeAudit(fixtures) {
+  const url = tokenizeUrl();
+  let probe;
+  try {
+    probe = await tryTokenize("s2v2", 2500);
+  } catch (e) {
+    return {
+      skipped: true,
+      reason: "tokenizer unreachable at " + url + " (" + (e && e.message || e) + ")",
+      url,
+      rows: [],
+    };
+  }
+  if (!probe) {
+    return { skipped: true, reason: "tokenizer returned no tokens", url, rows: [] };
+  }
+
+  const rows = [];
+  for (const fix of fixtures || []) {
+    const row = { id: fix.id, x: fix.x, y: fix.y, x_ids: null, y_ids: null, error: null };
+    try {
+      row.x_ids = await tryTokenize(fix.x, 4000);
+      row.y_ids = await tryTokenize(fix.y, 4000);
+    } catch (e) {
+      row.error = String(e && e.message || e);
+    }
+    rows.push(row);
+  }
+  return { skipped: false, reason: null, url, rows };
+}
+
+function valuePairAudit(fix, bpeRow) {
+  const x = String(fix.x || "");
+  const y = String(fix.y || "");
+  const lcp = longestCommonPrefix(x, y);
+  const lcsuf = longestCommonSuffix(x, y);
+  const lcsub = longestCommonSubstring(x, y);
+  const jac = trigramJaccard(x, y);
+  const xLex = lookupLexical(x);
+  const yLex = lookupLexical(y);
+  const xBytes = utf8Bytes(x);
+  const yBytes = utf8Bytes(y);
+  const xBpe = bpeRow && bpeRow.x_ids ? bpeRow.x_ids.length : null;
+  const yBpe = bpeRow && bpeRow.y_ids ? bpeRow.y_ids.length : null;
+  const bpeDelta = (xBpe != null && yBpe != null) ? Math.abs(xBpe - yBpe) : null;
+
+  const warns = [];
+  if (lcp.length >= AFFIX_WARN_LEN) {
+    warns.push("LCP=" + JSON.stringify(lcp) + " (len " + lcp.length + ")");
+  }
+  if (lcsuf.length >= AFFIX_WARN_LEN) {
+    warns.push("LCsuffix=" + JSON.stringify(lcsuf) + " (len " + lcsuf.length + ")");
+  }
+  if (lcsub.length >= SUBSTRING_WARN_LEN) {
+    warns.push("LCsubstring=" + JSON.stringify(lcsub) + " (len " + lcsub.length + ")");
+  }
+  if (jac >= TRIGRAM_JACCARD_WARN) {
+    warns.push("trigram Jaccard=" + jac.toFixed(3) + " (>= " + TRIGRAM_JACCARD_WARN + ")");
+  }
+  if (xBytes !== yBytes) {
+    warns.push("utf8-byte length x=" + xBytes + " y=" + yBytes);
+  }
+  if (bpeDelta != null && bpeDelta >= 1) {
+    const gross = bpeDelta >= BPE_GROSS_COUNT_DELTA ? "GROSS " : "";
+    warns.push(gross + "BPE-count asymmetry x=" + xBpe + " y=" + yBpe
+      + " |Δ|=" + bpeDelta
+      + (bpeDelta >= BPE_GROSS_COUNT_DELTA
+        ? " (gross >= " + BPE_GROSS_COUNT_DELTA + ")"
+        : " (any count Δ is a human look)"));
+  }
+  if (xLex.hit) warns.push("X=" + JSON.stringify(x) + " LEXICAL HIT (" + xLex.kind + "): " + xLex.detail);
+  if (yLex.hit) warns.push("Y=" + JSON.stringify(y) + " LEXICAL HIT (" + yLex.kind + "): " + yLex.detail);
+  if (fix.family === CODE_FAMILY) {
+    warns.push("code-family: query asks for a 'code'; values are name-like (asymmetric code-ness — freeze-time re-selection, not auto-fail)");
+  }
+
+  return {
+    id: fix.id,
+    family: fix.family,
+    held_out: !!fix.held_out,
+    x, y,
+    x_chars: x.length, y_chars: y.length,
+    x_bytes: xBytes, y_bytes: yBytes,
+    x_caps: capsClass(x), y_caps: capsClass(y),
+    lcp, lcsuf, lcsub, trigram_jaccard: jac,
+    x_lexical: xLex, y_lexical: yLex,
+    x_bpe_count: xBpe, y_bpe_count: yBpe,
+    x_bpe_ids: bpeRow && bpeRow.x_ids || null,
+    y_bpe_ids: bpeRow && bpeRow.y_ids || null,
+    bpe_count_delta: bpeDelta,
+    bpe_error: bpeRow && bpeRow.error || null,
+    warns,
+  };
+}
+
+function emitFixtureLine(fix) {
+  const copy = Object.assign({}, fix);
+  delete copy._file;
+  return JSON.stringify(copy);
+}
+
+function writeCorpus(fixtures, filePath) {
+  const file = filePath || CORPUS;
+  const body = (fixtures || []).map(emitFixtureLine).join("\n") + "\n";
+  fs.writeFileSync(file, body);
+  return file;
+}
+
+function applyMeasuredCosine(fixtures, cosineReport) {
+  if (!cosineReport || cosineReport.skipped) return { wrote: false, n: 0 };
+  const byId = new Map((cosineReport.rows || []).map((r) => [r.id, r]));
+  let n = 0;
+  for (const fix of fixtures || []) {
+    const row = byId.get(fix.id);
+    if (!row || row.error || row.cos_x_q == null || row.cos_y_q == null) continue;
+    if (!fix.audit) fix.audit = {};
+    fix.audit.cosine = {
+      cos_x_q: round6(row.cos_x_q),
+      cos_y_q: round6(row.cos_y_q),
+      abs_delta: round6(row.abs_delta),
+    };
+    n += 1;
+  }
+  return { wrote: n > 0, n };
+}
+
+function quarantineList(fixtures, bound) {
+  const b = bound == null ? COSINE_DELTA_BOUND : bound;
+  const rows = [];
+  for (const f of fixtures || []) {
+    const d = cosineDeltaOf(f);
+    if (d != null && d > b) {
+      rows.push({
+        id: f.id,
+        held_out: !!f.held_out,
+        abs_delta: d,
+        cos_x_q: f.audit && f.audit.cosine && f.audit.cosine.cos_x_q,
+        cos_y_q: f.audit && f.audit.cosine && f.audit.cosine.cos_y_q,
+      });
+    }
+  }
+  rows.sort((a, b2) => (b2.abs_delta || 0) - (a.abs_delta || 0));
+  return rows;
+}
+
 function formatReport(result) {
   const lines = [];
   const flag = result.ok ? "OK  " : "FAIL";
@@ -437,6 +787,20 @@ function formatReport(result) {
   {
     const a = result.asserted.n_unguessable;
     lines.push("    asserted=" + a.asserted + "  n_unguessable  pending=" + a.pending);
+    lines.push("      " + a.note);
+  }
+  lines.push("  AUTHOR-ASSERTED, pending GPT C4 (shape checked; marks not judged):");
+  {
+    const a = result.asserted.derivation_audit;
+    lines.push("    pending=" + a.pending);
+    lines.push("    justification: " + (a.justification || "(missing)"));
+    const fmt = (side) => {
+      const b = a[side];
+      if (!b) return "      " + side + ": (missing)";
+      return "      " + side + ": " + DERIVATION_PATHS.map((p) => p + "=" + b[p]).join(" ");
+    };
+    lines.push(fmt("X"));
+    lines.push(fmt("Y"));
     lines.push("      " + a.note);
   }
   if (result.errors.length) {
@@ -532,25 +896,121 @@ async function cosineAudit(fixtures) {
   return { skipped: false, reason: null, url, model: embedModel(), rows };
 }
 
-function formatCosine(report) {
+function formatCosine(report, fixtures) {
   const lines = [];
-  lines.push("  COSINE (optional; not a hard-fail — cutoff frozen at human/GPT audit):");
-  if (report.skipped) {
-    lines.push("    skipped  " + report.reason);
+  lines.push("  COSINE (MEASURED; bound is a PROPOSAL, not frozen):");
+  lines.push("    COSINE_DELTA_BOUND=" + COSINE_DELTA_BOUND
+    + "  (do not retune to keep/drop cases; freeze-time human decision)");
+  if (!report) {
+    lines.push("    (no cosine report)");
     return lines.join("\n");
   }
-  lines.push("    embedder=" + report.url + "  model=" + report.model);
-  lines.push("    sorted worst |Δ| first:");
-  for (const r of report.rows) {
-    if (r.error) {
-      lines.push("    ERR   " + r.id + "  " + r.error);
-      continue;
+  if (report.skipped) {
+    lines.push("    skipped  " + report.reason);
+    lines.push("    existing fixture cosine values left untouched (never fabricate)");
+  } else {
+    lines.push("    embedder=" + report.url + "  model=" + report.model);
+    if (report.wrote) {
+      lines.push("    wrote measured cosine into " + path.basename(CORPUS)
+        + " (" + report.wrote_n + " fixtures)");
     }
-    const n = (x) => x == null ? "n/a" : x.toFixed(4);
-    lines.push("    " + n(r.abs_delta).padEnd(8) + "  " + r.id
-      + "  cos(T(x),Q)=" + n(r.cos_x_q)
-      + "  cos(T(y),Q)=" + n(r.cos_y_q));
+    lines.push("    sorted worst |Δ| first:");
+    for (const r of report.rows) {
+      if (r.error) {
+        lines.push("    ERR   " + r.id + "  " + r.error);
+        continue;
+      }
+      const n = (x) => x == null ? "n/a" : x.toFixed(4);
+      const over = r.abs_delta != null && r.abs_delta > COSINE_DELTA_BOUND;
+      const held = (fixtures || []).find((f) => f.id === r.id);
+      const tag = over
+        ? (held && held.held_out ? "  QUARANTINE (held-out, reported only)"
+          : "  QUARANTINE (in-pool, excluded from analysis)")
+        : "";
+      lines.push("    " + n(r.abs_delta).padEnd(8) + "  " + r.id
+        + "  cos(T(x),Q)=" + n(r.cos_x_q)
+        + "  cos(T(y),Q)=" + n(r.cos_y_q)
+        + tag);
+    }
   }
+  const q = quarantineList(fixtures);
+  const qIn = q.filter((r) => !r.held_out);
+  const qHeld = q.filter((r) => r.held_out);
+  lines.push("    quarantined_by_cosine n=" + q.length
+    + "  in-pool=" + qIn.length
+    + "  held-out=" + qHeld.length);
+  if (qIn.length) {
+    lines.push("    in-pool excluded from analysis: "
+      + qIn.map((r) => r.id + "(" + r.abs_delta.toFixed(4) + ")").join(", "));
+  }
+  if (qHeld.length) {
+    lines.push("    held-out reported only: "
+      + qHeld.map((r) => r.id + "(" + r.abs_delta.toFixed(4) + ")").join(", "));
+  }
+  return lines.join("\n");
+}
+
+function formatSymmetry(pairs, tokenizeReport) {
+  const lines = [];
+  lines.push("  VALUE-SYMMETRY EXPANDED (GPT #6/#10) — WARNs are flags, not auto-fails:");
+  if (tokenizeReport && tokenizeReport.skipped) {
+    lines.push("    BPE /tokenize skipped  " + tokenizeReport.reason);
+  } else if (tokenizeReport) {
+    lines.push("    BPE tokenizer=" + tokenizeReport.url
+      + "  (differing token IDs are expected, not a fail)");
+  }
+  const warnRows = (pairs || []).filter((p) => p.warns.length);
+  if (!warnRows.length) {
+    lines.push("    no WARNs");
+  }
+  for (const p of pairs || []) {
+    const bpe = (p.x_bpe_count == null)
+      ? "bpe=n/a"
+      : ("bpe x=" + p.x_bpe_count
+        + " y=" + p.y_bpe_count
+        + " ids_x=" + JSON.stringify(p.x_bpe_ids)
+        + " ids_y=" + JSON.stringify(p.y_bpe_ids));
+    lines.push("    " + p.id + "  x=" + p.x + " y=" + p.y
+      + "  chars=" + p.x_chars + "/" + p.y_chars
+      + "  bytes=" + p.x_bytes + "/" + p.y_bytes
+      + "  LCP=" + JSON.stringify(p.lcp)
+      + "  LCsuf=" + JSON.stringify(p.lcsuf)
+      + "  LCsub=" + JSON.stringify(p.lcsub)
+      + "  triJ=" + (p.trigram_jaccard == null ? "n/a" : p.trigram_jaccard.toFixed(3))
+      + "  " + bpe);
+    for (const w of p.warns) lines.push("      WARN  " + w);
+  }
+  return lines.join("\n");
+}
+
+function formatNamedValues(fixtures, pairs) {
+  const lines = [];
+  lines.push("  GPT-NAMED VALUES (always surfaced):");
+  const byVal = new Map();
+  for (const f of fixtures || []) {
+    for (const side of ["x", "y"]) {
+      const v = String(f[side] || "").toLowerCase();
+      if (!byVal.has(v)) byVal.set(v, []);
+      byVal.get(v).push(f.id + "." + side);
+    }
+  }
+  for (const name of GPT_NAMED_VALUES) {
+    const uses = byVal.get(name) || [];
+    const prior = NAMED_PRIORS[name];
+    const pair = (pairs || []).find((p) => p.x.toLowerCase() === name || p.y.toLowerCase() === name);
+    const hit = pair
+      ? (pair.x.toLowerCase() === name ? pair.x_lexical : pair.y_lexical)
+      : lookupLexical(name);
+    lines.push("    " + name
+      + "  used=" + (uses.join(",") || "(not in corpus)")
+      + "  " + (hit.hit ? ("LEXICAL HIT (" + hit.kind + "): " + hit.detail) : "no lexicon hit")
+      + (prior && !hit.hit ? "  [named_prior: " + prior + "]" : ""));
+  }
+  const code = (fixtures || []).filter((f) => f.family === CODE_FAMILY);
+  lines.push("    code-family pairs: "
+    + (code.length
+      ? code.map((f) => f.id + " x=" + f.x + " y=" + f.y).join("; ")
+      : "(none)"));
   return lines.join("\n");
 }
 
@@ -590,13 +1050,37 @@ async function main(argv) {
     + "  balance_fail=" + (bal.ok ? 0 : bal.flags.length));
   console.log(formatBalance(bal));
 
+  let tokenizeReport = null;
+  if (!args.includes("--no-tokenize")) {
+    tokenizeReport = await tokenizeAudit(fixtures);
+  } else {
+    tokenizeReport = { skipped: true, reason: "--no-tokenize", rows: [] };
+  }
+  const bpeById = new Map((tokenizeReport.rows || []).map((r) => [r.id, r]));
+  const pairs = fixtures.map((f) => valuePairAudit(f, bpeById.get(f.id)));
+  console.log(formatSymmetry(pairs, tokenizeReport));
+  console.log(formatNamedValues(fixtures, pairs));
+
   let cosineReport = null;
   if (!args.includes("--no-cosine")) {
     cosineReport = await cosineAudit(fixtures);
-    console.log(formatCosine(cosineReport));
+    if (!cosineReport.skipped && !args.includes("--no-write-cosine")) {
+      const applied = applyMeasuredCosine(fixtures, cosineReport);
+      if (applied.wrote) {
+        writeCorpus(fixtures);
+        cosineReport.wrote = true;
+        cosineReport.wrote_n = applied.n;
+      }
+    }
+    console.log(formatCosine(cosineReport, fixtures));
   } else {
     console.log("  COSINE: skipped (--no-cosine)");
+    console.log(formatCosine({ skipped: true, reason: "--no-cosine", rows: [] }, fixtures));
   }
+
+  const nWarn = pairs.reduce((n, p) => n + p.warns.length, 0);
+  console.log("  WARNs: " + nWarn + " flag(s) across "
+    + pairs.filter((p) => p.warns.length).length + " case(s) (not mechanical fails).");
 
   if (args.includes("--json")) {
     console.log(JSON.stringify({
@@ -606,6 +1090,10 @@ async function main(argv) {
       })),
       balance: bal,
       cosine: cosineReport,
+      tokenize: tokenizeReport && { skipped: tokenizeReport.skipped, reason: tokenizeReport.reason, url: tokenizeReport.url },
+      symmetry: pairs,
+      cosine_delta_bound: COSINE_DELTA_BOUND,
+      quarantined_by_cosine: quarantineList(fixtures),
     }, null, 2));
   }
 
@@ -615,14 +1103,19 @@ async function main(argv) {
     if (!bal.ok) console.error("FAIL corpus balance: " + bal.flags.join("; "));
     return 1;
   }
-  console.log("All fixtures passed mechanical checks. values_arbitrary + n_unguessable remain author-asserted.");
+  console.log("All fixtures passed mechanical checks. values_arbitrary + n_unguessable + derivation_audit marks remain author-asserted.");
   return 0;
 }
 
 module.exports = {
-  CORPUS,
+  CORPUS, COSINE_DELTA_BOUND, DERIVATION_PATHS, DERIVATION_MARKS,
+  GPT_NAMED_VALUES, BPE_GROSS_COUNT_DELTA,
   readJsonl, loadAllFixtures, checkFixture, checkAll, checkCorpusBalance,
-  formatReport, formatBalance, formatCosine, cosineAudit, capsClass,
+  formatReport, formatBalance, formatCosine, formatSymmetry, formatNamedValues,
+  cosineAudit, tokenizeAudit, valuePairAudit, capsClass,
+  longestCommonPrefix, longestCommonSuffix, longestCommonSubstring, trigramJaccard,
+  cosineDeltaOf, isCosineQuarantined, quarantineList,
+  applyMeasuredCosine, writeCorpus, round6, lookupLexical: lookupLexical,
   renderTemplate, main,
 };
 

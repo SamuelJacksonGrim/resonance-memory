@@ -177,8 +177,11 @@ eval/
   corpora/h6-stratum1.jsonl  Related-necessary fixtures (kind:h6, skipped by RM-00)
   corpora/h6-stratum2.jsonl  Primary-sufficient / Related-adversarial fixtures
   s2v2-parse.js          S2v2 X/Y/neither parser (reuses H6 hasSpan/hasHedge)
-  s2v2-audit-check.js    S2v2 static fixture checker (mechanical vs author-asserted)
-  s2v2-run.js            S2v2 α/β/N harness (masked identity, pair-class, --live gated)
+  s2v2-audit-check.js    S2v2 static fixture checker (mechanical vs author-asserted;
+                         cosine MEASURED+written; C4 shape; BPE/lexical WARNs)
+  s2v2-run.js            S2v2 α/β/AAx/AAy/N harness (masked identity, pair-class
+                         headline, A/A ≥95% gate, cosine quarantine, --live gated)
+  s2v2-lexicon.js        Bundled wordlist/namelist for value-symmetry flags
   s2v2-build-notes.md    What the checker proved vs what GPT must review
   corpora/s2v2.jsonl     Matched-phrasing channel-preference fixtures (kind:s2v2)
 
