@@ -51,7 +51,7 @@ compete on **reproducibility**, which hosted vendors structurally cannot match. 
 | Area | Position | Owned by |
 |---|---|---|
 | Evaluation | **No longer a gap.** `RM-00` shipped: offline, deterministic, golden-gated. Reporting metrics: `recall@k` + `duplicate_rate` (RM-02.a), `extraction_precision` / `extraction_recall` (RM-01), `mrr` (S1). Staleness still open — Phase 2.5. S1 scale curve in `eval/RESULTS.md`. | `RM-00`, `eval/` |
-| Write path | **The real gap, closing.** `RM-04` + `RM-03` v1 + `RM-02` landed; `RM-01` done (Tier 0/1 + opt-in Tier 2). | `RM-01`–`RM-04` |
+| Write path | **The real gap, closing.** `RM-04` + `RM-03` v2 (silent-slot) + `RM-02` landed; `RM-01` done (Tier 0/1 + opt-in Tier 2). | `RM-01`–`RM-04` |
 | Substrate | **Unified + warm.** One edge table, two signals (semantic derived, Hebbian source-of-truth). Phase 0 exit met (0.6). Phase 1 activation is observable/traced, never ranked, never persisted (I7 held). | Phase 0 ✅, Phase 1 ✅, `ARCHITECTURE.md` |
 | Distribution | **Ahead.** Single file, zero terminal, no API key. | `DEVELOPERS.md` |
 
@@ -119,7 +119,7 @@ Status only. Where each lives and how it works: `ARCHITECTURE.md`. What each sat
 | Hebbian weights, bounded `maxBonus·tanh(w)`, provenance-discounted | — | 🟡 per-edge bounding solved; wall-clock decay ✅ (0.2) |
 | Decay + prune | — | ✅ lazy wall-clock half-life (0.2); soft prune + reactivation (0.4, I8 held for edges) |
 | Bi-temporal validity + current-gating | `RM-04` | ✅ extended by Phase 7, not started by it |
-| Cue-gated supersession detection v1 | `RM-03` v1 | 🟡 continued by Phase 7.2 |
+| Cue-gated + silent-slot supersession detection v2 | `RM-03` v2 | ✅ detection bar met; Phase 7.2 fusion still separate |
 | Offline deterministic eval + golden gate | `RM-00` | ✅ **this is Phase 2.5** — extend, don't rebuild |
 | Dependency-free test suite (61 after PRE-0) | — | Count in `CHANGELOG.md`; run it, don't cite it |
 

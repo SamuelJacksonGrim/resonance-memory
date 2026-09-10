@@ -73,6 +73,15 @@ stable; sophistication grows in the substrate, not in the API.
   candidate shape; fusion does not get a second hook. Custom eval:
   `eval/substrate/activation-measure.js` (APR). Opt out: `RESONANCE_WARM_FIELD=0`.
   See `docs/phases/phase-1-transient-activation.md`.
+- **RM-03 v2 silent-supersession detection.** Exclusive-slot / polarity / numeric
+  value-swaps retire the old row even without a cue ("I work at Globex" after
+  "I work at Acme"). Cue + cosine argmax stays the paraphrase fallback. Hypothetical
+  / additive language keeps both and sets `needs_review`. Same-slot value swaps
+  are not RM-02 merges (that was keeping the longer stale text). Measured on
+  `eval/corpora/contradictions.jsonl`: `staleness_rate` 0.4889 → **0.0889** (81.8%
+  drop, bar was ≤0.1467); `silent` 1.0000 → **0.0000**; `false_supersession` 0 on
+  guard / ambiguous. Residual: cue-below-floor paraphrases (`renamed her Nova`,
+  `switched to Neovim`) and a narrative coffee blob. See `eval/RESULTS.md` RM-03 v2.
 - **RM-03 measurement seed: `staleness_rate` + `false_supersession` + ≥50 contradiction cases.**
   The two reporting metrics RM-03 acceptance and the Phase 2 fusion gate name, which did
   not exist as computable numbers. `staleness_rate` already had an RM-15 soak shape

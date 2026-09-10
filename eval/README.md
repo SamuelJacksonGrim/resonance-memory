@@ -135,8 +135,9 @@ win: `extraction_precision` 0.2609 → 1.0000, `extraction_recall` 1.0000, `reca
 `pii_refusal_rate` 0 → 1.0000. RM-01.c adds `eval/corpora/messy-hard.jsonl` (implicit
 facts Tier 0 cannot split) and a live Tier 2 A/B (`--extract`); that number is **not**
 the golden gate. See `RESULTS.md` ("RM-01.c"). The contradiction expansion + the two
-RM-03 metrics are the measurement seed for later recall-quality work; see `RESULTS.md`
-("RM-03 measurement seed").
+RM-03 metrics are the measurement seed; v2 detection beat it (`staleness_rate`
+0.4889 → 0.0889, `silent` 1.0000 → 0.0000). See `RESULTS.md` ("RM-03 measurement
+seed") and ("RM-03 v2").
 
 ## Layout
 

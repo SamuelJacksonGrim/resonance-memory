@@ -304,6 +304,76 @@ keep-set (the 0.0256 merge hit is a separate RM-02 question).
 
 ---
 
+# RM-03 v2 — silent exclusive-slot supersession
+
+**Date:** 2026-09-09 · **Product behaviour:** `detectSupersession` + `detectNearDuplicate`
+in `record.js`; `save()` wires `needs_review`. Ranking / fusion untouched.
+**Embedder:** `text-embedding-nomic-embed-text-v1.5` (offline cache). **Reproduce:**
+`node eval/measure.js --corpus contradictions`. Golden: `node eval/run.js` → **27/31,
+no regressions.**
+
+## Mechanism
+
+Three server-side paths, never the model (I4):
+
+1. **Exclusive-slot / polarity / numeric (v2).** Closed-class keys (`employer`,
+   `residence`, `pet:<type>`, `favorite:<noun>`, `pref:<object>`, `event_time:…`,
+   counts, …). Same key, different filler → retire. Additive frames (`speak`,
+   `allergic to`, like-different-object, different pet types) are absent on
+   purpose — that is the guard band a generic 1-span aligner would eat.
+2. **Cue + cosine argmax (v1), unchanged.** Floor stays 0.535. `correction:` /
+   `update:` no longer require a word-boundary after the colon (the measured
+   `contra-numeric-cue-bday` miss).
+3. **Dedup yields to a slot-value swap.** "The Friday standup is at 10am" vs
+   "…at 3pm" sits in the RM-02 merge/HI band because the frames are near-identical;
+   `pickMergeSurvivor` then kept the longer *stale* text and RM-03 never ran.
+   Same-slot same-value elaborations still merge.
+
+Hypothetical (`might`, `considering`, `not accepted`) / additive (`too`, `also`)
++ a slot collision → `{ action: "review" }`, both current, `needs_review` set.
+Never a retirement.
+
+No Tier 2 LLM adjudication this slice: it is off by default and cannot move an
+offline number.
+
+## Before / after (`node eval/measure.js --corpus contradictions`)
+
+```
+                         v1 cue-gated          v2 silent-slot
+staleness_rate           0.4889 (22/45)        0.0889 (4/45)     −81.8%  (bar ≤0.1467)
+false_supersession       0.0256 (1/39)         0.0256 (1/39)     unchanged
+  band silent            1.0000                0.0000
+  band numeric           0.5000                0.0000
+  band negation          0.5000                0.0000
+  band cue               0.1111                0.1111            (same 2 cue-below-floor)
+  band buried            0.4286                0.2857
+  band guard  false_ss   0.0000                0.0000
+  band ambiguous         0.0000                0.0000
+  band needs_review      0.0000                0.0000
+  band samename          0.1000                0.1000            (RM-02 merge, not RM-03)
+```
+
+The 70% drop cannot come from the silent band alone (14/22 misses → 63.6%). The extra
+comes from numeric/date, polarity, `correction:`, buried `employer is`, and the
+dedup-yields-to-slot carve-out (standup / phone / lunch / birthday were merge
+victims, not detector misses).
+
+## Residual (honest, 4/45)
+
+- `contra-cue-dog-rename` — "we renamed her Nova" has the cue but no pet-type
+  slot, cosine below 0.535.
+- `contra-cue-editor` / `contra-filler-btw-switched` — "I switched to Neovim"
+  does not extract the editor slot; `switched to X` is too broad to bind
+  blindly (climbing gym, almond milk, Toyota).
+- `contra-buried-longblob` — narrative coffee change, no cue, no coffee-order
+  slot on "I get a cortado with almond milk".
+
+`contra-samename-same-role` (two Dr Parks, Oak vs Pine) is still the RM-02
+mid-band merge hit. Silent supersession does not fire on it (no exclusive
+dentist slot). Do not "fix" merge in this slice.
+
+---
+
 # RM-00 field experiment #1 — reciprocal (mutual) kNN
 
 **Date:** 2026-08-01 · same harness. **Scorecard: 20/27 → 21/27**, `noise-schedule [field:on]`

@@ -252,12 +252,17 @@ argument is always the smallest possible thing (`content`, `query`, or `id`).
    slice: `--dedup-existing` (dry-run default; `--apply` mutates) walks the
    current store in file order with the **same** decision (`planDedupExisting`
    in `memory-core.js`). One `updateMany` / `writeFileDurable`. Not a fifth verb.
-8. **Supersession check (RM-03 v1).** `detectSupersession()` fires only when the new text
-   carries an explicit correction cue ("actually", "now", "no longer", "moved"…) *and* it is
-   the argmax-similar current memory above a floor. On a hit, the old row is retired
-   (`valid_to`, `superseded_by`) and the new one appended, as one logical change — history is
-   kept, never deleted. The cue is the precision gate; cosine only picks *which* memory the cue
-   targets. Worst case: it retires nothing.
+8. **Supersession check (RM-03 v2).** `detectSupersession()` retires a current memory when
+   (a) the new text fills the same closed-class exclusive slot with a different value
+   (silent "I work at Globex" after "I work at Acme", polarity flip, numeric/date swap),
+   or (b) it carries an explicit correction cue *and* is the argmax-similar current memory
+   above the 0.535 floor (v1 paraphrase fallback). Hypothetical / additive language
+   (`might`, `considering`, `too`) keeps both and sets `needs_review` — never a
+   destructive guess. On a hit, the old row is retired (`valid_to`, `superseded_by`) and
+   the new one appended; history is kept, never deleted. A same-slot value swap is not
+   an RM-02 duplicate: `detectNearDuplicate` yields so merge cannot keep the longer
+   stale text. Ranking is untouched. Measured: `staleness_rate` 0.4889 → 0.0889 on
+   `eval/contradictions`; guard/ambiguous `false_supersession` stays 0.
 9. **Append** the record to the JSONL store.
 10. **Save-time semantic bind (Phase 0.1).** If the record got a real vector, find its
    top-K neighbors among existing stored vectors above a min cosine and persist them on

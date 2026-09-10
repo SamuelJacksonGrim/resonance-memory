@@ -7,10 +7,10 @@ because this market's published benchmarks are actively disputed (see §4).*
 
 > **What moved since July** (details in the matrix and §6): the **eval harness (`RM-00`)
 > shipped** — offline, deterministic, golden-gated, 57 unit tests + a 27/31 recall scorecard —
-> so "run it yourself" is now a claim we can make. **Contradiction *detection* (`RM-03` v1,
-> cue-gated) shipped** on top of the already-landed temporal metadata (`RM-04`), moving us from
-> "applies supersession but can't detect it" to "detects explicit corrections and applies them,
-> fuller heuristics still open." **Provenance (`source`) is now seeded in the record schema**
+> so "run it yourself" is now a claim we can make. **Contradiction *detection* (`RM-03` v2)
+> shipped** on top of the already-landed temporal metadata (`RM-04`): cue-gated v1 plus
+> silent exclusive-slot / polarity / numeric, `staleness_rate` 0.4889 → 0.0889 on the
+> contradiction corpus. **Provenance (`source`) is now seeded in the record schema**
 > (the `RM-16` groundwork). The write path (extraction, cosine-banded dedup) and hybrid
 > retrieval remain the real open gaps. **RM-07 SQLite is selectable** (slices 1+2a+2b+3;
 > [`proposed/0010`](proposed/0010-sqlite-backend.md)): S1 made it a measured GO (JSONL
@@ -207,10 +207,12 @@ Three claims we must **not** make until earned (updated August 2026):
 - ❌ "Beats Mem0 on LOCOMO" — still don't enter the number war (§4). `RM-00` has landed, so we
   *can* now say "here's a harness, run it yourself" — but not "we score X," which invites the
   same credibility spiral.
-- 🟡 "Handles contradictions" — **partially earned.** `RM-03` v1 (cue-gated detection) has
-  shipped *with* eval coverage and a hard false-supersession gate, so the honest claim today is
-  "detects and applies *explicit* corrections, conservatively." The unqualified "handles
-  contradictions" waits on the fuller detection heuristics (negation flip, numeric/date change).
+- 🟡 "Handles contradictions" — **mostly earned.** `RM-03` v2 detects silent same-slot
+  swaps, polarity flips, and numeric/date changes as well as explicit cues;
+  `staleness_rate` 0.4889 → 0.0889 with `false_supersession` 0 on the guard/ambiguous
+  keep-set. Residual is cue-below-floor paraphrases ("I switched to Neovim") and
+  narrative blobs. Unqualified "handles contradictions" still waits on those
+  paraphrases (and optional Tier 2 adjudication, off by default).
 - ❌ "Production ready at scale" — unchanged: recall no longer rewrites the store, but every
   *mutation* still rewrites the whole JSONL file and `all()` parses it per call (see `RM-07`).
 
