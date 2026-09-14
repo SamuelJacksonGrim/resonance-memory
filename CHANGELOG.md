@@ -8,6 +8,11 @@ stable; sophistication grows in the substrate, not in the API.
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/SamuelJacksonGrim/resonance-memory/releases/tag/v0.2.0) - 2026-09-10
+
+First public release — Windows / macOS / Linux binaries on the
+[Releases](https://github.com/SamuelJacksonGrim/resonance-memory/releases) page.
+
 ### Added
 - **H4 exploratory: leftover activation → Related: (`RESONANCE_WARM_RELATED`, default off).**
   Cross-turn residual spread-activation may expand the `Related:` appendix
