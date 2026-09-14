@@ -135,11 +135,11 @@ unaffected because the client pipes stdio. macOS gets a free ad-hoc
 Developer ID / notarization). Binaries ship unsigned; see BUILDING.md for the
 honest OS-warning path. Node ≥ 22.5 (`node:sqlite`).
 
-The release matrix (`.github/workflows/release.yml`) builds native
-binaries and would attach them to a GitHub Release; none are published
-yet. Until then, `node build-exe.js`. That is also how the macOS binary
-is made at all — this project has no Mac hardware. `macos-latest` is
-arm64; Intel macOS is not in the matrix.
+Shippable binaries for strangers come from GitHub Releases, built by
+`.github/workflows/release.yml` (native matrix, smoked on each runner);
+`v0.2.0` is published with Windows/Linux/macOS binaries + `SHA256SUMS`.
+That is also how the macOS binary is made at all — this project has no
+Mac hardware. `macos-latest` is arm64; Intel macOS is not in the matrix.
 
 ## Design invariants (do not violate)
 
