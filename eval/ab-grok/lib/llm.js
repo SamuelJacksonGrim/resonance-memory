@@ -1,7 +1,7 @@
 /*
  * Resonance Memory - A/B value rig (Grok's independent copy)
  * Copyright (C) 2026 Samuel Jackson Grim
- * AGPL-3.0-or-later. See <https://www.gnu.org/licenses/>.
+ * AGPL-3.0-only. See <https://www.gnu.org/licenses/>.
  */
 /*
  * lib/llm.js - the only network surface of this rig.

@@ -1,6 +1,6 @@
 # Resonance Memory — PR-path CI (the always-on gate).
 # Copyright (C) 2026 Samuel Jackson Grim
-# Licensed under AGPL-3.0-or-later.
+# Licensed under AGPL-3.0-only.
 #
 # Complements release.yml. That workflow is the heavy native-build
 # matrix and only runs on a v* tag (or workflow_dispatch), so a

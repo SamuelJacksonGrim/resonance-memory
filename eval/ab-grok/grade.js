@@ -1,7 +1,7 @@
 /*
  * Resonance Memory - A/B value rig (Grok's independent copy)
  * Copyright (C) 2026 Samuel Jackson Grim
- * AGPL-3.0-or-later.
+ * AGPL-3.0-only.
  */
 /*
  * grade.js - deterministic, transparent, blind-to-arm scoring.

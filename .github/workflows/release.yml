@@ -1,6 +1,6 @@
 # Resonance Memory — CI release matrix (RM-11).
 # Copyright (C) 2026 Samuel Jackson Grim
-# Licensed under AGPL-3.0-or-later.
+# Licensed under AGPL-3.0-only.
 #
 # On a v* tag (and on workflow_dispatch): run the local gate, build a native
 # SEA binary on each OS, smoke --mcp on that same runner, and — for a tag

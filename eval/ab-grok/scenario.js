@@ -1,7 +1,7 @@
 /*
  * Resonance Memory - A/B value rig (Grok's independent copy)
  * Copyright (C) 2026 Samuel Jackson Grim
- * AGPL-3.0-or-later.
+ * AGPL-3.0-only.
  */
 /*
  * scenario.js - Grok's independent A/B scenario. NOT Ember's Dana.

@@ -1,7 +1,7 @@
 /*
  * Resonance Memory - A/B value rig
  * Copyright (C) 2026 Samuel Jackson Grim
- * AGPL-3.0-or-later.
+ * AGPL-3.0-only.
  */
 /*
  * run.js - orchestrates the three arms x N runs over one scripted scenario and
