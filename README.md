@@ -1,5 +1,16 @@
 # Resonance Memory
 
+[![CI](https://github.com/SamuelJacksonGrim/resonance-memory/actions/workflows/ci.yml/badge.svg)](https://github.com/SamuelJacksonGrim/resonance-memory/actions/workflows/ci.yml)
+[![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-blue)](LICENSE)
+[![dual-license](https://img.shields.io/badge/dual--license-AGPL--3.0--only%20or%20commercial-blueviolet)](LICENSING.md)
+[![release](https://img.shields.io/github/v/release/SamuelJacksonGrim/resonance-memory)](https://github.com/SamuelJacksonGrim/resonance-memory/releases/latest)
+[![status](https://img.shields.io/badge/status-released-brightgreen)](https://github.com/SamuelJacksonGrim/resonance-memory/releases/tag/v0.2.0)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D22.5-339933?logo=nodedotjs&logoColor=white)](package.json)
+[![JavaScript](https://img.shields.io/badge/JavaScript-F7DF1E?logo=javascript&logoColor=black)](https://developer.mozilla.org/docs/Web/JavaScript)
+[![MCP server](https://img.shields.io/badge/MCP-server-111111)](https://modelcontextprotocol.io/)
+[![platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20Linux%20x64%20%7C%20macOS%20arm64-lightgrey)](https://github.com/SamuelJacksonGrim/resonance-memory/releases/latest)
+[![downloads](https://img.shields.io/github/downloads/SamuelJacksonGrim/resonance-memory/total)](https://github.com/SamuelJacksonGrim/resonance-memory/releases/latest)
+
 **A lasting memory for your local AI — one that actually remembers *you*, learns how your memories connect, and never leaves your machine.**
 
 Your local model is smart, but it has amnesia. Close the chat and it forgets everything: your name, your preferences, the decision you explained twice yesterday. Resonance Memory fixes that. It gives your AI a memory that survives across conversations — stored on your computer, tied to no account, sent to no cloud.
