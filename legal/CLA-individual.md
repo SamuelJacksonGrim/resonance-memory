@@ -105,7 +105,7 @@ that would make these representations inaccurate in any respect.
 | Date | ____________________________ |
 | Signature | ____________________________ |
 
-*Return a signed copy to: Samuel Jackson Grim — collectiveaifamily@gmail.com,
+*Return a signed copy to: Samuel Jackson Grim — samgrim97@gmail.com,
 or record your agreement in your pull request exactly as `CONTRIBUTING.md`
 describes.*
 

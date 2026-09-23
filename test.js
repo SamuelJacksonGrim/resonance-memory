@@ -4818,7 +4818,7 @@ test("panel license explainer claims match LICENSING.md (not invented)", () => {
   assert.ok(/SaaS product, an API, or a hosted service/.test(section));
 
   assert.ok(/paid commercial license/i.test(licensing) && /paid commercial license/i.test(section));
-  const email = "collectiveaifamily@gmail.com";
+  const email = "samgrim97@gmail.com";
   assert.ok(licensing.includes(email));
   assert.ok(section.includes(email), "commercial contact is the one LICENSING.md names");
   assert.ok(/Commercial license/.test(section) && /Resonance Memory/.test(section));
@@ -6156,7 +6156,7 @@ async function asyncTests() {
         assert.ok(/read-only/i.test(page));
         assert.ok(page.includes("Terminal commands"), "CLI reference is on the served page");
         assert.ok(page.includes("What can I ship / license?"), "license explainer is on the served page");
-        assert.ok(page.includes("collectiveaifamily@gmail.com"), "commercial contact is on the served page");
+        assert.ok(page.includes("samgrim97@gmail.com"), "commercial contact is on the served page");
         assert.ok(page.includes("--dedup-existing"), "a maintenance flag the buttons don't cover is listed");
         assert.ok(page.includes("entry.js"), "dev prefix is node + entry.js (cliPrefix ran), not panel.js --export");
         const prev = await (await fetch(panel.url + "/api/export")).json();

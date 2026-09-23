@@ -21,7 +21,7 @@ version** to outside users.
 Buy a commercial license. That's exactly the case this dual-license exists for.
 The AGPL would require you to publish your modified source; the commercial
 license removes that obligation for a fee. Email
-`collectiveaifamily@gmail.com`, subject `Commercial license — Resonance Memory`.
+`samgrim97@gmail.com`, subject `Commercial license — Resonance Memory`.
 
 **Q: What counts as a "modification" that triggers AGPL § 13?**
 Changing the code and then letting users interact with that changed version over

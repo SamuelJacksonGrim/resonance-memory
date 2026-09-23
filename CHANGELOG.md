@@ -107,7 +107,7 @@ First public release — Windows / macOS / Linux binaries on the
   license; AGPL **§13** network copyleft (modified version offered as a
   network service → complete corresponding source, at no charge, including
   the combined/derivative work); commercial contact
-  `collectiveaifamily@gmail.com`. The panel is an explainer, not a
+  `samgrim97@gmail.com`. The panel is an explainer, not a
   contract — nuance points at `LICENSING.md` rather than inventing a
   permission. Landing page (`docs/index.html`) matches.
 - **Demo-seed refresh.** The synthetic first-launch graph (Alex Rivera /

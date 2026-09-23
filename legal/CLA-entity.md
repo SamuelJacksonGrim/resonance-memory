@@ -95,7 +95,7 @@ that would make these representations inaccurate.
 3. ____________________________  (GitHub: ______________)
 
 *You may update Schedule A by written notice to
-collectiveaifamily@gmail.com.*
+samgrim97@gmail.com.*
 
 ---
 

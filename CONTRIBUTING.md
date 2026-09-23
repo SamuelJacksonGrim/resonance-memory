@@ -45,7 +45,7 @@ Signed-off-by: Your Name <your.email@example.com>
 ### How to sign the CLA
 
 1. Read `legal/CLA-individual.md` (or `legal/CLA-entity.md`).
-2. Either email a signed copy to **collectiveaifamily@gmail.com**, **or** state
+2. Either email a signed copy to **samgrim97@gmail.com**, **or** state
    in your pull request:
 
    > I have read the CLA document and I hereby sign the CLA.
@@ -68,7 +68,7 @@ Signed-off-by: Your Name <your.email@example.com>
 ## Reporting security issues
 
 Please don't file public issues for security problems. Email
-**collectiveaifamily@gmail.com** with details and we'll coordinate a fix.
+**samgrim97@gmail.com** with details and we'll coordinate a fix.
 
 ## Questions about licensing
 
