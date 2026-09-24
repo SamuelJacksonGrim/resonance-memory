@@ -102,7 +102,7 @@ Nothing here is a black box. The memory model, the association rules, the invari
 
 Meaning-based recall uses the **`nomic-embed-text-v1.5`** embedding model by [Nomic AI](https://huggingface.co/nomic-ai/nomic-embed-text-v1.5) (Apache 2.0), downloaded separately — **not** distributed with this software. Resonance talks to it over a standard `/v1/embeddings` interface, so any compatible embedder can be swapped in.
 
-## License details
+## The two license tracks
 
 **Dual-licensed.** You pick one. If the AGPL works for you, you owe nothing.
 
