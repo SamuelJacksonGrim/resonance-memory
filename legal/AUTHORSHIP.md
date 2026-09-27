@@ -26,8 +26,7 @@ The author does not use one-shot AI prompting. The work is produced through an
    discard, **edits** the expression, and **integrates** the pieces into the
    working whole.
 
-The AI tools used as instruments in this process have included Claude, "Koneko"
-(an AI agent), and Google's Gemini. None is an author; each was operated under
+The AI tools used as instruments in this process have included **Claude** (Anthropic), **GPT** (OpenAI), **Grok** (xAI), **Gemini** (Google), and at times **GitHub Copilot**. The author connected them by hand, carrying context between platforms by copying, pasting, and paraphrasing, with no router or API between them. None is an author; each was operated under
 the author's direction.
 
 ## The human authorial contributions
