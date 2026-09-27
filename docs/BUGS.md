@@ -5,7 +5,7 @@ so related ones read together — check the status line on each rather than the 
 leaves this list only when it is *fixed*, not when it is understood; if it's understood but
 unfixed, it stays here with an owner in the backlog.
 
-**Current:** 7 fixed (`BUG-001`, `002`, `003`, `004`, `006`, `007`, `008`) · 1 open (`BUG-005`) ·
+**Current:** 8 fixed (`BUG-001`, `002`, `003`, `004`, `006`, `007`, `008`, `009`) · 1 open (`BUG-005`) ·
 2 on the watch list (`W-03`, `W-04`; `W-01` was dismissed, `W-02` was fixed).
 
 **Severity:** `critical` data loss / corruption · `high` user-visible breakage ·
@@ -210,6 +210,34 @@ semantically, and the next successful edit repairs it.
 Guarded by four tests in `test.js` (`edit() embedding safety`), including one asserting a
 *successful* re-embed still replaces the vector — so the fix can't regress into never updating
 embeddings at all. Verified failing before the fix, passing after.
+
+---
+
+## `BUG-009` — Keyword fallback shredded every non-ASCII word
+**Severity:** high (wrong recall on the degraded path, silently) · **Status:** ✅ **fixed** · **Found by:**
+cross-checking a sibling project's accent bug ("zurich" missing "Zürich") against this repo
+
+### What
+`keywordScore` (the ranking used when the embedder is unreachable) split the query with
+`/\W+/` and no `u` flag, so every non-ASCII letter counted as a word separator:
+
+```
+"Zürich"  -> ["z", "rich"]  -> scores 1.0 against "a rich man from zanzibar"
+"Москва"  -> ["", ""]       -> the query has no words and never matches
+```
+
+The results were wrong without looking wrong. Fragments like `rich` or a single `z` match
+unrelated memories at full score, and any Cyrillic, Greek, or CJK query returns only the
+`i === 0` placeholder. Accented and plain spellings (`Zürich` / `zurich`) never met.
+
+### Fix
+Split on `/[^\p{L}\p{N}]+/u`, and fold both query and text through `foldForMatch` in
+`memory-core.js`: lowercase, NFKD, drop combining marks on Latin letters only (marks in
+Devanagari, Thai, or Hebrew are part of the word), and map ø/æ/œ/ł/đ/ð/þ/ß/ı. ASCII behavior
+is unchanged. Still substring overlap, not BM25 (`proposed/0003`).
+
+**Tests:** `test.js` → "BUG-009 keyword fallback". 4 of the 5 tests fail on the pre-fix code.
+The ASCII test pins the old behavior. RM-00 golden unchanged (27/31, no regressions).
 
 ---
 

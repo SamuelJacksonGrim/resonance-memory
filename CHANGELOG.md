@@ -8,6 +8,14 @@ stable; sophistication grows in the substrate, not in the API.
 
 ## [Unreleased]
 
+### Fixed
+- **BUG-009: keyword fallback shredded non-ASCII words.** With the embedder
+  down, `keywordScore` split on `/\W+/` (no `u` flag), so `"Zürich"` became
+  `["z","rich"]` and matched unrelated text at 1.0, and Cyrillic, Greek, or CJK
+  queries never matched. It now splits on Unicode letters and digits and folds
+  Latin accents on both sides, so `zurich` finds `Zürich`. ASCII behavior is
+  unchanged, and the RM-00 golden is unchanged.
+
 ## [0.2.0](https://github.com/SamuelJacksonGrim/resonance-memory/releases/tag/v0.2.0) - 2026-09-10
 
 First public release — Windows / macOS / Linux binaries on the

@@ -797,9 +797,30 @@ function unionAdjacency(a, b) {
 // Fallback ranking when the embedder is unreachable at recall time. Deliberately
 // crude - it exists so a dead endpoint degrades to keyword overlap rather than an
 // error, not to compete with cosine.
+//
+// BUG-009: this used to split on /\W+/ without the `u` flag, so every non-ASCII
+// letter counted as a separator. "Zürich" became ["z", "rich"] and scored 1.0
+// against "a rich man from zanzibar", while Cyrillic, Greek, or CJK queries split
+// into nothing and never matched. Now words are split on Unicode letters and
+// digits, and query and text both go through foldForMatch, so "zurich" also finds
+// "Zürich". Still substring overlap, not BM25 (see proposed/0003).
+const LATIN_EXTRA = { "ø": "o", "æ": "ae", "œ": "oe", "ł": "l", "đ": "d", "ð": "d", "þ": "th", "ß": "ss", "ı": "i" };
+function isLatin(cp) { return cp < 0x0250 || (cp >= 0x1e00 && cp <= 0x1eff); }
+// Lowercase and drop combining marks that sit on Latin letters only. Marks in
+// Devanagari, Thai, or Hebrew are part of the word, so they are kept.
+function foldForMatch(s) {
+  let out = "";
+  let prevLatin = false;
+  for (const ch of String(s).toLowerCase().normalize("NFKD")) {
+    if (/\p{M}/u.test(ch)) { if (!prevLatin) out += ch; continue; }
+    prevLatin = isLatin(ch.codePointAt(0));
+    out += LATIN_EXTRA[ch] || ch;
+  }
+  return out.normalize("NFC");
+}
 function keywordScore(query, text) {
-  const q = new Set(query.toLowerCase().split(/\W+/).filter(Boolean));
-  const t = text.toLowerCase();
+  const q = new Set(foldForMatch(query).split(/[^\p{L}\p{N}]+/u).filter(Boolean));
+  const t = foldForMatch(text);
   let hits = 0;
   for (const w of q) if (t.includes(w)) hits++;
   return q.size ? hits / q.size : 0;
@@ -1673,7 +1694,7 @@ function createCore({
 }
 
 module.exports = {
-  createCore, cosine, keywordScore, defaultGetEdges, asEdgeMap,
+  createCore, cosine, keywordScore, foldForMatch, defaultGetEdges, asEdgeMap,
   bindSaveTimeNeighbors, SAVE_TIME_K, SAVE_TIME_MIN_COS,
   readSaveTimeK, readSaveTimeMinCos, readRecallBind, readRecallBindK, readRecallBindMinCos,
   recallTimeNeighborMap, unionAdjacency,
