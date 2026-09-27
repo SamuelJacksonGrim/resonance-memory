@@ -5222,6 +5222,37 @@ s2v2self.runSync(test, assert);
 // An embedder outage is transient; losing an embedding is not.
 // createCore already required above (warm-field section)
 
+section("BUG-009 keyword fallback: Unicode words + Latin accent folding");
+
+{
+  const { keywordScore, foldForMatch } = require("./memory-core.js");
+  test("non-ASCII word is not shredded into ASCII fragments", () => {
+    // Pre-fix: "Zürich" -> ["z","rich"] scored 1.0 against unrelated text.
+    assert.strictEqual(keywordScore("Zürich", "a rich man from zanzibar"), 0);
+  });
+  test("accent-insensitive both ways", () => {
+    const text = "Café owners in Zürich serve strong coffee";
+    for (const q of ["zurich", "ZÜRICH", "Zürich", "cafe", "CAFÉ"]) {
+      assert.strictEqual(keywordScore(q, text), 1, q);
+    }
+    assert.strictEqual(keywordScore("zürich", "moved to Zurich last year"), 1);
+  });
+  test("non-Latin scripts match (pre-fix they split to nothing)", () => {
+    assert.strictEqual(keywordScore("Москва", "Встреча в Москва завтра"), 1);
+    assert.strictEqual(keywordScore("東京", "東京 trip in May"), 1);
+  });
+  test("marks outside Latin script are kept, not stripped", () => {
+    assert.strictEqual(foldForMatch("हिन्दी"), "हिन्दी");
+    assert.strictEqual(foldForMatch("Straße"), "strasse");
+    assert.strictEqual(foldForMatch("Ørsted"), "orsted");
+  });
+  test("ASCII behavior unchanged", () => {
+    assert.strictEqual(keywordScore("dog pill", "the dog needs his heartworm pill"), 1);
+    assert.strictEqual(keywordScore("dog cat", "the dog barked"), 0.5);
+    assert.strictEqual(keywordScore("", "anything"), 0);
+  });
+}
+
 async function asyncTests() {
   section("H6 prereg async (stub driver, fail-loud)");
   await h6self.runAsync(atest, assert);
