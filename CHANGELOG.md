@@ -8,6 +8,15 @@ stable; sophistication grows in the substrate, not in the API.
 
 ## [Unreleased]
 
+### Added
+- **Auto-recall for Claude Code** (`hooks/auto-recall.js` + [`AUTO-RECALL.md`](AUTO-RECALL.md)). A
+  `UserPromptSubmit` hook that runs RM's own `recall_memory` on every user message and injects the result, so
+  recall no longer depends on the model choosing to call the tool. Talks to the existing binary over MCP stdio
+  (works with v0.2.0, no new release needed); zero dependencies; fails silent; optional store argument for a
+  custom `MEMORY_FILE_PATH`; `RM_RECALL_DEBUG=1` explains silence during setup. Measured ~0.1–0.2 s per message.
+  Claude Code only (other MCP clients have no per-message hook). The guide is written so a user's own Claude
+  can carry out the setup.
+
 ## [0.2.0](https://github.com/SamuelJacksonGrim/resonance-memory/releases/tag/v0.2.0) - 2026-09-10
 
 First public release — Windows / macOS / Linux binaries on the
