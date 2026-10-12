@@ -10,6 +10,7 @@
 [![MCP server](https://img.shields.io/badge/MCP-server-111111)](https://modelcontextprotocol.io/)
 [![platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20Linux%20x64%20%7C%20macOS%20arm64-lightgrey)](https://github.com/SamuelJacksonGrim/resonance-memory/releases/latest)
 [![downloads](https://img.shields.io/github/downloads/SamuelJacksonGrim/resonance-memory/total)](https://github.com/SamuelJacksonGrim/resonance-memory/releases/latest)
+[![memory system](https://img.shields.io/badge/memory%20system-folders%20%2B%20auto--recall-orange)](MEMORY-SYSTEM.md)
 
 ## License
 
@@ -81,10 +82,12 @@ Done. Your AI can save and recall memories on its own. Click **Show demo graph**
 
 - **Four abilities, that's the whole interface** — save, recall, edit, delete. It never gets more complicated than that; a small model can't misuse it.
 - **Auto-recall in Claude Code.** Add one hook and RM recalls on *every* message you send, so Claude never has to remember to ask: [AUTO-RECALL.md](AUTO-RECALL.md) (hand it to Claude Code and it sets it up). Other apps don't have per-message hooks; there the recall tool itself asks the model to recall at the start of each chat.
-- **A filing cabinet for Claude Code's own memory.** Claude Code's file-based memory turns into one long flat list
-  over time. [CABINET.md](CABINET.md) files it: the baseline (who you are, how you work together) stays at the front
-  and stays put; everything else goes into `projects/`, `tools/` and `reference/` subject folders with generated
-  indexes; replaced text fades to `history/` instead of being lost. Hand the guide to Claude Code and it sets it up.
+- **The whole memory system, in one command.** The memory system we built and run every day ships inside the exe:
+  a memory folder with an index, the surface (who you are, how you work together) at the top and everything else
+  filed in subject drawers, auto-recall on every message, a recall index that rebuilds itself after every memory
+  write, and the rules that keep memory honest over time. Plain folders and files on your computer; the AI keeps
+  them, you just talk. `--install-memory-system` sets it up for Claude Code; any other agent can be pointed at the
+  folder. Hand [MEMORY-SYSTEM.md](MEMORY-SYSTEM.md) to Claude Code and it installs it.
 - **Completely private.** Everything — memories, meaning-fingerprints, the graph — lives in a file on your machine. Default: `%USERPROFILE%\.resonance-memory\resonance-memory.db` (Windows) or `~/.resonance-memory/resonance-memory.db` (macOS/Linux). An older build that stored this under `~/.lmstudio/` copies it here on first start (the original is left in place as a backup). Export in the app is the backup; to move the store, copy that file (and `resonance-memory.config.json` beside it) or use Export / Import. No servers, no telemetry, no account.
 - **It scales.** Everything sits in a fast local database (SQLite), so recall stays quick whether you've saved a hundred things or a hundred thousand. An older text-file store upgrades itself safely on first open, keeping a backup.
 - **Take your memory anywhere.** **Export my memories** in the app (or `--export`) writes a `.zip` you own — including a plain `memories.jsonl` any other tool can read. **Import memories** brings it back on any machine (a button in the app, or `--import`). Your learned associations only travel when you explicitly ask them to. The control panel's **Terminal commands** list has the rest (`--migrate`, `--dedup-existing`, `--export-jsonl`, …) — exact command, what it does, and when.
@@ -100,11 +103,11 @@ is already here:
 
 - **Every memory knows when it was true.** Memories are dated, and when something changes ("I moved to Denver") the
   old fact is retired, not deleted: it stays in the history, marked as replaced. Nothing is thrown away.
-- **A filing cabinet** (for Claude Code's own memory today, [CABINET.md](CABINET.md)): who you are and how you work
-  together stays at the front; everything else is filed into subject drawers with indexes; replaced text
-  fades into a dated history instead of being lost. *Coming to the app next:* Resonance will keep your memories as
-  plain folders and files on your computer, sorted by subject automatically, so you can browse them yourself with
-  nothing to set up.
+- **The memory system** ([MEMORY-SYSTEM.md](MEMORY-SYSTEM.md)): plain folders and files on your computer. Who you
+  are and how you work together stays on the surface; everything else is filed into subject drawers, each with an
+  index card ([CABINET.md](CABINET.md)); replaced text fades into a dated history instead of being lost; recall
+  surfaces the right memories on every message. Built and tested daily with Claude over months, and it ships whole:
+  one command installs it.
 
 *Not built yet (an honest signpost):* the part that runs on its own. While your machine sleeps, Resonance will gather
 the day's threads into a **page**, weeks into **chapters**, months and years above, a navigable index of your own
