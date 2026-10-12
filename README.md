@@ -83,7 +83,7 @@ Done. Your AI can save and recall memories on its own. Click **Show demo graph**
 - **Auto-recall in Claude Code.** Add one hook and RM recalls on *every* message you send, so Claude never has to remember to ask: [AUTO-RECALL.md](AUTO-RECALL.md) (hand it to Claude Code and it sets it up). Other apps don't have per-message hooks; there the recall tool itself asks the model to recall at the start of each chat.
 - **A filing cabinet for Claude Code's own memory.** Claude Code's file-based memory turns into one long flat list
   over time. [CABINET.md](CABINET.md) files it: the baseline (who you are, how you work together) stays at the front
-  and is pinned; everything else goes into `projects/`, `tools/` and `reference/` subject folders with generated
+  and stays put; everything else goes into `projects/`, `tools/` and `reference/` subject folders with generated
   indexes; replaced text fades to `history/` instead of being lost. Hand the guide to Claude Code and it sets it up.
 - **Completely private.** Everything — memories, meaning-fingerprints, the graph — lives in a file on your machine. Default: `%USERPROFILE%\.resonance-memory\resonance-memory.db` (Windows) or `~/.resonance-memory/resonance-memory.db` (macOS/Linux). An older build that stored this under `~/.lmstudio/` copies it here on first start (the original is left in place as a backup). Export in the app is the backup; to move the store, copy that file (and `resonance-memory.config.json` beside it) or use Export / Import. No servers, no telemetry, no account.
 - **It scales.** Everything sits in a fast local database (SQLite), so recall stays quick whether you've saved a hundred things or a hundred thousand. An older text-file store upgrades itself safely on first open, keeping a backup.
@@ -101,9 +101,10 @@ is already here:
 - **Every memory knows when it was true.** Memories are dated, and when something changes ("I moved to Denver") the
   old fact is retired, not deleted: it stays in the history, marked as replaced. Nothing is thrown away.
 - **A filing cabinet** (for Claude Code's own memory today, [CABINET.md](CABINET.md)): who you are and how you work
-  together stays at the front, pinned; everything else is filed into subject drawers with indexes; replaced text
-  fades into a dated history instead of being lost. *Coming to the app itself next*, so a fresh install sets the
-  cabinet up for you.
+  together stays at the front; everything else is filed into subject drawers with indexes; replaced text
+  fades into a dated history instead of being lost. *Coming to the app next:* Resonance will keep your memories as
+  plain folders and files on your computer, sorted by subject automatically, so you can browse them yourself with
+  nothing to set up.
 
 *Not built yet (an honest signpost):* the part that runs on its own. While your machine sleeps, Resonance will gather
 the day's threads into a **page**, weeks into **chapters**, months and years above, a navigable index of your own
