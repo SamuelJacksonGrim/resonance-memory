@@ -28,20 +28,22 @@
  *   node recall.js --query "..." [--top 5] [--history]
  *   node recall.js --plan
  *
- * Defaults match the PowerShell script (this machine's memory dir and cache).
- * Override with flags or, if the flag is omitted, RECALL_MEMORY / RECALL_CACHE /
- * RECALL_ENDPOINT / RECALL_MODEL, then EMBED_ENDPOINT / EMBED_MODEL.
- * EMBED_ENDPOINT may be the RM form (full .../v1/embeddings URL) or a base URL.
+ * The memory folder has no default: pass --memory-dir or set RECALL_MEMORY (the installer sets it).
+ * Cache: --cache, else RECALL_CACHE, else ~/.resonance-memory/memory-embeddings.json.
+ * Embedder: --endpoint / RECALL_ENDPOINT (else EMBED_ENDPOINT, RM's variable; a full .../v1/embeddings URL or a
+ * base URL) and --model / RECALL_MODEL. The model deliberately does NOT follow RM's EMBED_MODEL: pointing RM at a
+ * different embedder shouldn't silently change the vectors this cache was built with.
  */
 
 const crypto = require("crypto");
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 
 const sources = require("./sources.js");
 
-const DEFAULT_MEMORY = "C:\\Users\\spamw\\.claude\\projects\\C--Users-spamw\\memory";
-const DEFAULT_CACHE = "C:\\Users\\spamw\\tools\\memory-embeddings.json";
+const DEFAULT_MEMORY = "";   // none: every install names its own folder (RECALL_MEMORY / --memory-dir)
+const DEFAULT_CACHE = path.join(os.homedir(), ".resonance-memory", "memory-embeddings.json");
 const DEFAULT_ENDPOINT = "http://localhost:1234";
 const DEFAULT_MODEL = "text-embedding-nomic-embed-text-v1.5";
 const EMBED_CHARS = 2200;
@@ -72,7 +74,7 @@ function resolveConfig(opts) {
   let memoryDir = o.memoryDir || env.RECALL_MEMORY || DEFAULT_MEMORY;
   let cache = o.cache || env.RECALL_CACHE || DEFAULT_CACHE;
   const endpoint = o.endpoint || env.RECALL_ENDPOINT || env.EMBED_ENDPOINT || DEFAULT_ENDPOINT;
-  const model = o.model || env.RECALL_MODEL || env.EMBED_MODEL || DEFAULT_MODEL;
+  const model = o.model || env.RECALL_MODEL || DEFAULT_MODEL;
   const history = !!o.history;
   if (history) {
     memoryDir = path.join(memoryDir, "history");

@@ -285,9 +285,12 @@ test("endpoint accepts a base URL or RM's full /v1/embeddings URL", async () => 
   assert.strictEqual(cfg.endpoint, "http://127.0.0.1:9/v1/embeddings");
   assert.strictEqual(cfg.cache, "C:\\tools\\memory-embeddings-history.json");
   assert.strictEqual(cfg.memoryDir, path.join("C:\\mem", "history"));
+  // The model never follows RM's EMBED_MODEL, and nothing personal is a default.
   const fallback = recall.resolveConfig({ env: { EMBED_MODEL: "from-embed" } });
-  assert.strictEqual(fallback.model, "from-embed");
-  assert.strictEqual(fallback.memoryDir, recall.DEFAULT_MEMORY);
+  assert.strictEqual(fallback.model, recall.DEFAULT_MODEL);
+  assert.strictEqual(fallback.memoryDir, "");
+  assert.ok(recall.DEFAULT_CACHE.startsWith(require("os").homedir()), recall.DEFAULT_CACHE);
+  assert.ok(recall.DEFAULT_CACHE.endsWith(path.join(".resonance-memory", "memory-embeddings.json")));
 });
 
 section("plan, history, duplicates");
@@ -815,26 +818,12 @@ test("only Write/Edit/MultiEdit under the memory dir spawns, and it does not wai
   assert.strictEqual(calls, 0);
   assert.strictEqual(await fire({ tool_name: "Write", tool_input: { file_path: "C:\\tmp\\elsewhere.md" } }), 0);
   assert.strictEqual(calls, 0);
+  // No legacy path: without RECALL_MEMORY, a write anywhere (including the old hardcoded folder) fires nothing.
   assert.strictEqual(await fire({
     tool_name: "Write",
-    tool_input: { file_path: "C:/Users/spamw/.claude/projects/C--Users-spamw/memory/foo.md" },
+    tool_input: { file_path: "C:/Users/someone/.claude/projects/x/memory/foo.md" },
   }), 0);
-  assert.strictEqual(calls, 1);
-  assert.strictEqual(await fire({
-    tool_name: "Edit",
-    tool_input: { file_path: "C:\\Users\\spamw\\.claude\\projects\\C--Users-spamw\\memory\\foo.md" },
-  }), 0);
-  assert.strictEqual(await fire({
-    tool_name: "MultiEdit",
-    tool_input: { file_path: "C:\\Users\\spamw\\.claude\\projects\\C--Users-spamw\\memory\\foo.md" },
-  }), 0);
-  assert.strictEqual(calls, 3);
-  // memory-other must not match the legacy marker.
-  assert.strictEqual(await fire({
-    tool_name: "Write",
-    tool_input: { file_path: "C:\\Users\\spamw\\.claude\\projects\\C--Users-spamw\\memory-other\\foo.md" },
-  }), 0);
-  assert.strictEqual(calls, 3);
+  assert.strictEqual(calls, 0);
 
   const root = tmpdir();
   const mem = path.join(root, "mem");
@@ -843,7 +832,15 @@ test("only Write/Edit/MultiEdit under the memory dir spawns, and it does not wai
     tool_name: "Write",
     tool_input: { file_path: path.join(mem, "a.md") },
   }, { RECALL_MEMORY: mem }), 0);
-  assert.strictEqual(calls, 4);
+  assert.strictEqual(calls, 1);
+  for (const tool of ["Edit", "MultiEdit"]) {
+    assert.strictEqual(await fire({ tool_name: tool, tool_input: { file_path: path.join(mem, "sub", "b.md") } },
+      { RECALL_MEMORY: mem }), 0);
+  }
+  assert.strictEqual(calls, 3);
+  assert.strictEqual(await fire({ tool_name: "Write", tool_input: { file_path: path.join(root, "mem-other", "c.md") } },
+    { RECALL_MEMORY: mem }), 0);
+  assert.strictEqual(calls, 3);                    // a sibling folder with a similar name doesn't match
   fs.rmSync(root, { recursive: true, force: true });
 });
 

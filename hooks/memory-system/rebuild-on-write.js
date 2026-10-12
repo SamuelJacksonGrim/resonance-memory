@@ -23,10 +23,8 @@
  * touches a file under the memory directory, launch `recall.js --rebuild`
  * detached. Fails silent and does not wait.
  *
- * The PowerShell hook matches the literal path
- * projects\C--Users-spamw\memory\ (case-insensitive). That match is kept.
- * If RECALL_MEMORY is set, a write under that directory also fires, so an
- * install on another machine can point the hook at its own folder.
+ * It fires only for writes under RECALL_MEMORY (the installer sets it), so every install watches its own folder
+ * and nothing personal is baked in.
  * The child inherits the environment, so RECALL_CACHE / RECALL_ENDPOINT /
  * EMBED_* reach the rebuild.
  */
@@ -34,7 +32,6 @@
 const path = require("path");
 const { spawn } = require("child_process");
 
-const LEGACY_MARK = /projects\\C--Users-spamw\\memory\\/i;
 
 function readStdin() {
   return new Promise((resolve) => {
@@ -55,8 +52,6 @@ function underDir(filePath, root) {
 }
 
 function isMemoryPath(filePath, env) {
-  const norm = String(filePath).replace(/\//g, "\\");
-  if (LEGACY_MARK.test(norm)) return true;
   const e = env || process.env;
   if (e.RECALL_MEMORY && underDir(filePath, e.RECALL_MEMORY)) return true;
   return false;
@@ -109,7 +104,6 @@ if (require.main === module) {
 }
 
 module.exports = {
-  LEGACY_MARK,
   isMemoryPath,
   underDir,
   defaultSpawn,

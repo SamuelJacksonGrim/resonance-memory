@@ -25,7 +25,7 @@
  *
  * Env (same names as the PowerShell hook, plus RM's EMBED_* as a fallback):
  *   RECALL_CACHE, RECALL_MEMORY, RECALL_ENDPOINT, RECALL_MODEL
- *   EMBED_ENDPOINT, EMBED_MODEL
+ *   EMBED_ENDPOINT (the model follows RECALL_MODEL only)
  */
 
 const fs = require("fs");
@@ -84,9 +84,9 @@ async function runHook(options) {
     const cache = env.RECALL_CACHE || recall.DEFAULT_CACHE;
     const memoryDir = env.RECALL_MEMORY || recall.DEFAULT_MEMORY;
     const endpoint = env.RECALL_ENDPOINT || env.EMBED_ENDPOINT || recall.DEFAULT_ENDPOINT;
-    const model = env.RECALL_MODEL || env.EMBED_MODEL || recall.DEFAULT_MODEL;
+    const model = env.RECALL_MODEL || recall.DEFAULT_MODEL;
     if (!fs.existsSync(cache)) return 0;
-    if (!fs.existsSync(memoryDir)) return 0;
+    if (!memoryDir || !fs.existsSync(memoryDir)) return 0;
 
     const index = ciCount();
     let files;
