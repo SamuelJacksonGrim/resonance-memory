@@ -93,11 +93,23 @@ Done. Your AI can save and recall memories on its own. Click **Show demo graph**
 - **macOS "cannot be opened because it is from an unidentified developer"?** Gatekeeper. Right-click → **Open** → **Open**, or System Settings → Privacy & Security → **Open Anyway**. The whole thing is open source — read every line.
 - **The associative field** has a switch in the app; the memory works either way.
 
-## What's coming: the Grimoire
+## The Grimoire: part built, part coming
 
-*(Not built yet — an honest signpost of where this is headed.)*
+The **Grimoire** is how Resonance keeps a lifetime of memory organized, honest about time, and navigable. Its foundation
+is already here:
 
-The next chapter is **time**. Every memory already knows when it happened; soon, while your machine sleeps, Resonance will gather the day's threads into a **page**, weeks into **chapters**, months and years above — a **Grimoire**, a navigable index of your own history. Nothing is thrown away to build it; it's a map, not a compression. *"What was that idea I had around Thursday last January?"* becomes something you can actually walk back to. This is designed and specced ([`docs/proposed/0011`](docs/proposed/0011-dream-consolidation.md)); it ships only once it's measured to genuinely help.
+- **Every memory knows when it was true.** Memories are dated, and when something changes ("I moved to Denver") the
+  old fact is retired, not deleted: it stays in the history, marked as replaced. Nothing is thrown away.
+- **A filing cabinet** (for Claude Code's own memory today, [CABINET.md](CABINET.md)): who you are and how you work
+  together stays at the front, pinned; everything else is filed into subject drawers with indexes; replaced text
+  fades into a dated history instead of being lost. *Coming to the app itself next*, so a fresh install sets the
+  cabinet up for you.
+
+*Not built yet (an honest signpost):* the part that runs on its own. While your machine sleeps, Resonance will gather
+the day's threads into a **page**, weeks into **chapters**, months and years above, a navigable index of your own
+history: a map, not a compression. *"What was that idea I had around Thursday last January?"* becomes something you
+can actually walk back to. It's designed and specced ([`docs/proposed/0011`](docs/proposed/0011-dream-consolidation.md))
+and ships only once it's measured to genuinely help.
 
 ## For the curious (and developers)
 
