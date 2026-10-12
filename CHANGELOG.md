@@ -8,6 +8,22 @@ stable; sophistication grows in the substrate, not in the API.
 
 ## [Unreleased]
 
+## [0.3.1](https://github.com/SamuelJacksonGrim/resonance-memory/releases/tag/v0.3.1) - 2026-10-12
+
+### Added
+- **One-click memory system setup in the app.** When Claude Code is present, the panel shows a **Memory system for
+  Claude Code** step (not set up / set up / index not built yet). **Set up** shows the installer's own dry-run plan in
+  a confirm modal, then runs the same installer in-process (loopback + origin + per-process token, like Export /
+  Import). The empty-store first-run box points at it. Still four MCP verbs.
+- **Default memory folder.** `--memory-dir` is now optional: the default is Claude Code's memory folder for the home
+  directory (`~/.claude/projects/<encoded home>/memory`); the plan prints the folder it chose. The panel also offers
+  other existing project memory folders.
+
+### Changed
+- **Setup from the panel finishes when the meaning engine is down.** The files and hooks go in, and the recall index
+  builds on the next panel open once the engine is up, right after the engine's own Set up, or on the first memory
+  write. The CLI still exits 1 in that case and says to re-run `--apply`.
+
 ## [0.3.0](https://github.com/SamuelJacksonGrim/resonance-memory/releases/tag/v0.3.0) - 2026-10-11
 
 ### Added

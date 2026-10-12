@@ -422,7 +422,7 @@ const PAGE = `<!doctype html>
         <div class="hint" id="memoryHint">The folder Claude Code already keeps for this machine, plus recall on each prompt.</div>
         <div id="memoryToast" class="toast" hidden></div>
       </div>
-      <button id="memoryBtn" class="primary" style="display:none">Set up</button>
+      <button id="memoryBtn" class="primary" style="display:none;white-space:nowrap">Set up</button>
     </div>
 
     <div class="row" id="embedderRow" style="margin-top:10px">
@@ -1264,7 +1264,7 @@ const PAGE = `<!doctype html>
       memoryBtn.style.display = 'none';
     } else {
       pill.className = 'pill warn'; pill.textContent = 'not set up';
-      hint.textContent = 'One click lays down the memory folder, the recall hooks, and the index. You do not type a path.';
+      hint.textContent = 'One click lays down the memory folder, the recall hooks, and the index. Nothing to type.';
       memoryBtn.style.display = '';
       memoryBtn.className = 'primary';
       memoryBtn.textContent = 'Set up';
