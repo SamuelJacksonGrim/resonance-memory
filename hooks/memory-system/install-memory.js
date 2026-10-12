@@ -207,6 +207,8 @@ function filePlan(tree, destRoot) {
   for (const rel of rels) {
     const dest = path.join(destRoot, ...rel.split("/"));
     const content = tree.files[rel];
+    // A .keep only exists so an empty drawer survives git; a drawer that is already there doesn't need one.
+    if (path.basename(dest) === ".keep" && fs.existsSync(path.dirname(dest))) continue;
     let state = "write";
     if (fs.existsSync(dest)) {
       let cur = null;

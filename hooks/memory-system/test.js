@@ -1168,6 +1168,7 @@ test("apply lays the template without overwriting, merges hooks once, and append
   const ownedArch = "USER RULES stay\n";
   write(path.join(memoryDir, "MEMORY.md"), ownedMemory);
   write(path.join(memoryDir, "memory-architecture.md"), ownedArch);
+  write(path.join(memoryDir, "projects", "game", "notes.md"), "a drawer already in use\n");
   const settingsPath = path.join(home, ".claude", "settings.json");
   const originalSettings = JSON.stringify({
     theme: "dark",
@@ -1206,6 +1207,8 @@ test("apply lays the template without overwriting, merges hooks once, and append
     assert.strictEqual(fs.readFileSync(path.join(memoryDir, "memory-architecture.md"), "utf8"), ownedArch);
     assert.ok(first.lines.some((l) => l.includes("MEMORY.md") && l.includes("merge by hand")));
     assert.ok(first.lines.some((l) => l.includes("memory-architecture.md") && l.includes("merge by hand")));
+    assert.ok(!fs.existsSync(path.join(memoryDir, "projects", ".keep")), "no .keep in a drawer that already exists");
+    assert.ok(fs.existsSync(path.join(memoryDir, "tools", ".keep")), "a new drawer gets its .keep");
     assert.strictEqual(
       fs.readFileSync(path.join(memoryDir, "cabinet.tsv"), "utf8"),
       fs.readFileSync(path.join(templateRoot, "cabinet.tsv"), "utf8")
@@ -1214,7 +1217,6 @@ test("apply lays the template without overwriting, merges hooks once, and append
       fs.readFileSync(path.join(memoryDir, "history", "README.md"), "utf8"),
       fs.readFileSync(path.join(templateRoot, "history", "README.md"), "utf8")
     );
-    assert.ok(fs.existsSync(path.join(memoryDir, "projects", ".keep")));
     assert.ok(fs.existsSync(path.join(memoryDir, "reference", ".keep")));
     assert.ok(fs.existsSync(path.join(memoryDir, "tools", ".keep")));
 
