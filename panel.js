@@ -29,6 +29,9 @@
  *     clients get a copy-paste snippet (same command/args Connect writes).
  *     The live store file is shown on the page (not buried in uninstall copy).
  *     Not an MCP tool.
+ *   - filing cabinet: a tree of the default subject drawers (present on an
+ *     empty store — no setup step, no dummy rows) plus pin / move / status.
+ *     GET/POST /api/cabinet. Not an MCP tool. Ranking is untouched.
  *   - exports YOUR store as a zip (RM-07 slice 2c; shells export-memory.js, never
  *     demo-seed.jsonl; not an MCP tool — a model that can dump the store is an
  *     exfil path),
@@ -73,6 +76,7 @@ const { pairConflictFn, resolveEntities } = require("./entity.js");
 const extract = require("./extract.js");
 const exp = require("./export-memory.js");
 const imp = require("./import-memory.js");
+const cabinet = require("./cabinet.js");
 
 function baseDir() {
   // In a bundled single-executable, __dirname is virtual; resolve next to the exe.
@@ -191,6 +195,20 @@ function loadDemo() {
 // but "how many memories do I have" means the ones that are actually true now.
 async function memCount() {
   return (await loadUserRecords(STORE_PATH)).filter(isCurrent).length;
+}
+
+// The tree is derived. A missing store, or a store that will not open,
+// is an empty cabinet — the six subject drawers, no dummy rows.
+async function cabinetView() {
+  let s;
+  try {
+    s = await openStore(STORE_PATH, { config: readConfig() });
+    return cabinet.buildTree(s.active());
+  } catch {
+    return cabinet.buildTree([]);
+  } finally {
+    try { if (s && typeof s.close === "function") s.close(); } catch { /* */ }
+  }
 }
 
 // Build the association graph for the view: nodes = memories, edges = kNN semantic links,
@@ -334,6 +352,18 @@ const PAGE = `<!doctype html>
   .firstrun .label { margin-bottom: 4px; }
   .firstrun .hint { margin: 0 0 8px; color: #5b4a20; }
   .firstrun button { margin-top: 2px; }
+  .cab-scroll { max-height: 360px; overflow: auto; margin-top: 8px; }
+  .cab-drawers, .cab-mems { list-style: none; margin: 0; padding: 0 0 0 12px; }
+  .cab-drawer { font-weight: 600; font-size: 13px; margin-top: 8px; }
+  .cab-row { padding: 8px 0; border-top: 1px solid rgba(0,0,0,.06); }
+  .cab-text { font-size: 13px; word-break: break-word; }
+  .cab-controls { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; align-items: center; }
+  .cab-controls select, .cab-controls input.cab-new, .cab-controls button { font: inherit; font-size: 12px; }
+  .cab-new { width: 9em; padding: 4px 6px; border-radius: 8px; border: 1px solid rgba(0,0,0,.12);
+    background: #f7f8fa; color: inherit; }
+  .cab-filter { font-size: 12px; color: #6b7280; display: flex; align-items: center; gap: 6px; }
+  .cab-msg { color: #8a5a00; font-size: 12.5px; }
+  .cab-msg:empty { display: none; }
   details.mcpother { margin: 8px 0 12px; padding: 10px 14px; border-radius: 12px;
     background: #f7f8fa; border: 1px solid rgba(0,0,0,.05); }
   details.mcpother summary { cursor: pointer; font-weight: 600; font-size: 13px; }
@@ -371,6 +401,10 @@ const PAGE = `<!doctype html>
     .toast code { background: rgba(255,255,255,.08); }
     .firstrun { background: #3a2f12; border-color: rgba(240,198,116,.25); }
     .firstrun .hint { color: #f0c674; }
+    .cab-row { border-top-color: rgba(255,255,255,.06); }
+    .cab-new { background: #171a1e; border-color: rgba(255,255,255,.12); color: #e6e8eb; }
+    .cab-filter { color: #9aa1ab; }
+    .cab-msg { color: #f0c674; }
     details.mcpother { background: #171a1e; border-color: rgba(255,255,255,.06); }
     pre.mcp { background: #1f2227; border-color: rgba(255,255,255,.08); }
     .datapath { background: rgba(255,255,255,.08); }
@@ -399,6 +433,24 @@ const PAGE = `<!doctype html>
       <div class="hint" id="firstRunHint">Your AI has a memory, but the store is empty. In your next chat, tell it a few things worth keeping &mdash; who you are, a rule it should follow, the project you&rsquo;re in &mdash; then say <b>remember that</b>.</div>
       <button type="button" id="seedBtn">Copy a starter prompt</button>
       <span id="seedMsg" class="hint" style="margin-left:8px"></span>
+    </div>
+
+    <div class="sec" id="cabinetSec">
+      <div class="sechead">
+        <div class="ctitle">Filing cabinet</div>
+        <label class="cab-filter">Show
+          <select id="cabFilter" aria-label="Filter by status">
+            <option value="all">all</option>
+            <option value="active">active</option>
+            <option value="paused">paused</option>
+            <option value="shelved">shelved</option>
+            <option value="done">done</option>
+          </select>
+        </label>
+      </div>
+      <div class="hint">Drawers follow subject. A new install already has these, empty — nothing to configure. New memories are filed on their own: the nearest drawer, or inbox. Pin who you are; that comes back on every recall and is not a drawer. Shelved notes stay out of ordinary recall until you ask.</div>
+      <div id="cabMsg" class="cab-msg"></div>
+      <div id="cabTree" class="cab-scroll"></div>
     </div>
 
     <div class="row" id="engineRow" style="margin-bottom:10px">
@@ -697,6 +749,196 @@ const PAGE = `<!doctype html>
     firstRunMemories = typeof s.memories === 'number' ? s.memories : null;
     renderFirstRun();
     loadEmbedder();
+    loadCabinet();
+  }
+
+  var cabFilter = 'all';
+  var cabData = null;
+  var cabFilterSel = document.getElementById('cabFilter');
+  if (cabFilterSel) cabFilterSel.addEventListener('change', function() {
+    cabFilter = cabFilterSel.value || 'all';
+    renderCabinet();
+  });
+
+  function cabVisible(m) {
+    if (!cabFilter || cabFilter === 'all') return true;
+    return m && m.status === cabFilter;
+  }
+
+  function cabMemRow(m, paths) {
+    var li = document.createElement('li');
+    li.className = 'cab-row';
+    var t = document.createElement('div');
+    t.className = 'cab-text';
+    t.textContent = m.text || '';
+    li.appendChild(t);
+    var controls = document.createElement('div');
+    controls.className = 'cab-controls';
+    var pin = document.createElement('button');
+    pin.type = 'button';
+    pin.textContent = m.pinned ? 'Unpin' : 'Pin';
+    pin.addEventListener('click', function() { cabPost({ id: m.id, pinned: !m.pinned }); });
+    controls.appendChild(pin);
+    var st = document.createElement('select');
+    st.setAttribute('aria-label', 'Status');
+    ['active', 'paused', 'shelved', 'done'].forEach(function(name) {
+      var o = document.createElement('option');
+      o.value = name;
+      o.textContent = name;
+      if (m.status === name) o.selected = true;
+      st.appendChild(o);
+    });
+    st.addEventListener('change', function() { cabPost({ id: m.id, status: st.value }); });
+    controls.appendChild(st);
+    var mv = document.createElement('select');
+    mv.setAttribute('aria-label', 'Drawer');
+    var cur = document.createElement('option');
+    cur.value = '';
+    cur.textContent = m.drawer ? m.drawer : 'unfiled';
+    mv.appendChild(cur);
+    (paths || []).forEach(function(p) {
+      if (p === m.drawer) return;
+      var o = document.createElement('option');
+      o.value = p;
+      o.textContent = p;
+      mv.appendChild(o);
+    });
+    mv.addEventListener('change', function() {
+      if (mv.value) cabPost({ id: m.id, drawer: mv.value });
+    });
+    controls.appendChild(mv);
+    var custom = document.createElement('input');
+    custom.type = 'text';
+    custom.className = 'cab-new';
+    custom.placeholder = 'projects/name';
+    custom.setAttribute('aria-label', 'New drawer');
+    var go = document.createElement('button');
+    go.type = 'button';
+    go.textContent = 'Move';
+    go.addEventListener('click', function() {
+      var v = (custom.value || '').trim();
+      if (v) cabPost({ id: m.id, drawer: v });
+    });
+    controls.appendChild(custom);
+    controls.appendChild(go);
+    li.appendChild(controls);
+    return li;
+  }
+
+  function cabRenderNode(node, paths, ul) {
+    var mems = (node.memories || []).filter(cabVisible);
+    var childHost = document.createElement('ul');
+    childHost.className = 'cab-drawers';
+    var childCount = 0;
+    (node.children || []).forEach(function(ch) {
+      if (cabRenderNode(ch, paths, childHost)) childCount++;
+    });
+    if (cabFilter !== 'all' && !mems.length && !childCount) return false;
+    var li = document.createElement('li');
+    var title = document.createElement('div');
+    title.className = 'cab-drawer';
+    title.textContent = node.path + ' (' + mems.length + ')';
+    li.appendChild(title);
+    if (mems.length) {
+      var mul = document.createElement('ul');
+      mul.className = 'cab-mems';
+      mems.forEach(function(m) { mul.appendChild(cabMemRow(m, paths)); });
+      li.appendChild(mul);
+    } else if (!childCount) {
+      var empty = document.createElement('div');
+      empty.className = 'hint';
+      empty.textContent = 'empty';
+      li.appendChild(empty);
+    }
+    if (childCount) li.appendChild(childHost);
+    ul.appendChild(li);
+    return true;
+  }
+
+  function renderCabinet() {
+    var root = document.getElementById('cabTree');
+    if (!root || !cabData) return;
+    while (root.firstChild) root.removeChild(root.firstChild);
+    var paths = cabData.paths || [];
+    var pins = (cabData.pinned || []).filter(cabVisible);
+    var pinH = document.createElement('div');
+    pinH.className = 'cab-drawer';
+    pinH.textContent = 'Pinned (' + pins.length + ')';
+    root.appendChild(pinH);
+    var pinHint = document.createElement('div');
+    pinHint.className = 'hint';
+    pinHint.textContent = 'Who you are, and how you want to be treated. Not a drawer, and not part of the ranking.';
+    root.appendChild(pinHint);
+    if (pins.length) {
+      var pul = document.createElement('ul');
+      pul.className = 'cab-mems';
+      pins.forEach(function(m) { pul.appendChild(cabMemRow(m, paths)); });
+      root.appendChild(pul);
+    }
+    var dul = document.createElement('ul');
+    dul.className = 'cab-drawers';
+    (cabData.drawers || []).forEach(function(n) { cabRenderNode(n, paths, dul); });
+    root.appendChild(dul);
+    var unfiled = (cabData.unfiled || []).filter(cabVisible);
+    if (unfiled.length) {
+      var uh = document.createElement('div');
+      uh.className = 'cab-drawer';
+      uh.textContent = 'Unfiled (' + unfiled.length + ')';
+      root.appendChild(uh);
+      var uul = document.createElement('ul');
+      uul.className = 'cab-mems';
+      unfiled.forEach(function(m) { uul.appendChild(cabMemRow(m, paths)); });
+      root.appendChild(uul);
+    }
+    var hist = (cabData.history || []).filter(cabVisible);
+    if (hist.length) {
+      var det = document.createElement('details');
+      var sum = document.createElement('summary');
+      sum.textContent = 'History (' + hist.length + ')';
+      det.appendChild(sum);
+      var hul = document.createElement('ul');
+      hul.className = 'cab-mems';
+      hist.forEach(function(m) {
+        var li = document.createElement('li');
+        li.className = 'cab-row';
+        var tx = document.createElement('div');
+        tx.className = 'cab-text';
+        tx.textContent = m.text || '';
+        li.appendChild(tx);
+        hul.appendChild(li);
+      });
+      det.appendChild(hul);
+      root.appendChild(det);
+    }
+  }
+
+  async function loadCabinet() {
+    try {
+      cabData = await (await fetch('/api/cabinet')).json();
+      renderCabinet();
+    } catch (e) {
+      var msg = document.getElementById('cabMsg');
+      if (msg) msg.textContent = 'Could not read the cabinet.';
+    }
+  }
+
+  async function cabPost(body) {
+    var msg = document.getElementById('cabMsg');
+    try {
+      var r = await (await fetch('/api/cabinet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      })).json();
+      if (!r.ok) {
+        if (msg) msg.textContent = r.error || 'Could not file that.';
+        return;
+      }
+      if (msg) msg.textContent = '';
+      await loadCabinet();
+    } catch (e) {
+      if (msg) msg.textContent = 'Could not file that.';
+    }
   }
 
   var embedderSel = document.getElementById('embedderSel');
@@ -1945,6 +2187,58 @@ const server = http.createServer((req, res) => {
       }).finally(() => {
         importInFlight = false;
         resumeWatchdog();
+      });
+    });
+    return;
+  }
+  // Filing cabinet. Metadata only: drawer / pinned / status. No re-embed
+  // and no embedding_version bump — the vector still matches the text
+  // (BUG-008 class). Not an MCP tool. An empty or missing store still
+  // returns the default drawers; nothing is inserted to make them exist.
+  if (req.method === "GET" && url === "/api/cabinet") {
+    cabinetView().then((tree) => json(res, 200, tree)).catch(() => {
+      json(res, 200, cabinet.buildTree([]));
+    });
+    return;
+  }
+  if (req.method === "POST" && url === "/api/cabinet") {
+    body(req, (b) => {
+      let parsed = {};
+      try { parsed = JSON.parse(b) || {}; } catch {
+        json(res, 400, { ok: false, error: "That was not a filing change." });
+        return;
+      }
+      const id = parsed.id;
+      if (id === undefined || id === null || String(id).trim() === "") {
+        json(res, 400, { ok: false, error: "Provide the id of the memory to file." });
+        return;
+      }
+      const opts = {};
+      if (Object.prototype.hasOwnProperty.call(parsed, "drawer")) opts.drawer = parsed.drawer;
+      if (Object.prototype.hasOwnProperty.call(parsed, "pinned")) opts.pinned = parsed.pinned;
+      if (Object.prototype.hasOwnProperty.call(parsed, "status")) opts.status = parsed.status;
+      const filed = cabinet.cabinetPatch(opts);
+      if (filed && filed.error) {
+        json(res, 400, { ok: false, error: filed.error });
+        return;
+      }
+      if (!filed || !filed.patch) {
+        json(res, 400, { ok: false, error: "Nothing to file." });
+        return;
+      }
+      let s;
+      openStore(STORE_PATH, { config: readConfig() }).then(async (opened) => {
+        s = opened;
+        const ok = s.update(id, Object.assign({ modified: new Date().toISOString() }, filed.patch));
+        if (!ok) {
+          json(res, 404, { ok: false, error: "No memory with id " + id + "." });
+          return;
+        }
+        json(res, 200, { ok: true, record: cabinet.summary(s.get(id)) });
+      }).catch((e) => {
+        json(res, 500, { ok: false, error: String(e && e.message || e) });
+      }).finally(() => {
+        try { if (s && typeof s.close === "function") s.close(); } catch { /* */ }
       });
     });
     return;

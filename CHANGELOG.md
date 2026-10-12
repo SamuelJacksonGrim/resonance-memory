@@ -16,6 +16,11 @@ stable; sophistication grows in the substrate, not in the API.
   custom `MEMORY_FILE_PATH`; `RM_RECALL_DEBUG=1` explains silence during setup. Measured ~0.1–0.2 s per message.
   Claude Code only (other MCP clients have no per-message hook). The guide is written so a user's own Claude
   can carry out the setup.
+- **Filing cabinet on the record.** `drawer`, `pinned`, and `status` are metadata on the
+  memory (backfilled by `normalize()`, no migration step). A fresh panel shows the default
+  subject drawers with nothing to configure. Recall prepends pinned memories in their own
+  section and leaves the ranked list cosine-only; shelved memories stay out unless asked.
+  `--export` adds a `cabinet/` markdown tree beside `memories.jsonl`. Still four verbs.
 
 ## [0.2.0](https://github.com/SamuelJacksonGrim/resonance-memory/releases/tag/v0.2.0) - 2026-09-10
 

@@ -131,6 +131,10 @@ const { makeEdge, setSemantic, semanticValid, hebbianDecayType, reactivateEdge }
 const {
   resolveEntities, logicalConflict, pairConflictFn,
 } = require("./entity.js");
+const {
+  assignDrawer, carryCabinet, cabinetPatch, rankPool, formatPinSection,
+  normalizeStatus,
+} = require("./cabinet.js");
 
 // Reciprocal-kNN edge construction (RM-00 field experiment, 2026-08-01). Directional
 // kNN let a one-sided "hub" node bleed into a seed's neighborhood as a false positive
@@ -1191,8 +1195,47 @@ function createCore({
   // Restatement (byte-identical OR cosine ≥ DEDUP_HI): bump confirmation +
   // access_count, do not append. access_count is a retention signal (I2:
   // never rank). The original text stays; nothing is lost (I8).
-  function confirmRestatement(existing, now) {
-    store.update(existing.id, restateSurvivorPatch(existing, now));
+  function explicitFiling(opts) {
+    const e = {};
+    if (!opts) return e;
+    if (Object.prototype.hasOwnProperty.call(opts, "drawer")) e.drawer = opts.drawer;
+    if (Object.prototype.hasOwnProperty.call(opts, "pinned")) e.pinned = opts.pinned;
+    if (Object.prototype.hasOwnProperty.call(opts, "status")) e.status = opts.status;
+    return e;
+  }
+
+  // New rows only. Does not read or write any other row — a pin is not
+  // a gate, and it is also not something this heuristic is allowed to move.
+  function applyFiling(rec, mems, explicit) {
+    const hasDrawer = Object.prototype.hasOwnProperty.call(explicit, "drawer");
+    const assigned = assignDrawer({
+      text: rec.text,
+      hasExplicit: hasDrawer,
+      explicit: hasDrawer ? explicit.drawer : undefined,
+      records: mems,
+      vector: rec.embedding,
+      cosine,
+    });
+    rec.drawer = assigned.drawer;
+    rec.pinned = false;
+    if (Object.prototype.hasOwnProperty.call(explicit, "pinned")) {
+      rec.pinned = explicit.pinned === true || explicit.pinned === 1 ||
+        explicit.pinned === "1" || explicit.pinned === "true";
+    }
+    rec.status = Object.prototype.hasOwnProperty.call(explicit, "status")
+      ? normalizeStatus(explicit.status) : "active";
+  }
+
+  function confirmRestatement(existing, now, opts) {
+    const patch = restateSurvivorPatch(existing, now);
+    // A duplicate save is not a refile. Only an explicit drawer / pin /
+    // status on this call changes the row. Auto-assignment never runs
+    // against a memory we already hold. A bad path refuses rather than
+    // clearing the drawer.
+    const filed = cabinetPatch(explicitFiling(opts));
+    if (filed && filed.error) return filed.error;
+    if (filed && filed.patch) Object.assign(patch, filed.patch);
+    store.update(existing.id, patch);
     tryReactivateIncident(existing.id);  // save touching an existing endpoint (0.4)
     tryPrimeSave(existing.id);
     return "Already remembered — confirmed it's still current. (" + store.current().length + " memories total.)";
@@ -1201,10 +1244,16 @@ function createCore({
   // Mid-band merge. Shared mergeBandPatches so `--dedup-existing` cannot
   // diverge from save() (RM-02.c). Loser is linked with superseded_by,
   // never hard-deleted (I8). Survivor text is one of the two originals.
-  function commitMerge(incoming, existing, mems, now, requestId) {
+  function commitMerge(incoming, existing, mems, now, requestId, opts) {
     const m = mergeBandPatches(incoming, existing, now);
 
     if (m.survivor === incoming) {
+      // The new wording won. It inherits the filing of the row it
+      // absorbed unless this save named a drawer / pin / status.
+      const carried = carryCabinet(existing, incoming, explicitFiling(opts));
+      incoming.drawer = carried.drawer;
+      incoming.pinned = carried.pinned;
+      incoming.status = carried.status;
       Object.assign(incoming, m.newPatch);
       store.add(incoming);
       store.update(existing.id, m.oldPatch);
@@ -1264,7 +1313,7 @@ function createCore({
     // against the extracted fact, so "FYI, I prefer tea" confirms "I prefer tea".
     const mems = store.current();
     const same = mems.find((r) => r.text === content);
-    if (same) return confirmRestatement(same, now);
+    if (same) return confirmRestatement(same, now, opts);
 
     let embedding = null;
     try { embedding = (await embed([content], { role: "document" }))[0]; } catch { embedding = null; }
@@ -1273,6 +1322,8 @@ function createCore({
       embedding, valid_from: now, valid_to: null, last_confirmed: now,
       embedding_version: 1,   // first generation, even if this save's embed failed
     });
+    const filing = explicitFiling(opts);
+    applyFiling(rec, mems, filing);
 
     // RM-02.b: cosine-banded dedup against already-stored vectors.
     // No vector (embedder down) → can't compare → fall through to append,
@@ -1283,8 +1334,8 @@ function createCore({
     try {
       dup = detectNearDuplicate(rec, mems, cosine, resolveDedupBands());
     } catch { dup = null; }
-    if (dup && dup.action === "restate") return confirmRestatement(dup.match, now);
-    if (dup && dup.action === "merge") return commitMerge(rec, dup.match, mems, now, requestId);
+    if (dup && dup.action === "restate") return confirmRestatement(dup.match, now, opts);
+    if (dup && dup.action === "merge") return commitMerge(rec, dup.match, mems, now, requestId, opts);
 
     // RM-03: does this correct a fact we already hold? v2: exclusive-slot /
     // polarity / numeric match retires even without a cue ("I work at Globex"
@@ -1295,6 +1346,12 @@ function createCore({
     const ss = detectSupersession(rec, mems, cosine);
     if (ss && ss.action === "supersede" && ss.match) {
       const superseded = ss.match;
+      // Same fact, new row. Keep the drawer and the pin. A shelved fact
+      // stays shelved. Auto-assignment above does not get to refile it.
+      const carried = carryCabinet(superseded, rec, filing);
+      rec.drawer = carried.drawer;
+      rec.pinned = carried.pinned;
+      rec.status = carried.status;
       const p = supersedePatches(superseded, rec, now);
       Object.assign(rec, p.new);            // new memory carries supersedes/revision
       store.add(rec);                       // append the correction as current
@@ -1406,11 +1463,28 @@ function createCore({
     // Answer from what is currently true. Superseded memories surface only when the
     // question is explicitly about the past ("where did I used to work").
     const historical = isHistoricalQuery(query);
-    const mems = historical ? store.active() : store.current();
-    if (!mems.length) {
+    const memsAll = historical ? store.active() : store.current();
+    if (!memsAll.length) {
       return store.active().length
         ? "Nothing current matches. (Older, superseded memories exist — ask about the past to see them.)"
         : "No memories saved yet.";
+    }
+    // Filing removes rows from the candidate pool. It does not score
+    // them. Pinned rows are their own section (created order, not
+    // cosine). Shelved rows stay out unless this recall asked. What
+    // remains is sorted by cosine only, below (I2). An empty pin
+    // section adds nothing, so a store with no pins is byte-identical
+    // to the pre-cabinet recall string.
+    const pinBlock = formatPinSection(memsAll, opts);
+    const mems = rankPool(memsAll, opts);
+    if (!mems.length) {
+      const asked = opts && (opts.includeShelved || (opts.status != null && String(opts.status).trim() !== ""));
+      const body = pinBlock
+        ? "(Nothing else matched.)"
+        : (memsAll.some((m) => !m.valid_to && normalizeStatus(m.status) === "shelved" && !asked)
+          ? "Nothing in the active filing matched. Shelved memories are kept — browse the cabinet or ask to include them."
+          : "Nothing current matches.");
+      return pinBlock ? pinBlock + "\n\n" + body : body;
     }
 
     let ranked;               // the top-k the model actually sees (return radius)
@@ -1620,6 +1694,7 @@ function createCore({
       }
     } catch { /* warmth is additive; never let it break recall */ }
 
+    if (pinBlock) out = pinBlock + "\n\n" + out;
     return out;
   }
 
@@ -1628,10 +1703,23 @@ function createCore({
   // on edit. Phase 0.4 reactivation is the one edge write edit is allowed
   // — and only when a pruned incident edge actually exists. No pruned
   // edges → sidecar bytes unchanged (the 0.3 tests).
-  async function edit(id, content, _opts) {
+  async function edit(id, content, opts) {
+    opts = opts || {};
     if (id === undefined || id === null || id === "") return "Provide the `id` shown in a recall listing.";
+    // Filing fields are optional. An illegal drawer or status refuses
+    // before any write, so a bad move cannot clear the row. Metadata
+    // alone does not re-embed and does not bump embedding_version —
+    // the vector still matches the text (BUG-008 class).
+    const filed = cabinetPatch(opts);
+    if (filed && filed.error) return filed.error;
+    const meta = filed && filed.patch;
     content = (content || "").trim();
-    if (!content) return "Provide the new `content`.";
+    if (!content && !meta) return "Provide the new `content`.";
+    if (!content) {
+      const ok = store.update(id, Object.assign({ modified: new Date().toISOString() }, meta));
+      if (!ok) return "No memory with id " + id + ".";
+      return "Filed memory " + id + ".";
+    }
     // A failed re-embed must never reach store.update(): it Object.assigns the
     // patch, so a null here would overwrite a good vector. Keep the old one - a
     // stale vector still ranks, and the next successful edit repairs it.
@@ -1645,6 +1733,7 @@ function createCore({
     const now = new Date().toISOString();
     // An edit is a correction in place: the fact is current again as of now.
     const patch = { text: content, modified: now, last_confirmed: now };
+    if (meta) Object.assign(patch, meta);
     if (embedded) {
       patch.embedding = embedding;   // omitted entirely on failure
       const current = store.get(id);

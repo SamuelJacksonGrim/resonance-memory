@@ -36,6 +36,12 @@
  *                           (a competitor reads this WITHOUT our exe). DEFLATE.
  *   memories/YYYY/MM/DD/    one pretty JSON per memory, NO embeddings,
  *                           keyed on created UTC, always day-granular. STORE.
+ *   cabinet/                the same rows as markdown folders. Pinned notes
+ *                           live in cabinet/pinned/ (the front, not a drawer).
+ *                           Other current notes live under their drawer.
+ *                           Superseded notes mirror that under cabinet/history/.
+ *                           Deleted notes stay in memories.jsonl only.
+ *                           INDEX.md lists the drawers, including empty ones.
  *   catalog.txt             id · status · created · path · bytes · first-80
  *   edges.json              Hebbian data (from the table when sqlite, else
  *                           the sidecar; processed_ids/config OUT)
@@ -53,6 +59,9 @@ const path = require("path");
 const { ZipWriter } = require("./zip.js");
 const { JsonlStore, resolveStoreBackend, sqlitePathFor, resolveStorePath } = require("./store.js");
 const { normalize, isVector } = require("./record.js");
+const {
+  cabinetRelPath, cabinetMarkdown, cabinetIndexMarkdown,
+} = require("./cabinet.js");
 const {
   SIDECAR_KIND, SIDECAR_VERSION, migrateAssoc, readLegacyAssoc, sidecarKind,
   SqliteEdgePersist, isSqliteStore,
@@ -245,6 +254,15 @@ function buildReadme() {
     "    zero-padded). Text and metadata only — no embedding vectors",
     "    (re-embed on import). Always day-granular.",
     "",
+    "cabinet/",
+    "    The same memories as folders of markdown you can read without",
+    "    this program. Who you are is in cabinet/pinned/ — that is the",
+    "    front, not a drawer. Everything else is under a subject drawer",
+    "    (people/, projects/towerdef/, inbox/, …). Superseded notes are",
+    "    under cabinet/history/. cabinet/INDEX.md lists every drawer,",
+    "    including the empty ones a new install starts with. This tree",
+    "    is for you. memories.jsonl is still the copy that imports.",
+    "",
     "catalog.txt",
     "    Flat scan index (id, status, created, path, bytes, first words).",
     "    Usable without unzipping. Use this when the archive is large;",
@@ -294,6 +312,7 @@ function buildManifest(info) {
     includes: {
       memories_jsonl: "normalize()-shape records, embeddings as JSON arrays; the importable half",
       memories_files: "text + metadata, no embedding vectors; re-embed on import",
+      cabinet: "markdown folders: pinned/, <drawer>/, history/, plus INDEX.md. Not the import path.",
       catalog: "id, status, created, path, bytes, first ~80 chars",
       edges: "Hebbian sidecar (learned associations); processed_ids omitted",
       readme: true,
@@ -597,7 +616,8 @@ const USAGE = [
   "  resonance-memory --export-jsonl [--out <file-or-dir>] [--json] [store.jsonl]",
   "",
   "  --export          write the sovereignty zip bundle (memories.jsonl +",
-  "                    per-memory files + catalog + edges + manifest + README).",
+  "                    per-memory files + cabinet markdown + catalog +",
+  "                    edges + manifest + README).",
   "  --export-jsonl    write the raw memories.jsonl (scripting primitive).",
   "  --name            archive/folder name (default resonance-memories-<local-date>).",
   "                    Also the top-level folder inside the zip (anti-tarbomb).",
@@ -647,6 +667,7 @@ async function exportZipBundle(store, destZip, opts) {
   const zip = new ZipWriter(dest, { mtime: opts.mtime || new Date(exportedAt) });
   const counts = { total: 0, current: 0, superseded: 0, deleted: 0 };
   const catalogRows = [catalogHeader()];
+  const cabinetRecs = [];
   let jsonlBytes = 0;
   let filesBytes = 0;
 
@@ -663,6 +684,11 @@ async function exportZipBundle(store, destZip, opts) {
         const rel = memoryDayPath(rec.created) + "/" + memorySlug(rec.id, rec.text);
         const archivePath = root + "/" + rel;
         zip.addStored(archivePath, human);
+        const filed = normalize(rec);
+        filed.embedding = null;
+        cabinetRecs.push(filed);
+        const cab = cabinetRelPath(filed);
+        if (cab) zip.addStored(root + "/" + cab, cabinetMarkdown(filed));
         catalogRows.push(catalogLine(rec, archivePath, humanBytes));
         counts.total++;
         counts[recordStatus(rec)]++;
@@ -676,6 +702,7 @@ async function exportZipBundle(store, destZip, opts) {
     const deflated = await zip.addDeflatedStream(root + "/memories.jsonl", jsonlAndFiles());
     jsonlBytes = deflated.usize;
 
+    zip.addStored(root + "/cabinet/INDEX.md", cabinetIndexMarkdown(cabinetRecs));
     zip.addStored(root + "/catalog.txt", catalogRows.join(""));
 
     const edges = loadEdgesEnvelope(opts.storePath, store.file, store);

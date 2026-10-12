@@ -169,6 +169,86 @@ test("supersedePatches builds a non-overlapping validity chain", () => {
   assert.strictEqual("embedding_version" in p.new, false);
 });
 
+// ------------------------------------------------------- filing cabinet schema
+section("filing cabinet (schema backfill, no migration step)");
+
+const cabinet = require("./cabinet.js");
+
+test("normalize backfills drawer, pinned, and status, and stays idempotent", () => {
+  const once = normalize({ id: 1, text: "hi", created: "2026-01-01T00:00:00Z" });
+  assert.strictEqual(once.drawer, "");
+  assert.strictEqual(once.pinned, false);
+  assert.strictEqual(once.status, "active");
+  assert.deepStrictEqual(normalize(once), once);
+});
+
+test("normalize keeps a legal drawer and status, and fails open on garbage", () => {
+  const ok = normalize({
+    id: 1, text: "hi", drawer: "Projects/TowerDef", status: "Paused", pinned: 1,
+  });
+  assert.strictEqual(ok.drawer, "projects/towerdef");
+  assert.strictEqual(ok.status, "paused");
+  assert.strictEqual(ok.pinned, true);
+  const bad = normalize({ id: 2, text: "hi", drawer: "../etc", status: "nope", pinned: "false" });
+  assert.strictEqual(bad.drawer, "", "illegal drawer must not be stored");
+  assert.strictEqual(bad.status, "active", "illegal status fails open to active");
+  assert.strictEqual(bad.pinned, false, "the string false is not a pin");
+});
+
+test("asBool does not treat the string false as true", () => {
+  assert.strictEqual(cabinet.asBool("false"), false);
+  assert.strictEqual(cabinet.asBool(false), false);
+  assert.strictEqual(cabinet.asBool("true"), true);
+  assert.strictEqual(cabinet.asBool(1), true);
+  assert.strictEqual(cabinet.asBool("1"), true);
+  assert.strictEqual(cabinet.asBool(0), false);
+});
+
+test("an empty store's cabinet is the default drawers and no dummy rows", () => {
+  const tree = cabinet.buildTree([]);
+  assert.deepStrictEqual(tree.drawers.map((d) => d.path), cabinet.DEFAULT_DRAWERS.slice());
+  assert.strictEqual(tree.pinned.length, 0);
+  assert.strictEqual(tree.unfiled.length, 0);
+  assert.ok(tree.drawers.every((d) => d.memories.length === 0));
+});
+
+test("a pin is listed once, under pinned, not also inside its drawer", () => {
+  const tree = cabinet.buildTree([
+    normalize({ id: 1, text: "who i am", drawer: "preferences", pinned: true, created: "2026-01-01T00:00:00Z" }),
+    normalize({ id: 2, text: "tower", drawer: "projects/towerdef", created: "2026-01-02T00:00:00Z" }),
+  ]);
+  assert.strictEqual(tree.pinned.length, 1);
+  assert.strictEqual(tree.pinned[0].drawer, "preferences");
+  const prefs = tree.drawers.find((d) => d.path === "preferences");
+  assert.strictEqual(prefs.memories.length, 0, "the pin is not duplicated in the drawer");
+  const projects = tree.drawers.find((d) => d.path === "projects");
+  assert.strictEqual(projects.children.length, 1);
+  assert.strictEqual(projects.children[0].path, "projects/towerdef");
+  assert.strictEqual(projects.children[0].memories.length, 1);
+});
+
+test("matchesStatusFilter is a label check, not a rank", () => {
+  const row = { status: "shelved" };
+  assert.strictEqual(cabinet.matchesStatusFilter(row, "all"), true);
+  assert.strictEqual(cabinet.matchesStatusFilter(row, "shelved"), true);
+  assert.strictEqual(cabinet.matchesStatusFilter(row, "active"), false);
+  assert.strictEqual(cabinet.matchesStatusFilter({ status: "nope" }, "active"), true, "illegal status backfills to active");
+});
+
+test("JSONL missing cabinet keys backfill on read and a read does not rewrite the file", () => {
+  const file = tmp("legacy-cabinet.jsonl");
+  const line = JSON.stringify({ id: 1, text: "legacy tea", created: "2020-01-01T00:00:00.000Z" }) + "\n";
+  fs.writeFileSync(file, line);
+  const { JsonlStore } = require("./store.js");
+  const s = new JsonlStore(file);
+  const r = s.get(1);
+  assert.strictEqual(r.text, "legacy tea");
+  assert.strictEqual(r.drawer, "");
+  assert.strictEqual(r.pinned, false);
+  assert.strictEqual(r.status, "active");
+  assert.strictEqual(fs.readFileSync(file, "utf8"), line, "a read must not rewrite an old store");
+});
+
 // ------------------------------------------------------- supersession detection
 section("supersession detection (RM-03)");
 
@@ -822,6 +902,70 @@ if (!sqliteAvailable()) {
     assert.ok(true);
   });
 } else {
+
+test("writable open of a pre-cabinet sqlite file adds columns; read-only open does not rewrite it", () => {
+  const { DatabaseSync } = require("node:sqlite");
+  const dbPath = tmp("old-cabinet.db");
+  const db = new DatabaseSync(dbPath);
+  db.exec(`CREATE TABLE memories (
+    id INTEGER PRIMARY KEY,
+    created TEXT NOT NULL,
+    modified TEXT NOT NULL,
+    text TEXT NOT NULL,
+    embedding BLOB,
+    importance REAL DEFAULT 0,
+    access_count INTEGER DEFAULT 0,
+    last_access TEXT,
+    valid_from TEXT NOT NULL,
+    valid_to TEXT,
+    last_confirmed TEXT,
+    superseded_by INTEGER,
+    supersedes INTEGER,
+    revision INTEGER DEFAULT 1,
+    needs_review INTEGER DEFAULT 0,
+    embedding_version INTEGER DEFAULT 1,
+    source TEXT DEFAULT 'user_stated',
+    is_constraint INTEGER DEFAULT 0,
+    deleted INTEGER DEFAULT 0
+  )`);
+  db.prepare(
+    "INSERT INTO memories (id, created, modified, text, valid_from) VALUES (?,?,?,?,?)"
+  ).run(1, "2020-01-01T00:00:00.000Z", "2020-01-01T00:00:00.000Z", "old tea", "2020-01-01T00:00:00.000Z");
+  db.close();
+  const before = fs.readFileSync(dbPath);
+  const roPath = tmp("old-cabinet-ro.db");
+  fs.copyFileSync(dbPath, roPath);
+  const ro = new SqliteStore(roPath, { readOnly: true });
+  try {
+    const rec = ro.get(1);
+    assert.strictEqual(rec.text, "old tea");
+    assert.strictEqual(rec.drawer, "");
+    assert.strictEqual(rec.pinned, false);
+    assert.strictEqual(rec.status, "active");
+    const cols = ro.db.prepare("PRAGMA table_info(memories)").all().map((c) => c.name);
+    assert.ok(!cols.includes("drawer"), "read-only open must not ALTER");
+    assert.ok(!cols.includes("pinned"));
+    assert.ok(!cols.includes("status"));
+  } finally { ro.close(); }
+  assert.deepStrictEqual(fs.readFileSync(roPath), before, "read-only open left the file bytes alone");
+  assert.ok(!fs.existsSync(roPath + "-wal"), "read-only open must not create a WAL");
+
+  const s = new SqliteStore(dbPath);
+  try {
+    const cols = s.db.prepare("PRAGMA table_info(memories)").all().map((c) => c.name);
+    assert.ok(cols.includes("drawer") && cols.includes("pinned") && cols.includes("status"));
+    const rec = s.get(1);
+    assert.strictEqual(rec.text, "old tea", "ALTER is not a rewrite of the row text");
+    assert.strictEqual(rec.drawer, "");
+    assert.strictEqual(rec.pinned, false);
+    assert.strictEqual(rec.status, "active");
+    const raw = s.db.prepare("SELECT text, drawer, pinned, status FROM memories WHERE id = 1").get();
+    assert.strictEqual(raw.text, "old tea");
+    assert.strictEqual(raw.drawer, "");
+    assert.strictEqual(Number(raw.pinned), 0);
+    assert.strictEqual(raw.status, "active");
+  } finally { s.close(); }
+});
 
 test("resolveStoreBackend defaults to sqlite; jsonl pin stays", () => {
   const prev = process.env.RESONANCE_STORE;
@@ -5187,6 +5331,37 @@ test("system-prompt.md: the copy button hands over only the paste-ready block", 
   assert.ok(src.includes("pickPromptBlock"), "the /api/system-prompt handler extracts the block, not the whole file");
 });
 
+test("filing arguments stay optional on the four verbs (no fifth tool)", () => {
+  const src = fs.readFileSync(path.join(__dirname, "server.js"), "utf8");
+  const toolNames = [...src.matchAll(/\n\s*name:\s*"(save_memory|recall_memory|edit_memory|delete_memory)"/g)]
+    .map((m) => m[1]);
+  assert.deepStrictEqual(toolNames, ["save_memory", "recall_memory", "edit_memory", "delete_memory"]);
+  assert.ok(!/name:\s*"file_memory"/.test(src));
+  assert.ok(!/name:\s*"pin_memory"/.test(src));
+  assert.ok(/drawer:\s*\{\s*type:\s*"string"/.test(src), "save_memory accepts an optional drawer");
+  assert.ok(/required:\s*\["content"\]/.test(src), "content stays the only required save argument");
+  assert.ok(/args\.drawer != null && String\(args\.drawer\)\.trim\(\) !== ""/.test(src),
+    "an omitted or empty drawer is auto-file, not an explicit unfile");
+  assert.ok(/typeof args\.pinned === "boolean"/.test(src), "only a real boolean pin is forwarded");
+});
+
+test("panel page source ships the filing cabinet in the open card", () => {
+  const src = fs.readFileSync(path.join(__dirname, "panel.js"), "utf8");
+  assert.ok(src.includes("Nothing saved yet"));
+  assert.ok(src.includes("Copy a starter prompt"));
+  assert.ok(src.includes("Connected, but nothing saved yet"));
+  assert.ok(src.includes("remember that"));
+  assert.ok(/<div class="sec" id="cabinetSec">/.test(src), "the cabinet is a section, not a closed details");
+  assert.ok(src.includes(">Filing cabinet<"));
+  assert.ok(src.includes('id="cabTree"'));
+  assert.ok(src.includes('id="cabFilter"'));
+  const block = src.slice(src.indexOf("function cabVisible"), src.indexOf("var embedderSel"));
+  assert.ok(block.length > 100, "cabinet client block is in the page");
+  assert.ok(!/innerHTML/.test(block), "cabinet rows are text, not HTML");
+  assert.ok(/textContent/.test(block));
+  assert.ok(src.includes('"/api/cabinet"') || src.includes("'/api/cabinet'"));
+});
+
 test("export is not an MCP tool (four verbs stay four)", () => {
   const src = fs.readFileSync(path.join(__dirname, "server.js"), "utf8");
   assert.ok(/name: "save_memory"/.test(src));
@@ -6020,6 +6195,66 @@ async function asyncTests() {
         assert.ok(!fs.existsSync(jsonl + ".edges.json"), "no sidecar; the .db carried the edges");
       });
     }
+
+    await atest("export zip adds a cabinet markdown tree and keeps the date layout", async () => {
+      const file = tmp("export-cabinet.jsonl");
+      const store = new JsonlStore(file);
+      store.add(normalize({
+        id: 1, text: "I prefer tea", created: "2026-03-05T12:00:00.000Z",
+        embedding: [0.1, 0.2, 0.3], drawer: "preferences", pinned: true, status: "active",
+      }));
+      store.add(normalize({
+        id: 2, text: "tower balance", created: "2026-03-05T12:00:00.000Z",
+        embedding: [0.2, 0.2, 0.2], drawer: "projects/towerdef", pinned: false, status: "active",
+      }));
+      store.add(normalize({
+        id: 3, text: "old coffee", created: "2026-03-05T11:00:00.000Z",
+        embedding: [0.2, 0.1, 0.3], drawer: "preferences", pinned: false, status: "active",
+        superseded_by: 1, valid_to: "2026-03-05T12:00:00.000Z",
+      }));
+      store.add(normalize({
+        id: 4, text: "deleted secret", created: "2026-01-09T00:00:00.000Z",
+        embedding: [0, 0.1, 0], drawer: "tools", deleted: true,
+      }));
+      const outDir = tmp("export-cabinet-out");
+      fs.mkdirSync(outDir, { recursive: true });
+      const result = await exp.runExport({ mode: "zip", name: "cab", outDir, storePath: file });
+      const z = ZipReader.open(result.path);
+      const root = "cab";
+      const index = z.readStored(root + "/cabinet/INDEX.md").toString("utf8");
+      for (const d of ["people", "preferences", "projects", "tools", "reference", "inbox"]) {
+        assert.ok(index.includes("- " + d + " ("), "default drawer listed at count, even if empty: " + d);
+      }
+      assert.ok(z.has(root + "/cabinet/pinned/1-i-prefer-tea.md"), "pins live under pinned/, not their drawer");
+      assert.ok(z.has(root + "/cabinet/projects/towerdef/2-tower-balance.md"));
+      assert.ok(z.has(root + "/cabinet/history/preferences/3-old-coffee.md"));
+      const cabinetNames = z.names().filter((n) => n.includes("/cabinet/"));
+      assert.ok(!cabinetNames.some((n) => /\/4-/.test(n) || n.includes("deleted-secret")),
+        "deleted memories stay out of the markdown tree: " + cabinetNames.join(", "));
+      const md = z.readStored(root + "/cabinet/pinned/1-i-prefer-tea.md").toString("utf8");
+      assert.ok(md.startsWith("---\n"));
+      assert.ok(md.includes('drawer: "preferences"'));
+      assert.ok(md.includes("pinned: true"));
+      assert.ok(md.includes('status: "active"'));
+      assert.ok(md.includes("I prefer tea"));
+      assert.ok(z.has(root + "/memories/2026/03/05/1-i-prefer-tea.json"), "date JSON layout stays");
+      assert.ok(z.has(root + "/memories.jsonl"));
+      const man = JSON.parse(z.readStored(root + "/manifest.json").toString("utf8"));
+      assert.strictEqual(man.schema_version, 1);
+      assert.strictEqual(man.layout, "memories/YYYY/MM/DD");
+      const catalog = z.readStored(root + "/catalog.txt").toString("utf8");
+      const catLines = catalog.trim().split("\n");
+      assert.strictEqual(catLines[0].split("\t")[3], "path");
+      for (const line of catLines.slice(1)) {
+        const cols = line.split("\t");
+        assert.strictEqual(cols.length, 6, "catalog columns stay the date-tree catalog");
+        assert.ok(z.has(cols[3]), "catalog path resolves: " + cols[3]);
+        assert.ok(cols[3].indexOf("/cabinet/") < 0, "catalog still points at the date JSON");
+      }
+      const deletedLine = catLines.find((l) => l.startsWith("4\t"));
+      assert.ok(deletedLine, "deleted row stays in the catalog");
+      assert.ok(z.has(deletedLine.split("\t")[3]));
+    });
   }
 
   section("RM-07 slice 2c — panel export button (route-level, golden-safe)");
@@ -6632,6 +6867,87 @@ async function asyncTests() {
         }
       });
     }
+
+    await atest("GET /api/cabinet on an empty store lists the default drawers", async () => {
+      const panel = await startPanelChild();
+      try {
+        const page = await (await fetch(panel.url + "/")).text();
+        assert.ok(page.includes("Filing cabinet"));
+        assert.ok(page.includes('id="cabTree"'));
+        assert.ok(page.includes("Nothing saved yet"));
+        assert.ok(page.includes("Copy a starter prompt"));
+        assert.ok(page.includes("remember that"));
+        const tree = await (await fetch(panel.url + "/api/cabinet")).json();
+        assert.deepStrictEqual(
+          (tree.drawers || []).map((d) => d.path),
+          ["people", "preferences", "projects", "tools", "reference", "inbox"]
+        );
+        assert.strictEqual((tree.pinned || []).length, 0);
+        assert.ok(!fs.existsSync(panel.store), "reading the cabinet does not create a store");
+      } finally {
+        await stopPanelChild(panel.child);
+      }
+    });
+
+    await atest("POST /api/cabinet pins, moves, and sets status without re-embedding", async () => {
+      const home = tmp("cab-panel-home");
+      fs.mkdirSync(path.join(home, "Desktop"), { recursive: true });
+      const storePath = path.join(home, "resonance-memory.jsonl");
+      const seeded = new JsonlStore(storePath);
+      seeded.add(normalize({
+        id: 42, text: "I prefer tea", created: "2026-03-05T12:00:00.000Z",
+        embedding: [1, 0, 0], embedding_version: 3,
+      }));
+      const panel = await startPanelChild({ home, store: storePath, storeBackend: "jsonl" });
+      try {
+        const token = await readPanelToken(panel.url);
+        const bare = await fetch(panel.url + "/api/cabinet", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: 42, pinned: true }),
+        });
+        assert.strictEqual(bare.status, 403, "cabinet writes need the panel token");
+        const headers = panelPostHeaders(token);
+        const pin = await (await fetch(panel.url + "/api/cabinet", {
+          method: "POST", headers, body: JSON.stringify({ id: 42, pinned: true }),
+        })).json();
+        assert.strictEqual(pin.ok, true, JSON.stringify(pin));
+        assert.strictEqual(pin.record.pinned, true);
+        const moved = await (await fetch(panel.url + "/api/cabinet", {
+          method: "POST", headers, body: JSON.stringify({ id: 42, drawer: "projects/towerdef" }),
+        })).json();
+        assert.strictEqual(moved.ok, true, JSON.stringify(moved));
+        assert.strictEqual(moved.record.drawer, "projects/towerdef");
+        assert.strictEqual(moved.record.pinned, true, "a move does not unpin");
+        const bad = await fetch(panel.url + "/api/cabinet", {
+          method: "POST", headers, body: JSON.stringify({ id: 42, drawer: "not a path!!" }),
+        });
+        const badBody = await bad.json();
+        assert.strictEqual(bad.status, 400);
+        assert.ok(/not usable/.test(badBody.error || ""));
+        const shelved = await (await fetch(panel.url + "/api/cabinet", {
+          method: "POST", headers, body: JSON.stringify({ id: 42, status: "shelved" }),
+        })).json();
+        assert.strictEqual(shelved.ok, true);
+        assert.strictEqual(shelved.record.status, "shelved");
+        const tree = await (await fetch(panel.url + "/api/cabinet")).json();
+        assert.strictEqual(tree.pinned.length, 1);
+        assert.strictEqual(tree.pinned[0].id, 42);
+        assert.strictEqual(tree.pinned[0].status, "shelved");
+        const projects = tree.drawers.find((d) => d.path === "projects");
+        const child = (projects.children || []).find((d) => d.path === "projects/towerdef");
+        assert.ok(child, "the move created the child drawer");
+        assert.strictEqual(child.memories.length, 0, "a pin is not also listed in the drawer");
+        const rec = JSON.parse(fs.readFileSync(storePath, "utf8"));
+        assert.strictEqual(rec.text, "I prefer tea");
+        assert.strictEqual(rec.embedding_version, 3, "filing is not a re-embed");
+        assert.deepStrictEqual(rec.embedding, [1, 0, 0]);
+        assert.strictEqual(rec.drawer, "projects/towerdef");
+        assert.strictEqual(rec.pinned, true);
+        assert.strictEqual(rec.status, "shelved");
+      } finally {
+        await stopPanelChild(panel.child);
+      }
+    });
   }
 
   section("RM-17 import — sovereignty return trip");
@@ -9864,6 +10180,319 @@ async function asyncTests() {
     assert.strictEqual(semanticValid(after, recA.embedding_version, recB.embedding_version), false,
       "self-heal is the version mismatch on next read, not an invalidation event");
     assert.ok(fs.existsSync(edgesPath), "Writes? yes (reactivation is the one edit write)");
+  });
+
+  // ---------------------------------------------- filing cabinet behavior
+  section("filing cabinet (assignment, pin section, status — rank stays cosine)");
+
+  function rankedTexts(out) {
+    return String(out).split("\n")
+      .filter((l) => /^\d+\. \[id /.test(l))
+      .map((l) => l.replace(/^\d+\. \[id [^\]]+\] /, ""));
+  }
+  function unit2(cos) {
+    const c = Number(cos);
+    return [c, Math.sqrt(Math.max(0, 1 - c * c))];
+  }
+  function cabinetCore(name, table) {
+    const { JsonlStore } = require("./store.js");
+    const store = new JsonlStore(tmp(name));
+    const embed = async (texts) => texts.map((t) => {
+      const v = table && Object.prototype.hasOwnProperty.call(table, t) ? table[t] : [0, 1];
+      return v.slice();
+    });
+    return { store, core: createCore({ store, embed, warmEnabled: () => false }) };
+  }
+
+  await atest("pinned memories are their own section and do not take a ranked slot", async () => {
+    const { store, core } = cabinetCore("cab-pin.jsonl", {
+      "q": [1, 0],
+      "who i am": [1, 0],
+      "alpha fact": unit2(0.8),
+      "beta fact": unit2(0.3),
+    });
+    await core.save("who i am", { pinned: true, drawer: "preferences" });
+    await core.save("alpha fact", { drawer: "projects" });
+    await core.save("beta fact", { drawer: "tools" });
+    const out = await core.recall("q", 1);
+    assert.ok(out.startsWith("Pinned (always in view, not ranked):\n- [id "), out);
+    assert.ok(out.includes("who i am"));
+    assert.ok(out.indexOf("Pinned") < out.indexOf("\n\n1. "), "pin section is prepended, not mixed in");
+    assert.deepStrictEqual(rankedTexts(out), ["alpha fact"], "k=1 is the next cosine hit, not the pin");
+    assert.ok(!rankedTexts(out).includes("who i am"));
+    const pin = store.current().find((r) => r.text === "who i am");
+    const alpha = store.current().find((r) => r.text === "alpha fact");
+    assert.strictEqual(pin.access_count, 0, "the pin section does not access-bump");
+    assert.ok(alpha.access_count >= 1, "the ranked hit still bumps");
+  });
+
+  await atest("a store with no pins keeps the old recall shape", async () => {
+    const { core } = cabinetCore("cab-nopin.jsonl", {
+      "q": [1, 0],
+      "alpha fact": unit2(0.8),
+      "beta fact": unit2(0.3),
+    });
+    await core.save("alpha fact", { drawer: "inbox" });
+    await core.save("beta fact", { drawer: "projects" });
+    const out = await core.recall("q", 5);
+    assert.ok(!out.includes("Pinned"), out);
+    assert.deepStrictEqual(rankedTexts(out), ["alpha fact", "beta fact"]);
+    assert.strictEqual(out.split("\n").length, 2, "no extra cabinet lines");
+  });
+
+  await atest("drawer and status label or filter; they do not reorder cosine", async () => {
+    const { core } = cabinetCore("cab-order.jsonl", {
+      "q": [1, 0],
+      "high match": unit2(0.8),
+      "low match": unit2(0.2),
+      "paused fact": unit2(0.85),
+      "active fact": unit2(0.25),
+    });
+    await core.save("low match", { drawer: "projects" });
+    await core.save("high match", { drawer: "inbox" });
+    const order = await core.recall("q", 5);
+    assert.deepStrictEqual(rankedTexts(order), ["high match", "low match"]);
+    assert.ok(!/inbox|projects/.test(rankedTexts(order).join(" ")), "ranked lines are not labeled with a drawer");
+
+    const { core: c2 } = cabinetCore("cab-status.jsonl", {
+      "q": [1, 0],
+      "paused fact": unit2(0.85),
+      "active fact": unit2(0.25),
+      "shelved fact": unit2(0.95),
+      "plain fact": unit2(0.4),
+    });
+    await c2.save("active fact", { status: "active", drawer: "tools" });
+    await c2.save("paused fact", { status: "paused", drawer: "projects" });
+    const both = await c2.recall("q", 5);
+    assert.deepStrictEqual(rankedTexts(both), ["paused fact", "active fact"], "paused stays eligible and does not sink");
+    const nope = await c2.recall("q", 5, { status: "nope" });
+    assert.deepStrictEqual(rankedTexts(nope), ["paused fact", "active fact"], "an illegal status is not an active-only filter");
+
+    const { core: c3 } = cabinetCore("cab-shelved.jsonl", {
+      "q": [1, 0],
+      "shelved fact": unit2(0.95),
+      "plain fact": unit2(0.4),
+    });
+    await c3.save("shelved fact", { status: "shelved" });
+    await c3.save("plain fact");
+    assert.deepStrictEqual(rankedTexts(await c3.recall("q", 5)), ["plain fact"]);
+    assert.deepStrictEqual(rankedTexts(await c3.recall("q", 5, { includeShelved: true })), ["shelved fact", "plain fact"]);
+    assert.deepStrictEqual(rankedTexts(await c3.recall("q", 5, { status: "shelved" })), ["shelved fact"]);
+  });
+
+  await atest("a shelved pin leaves the pin section until recall asks", async () => {
+    const { core } = cabinetCore("cab-shelved-pin.jsonl", {
+      "q": [1, 0],
+      "who i am": [1, 0],
+    });
+    await core.save("who i am", { pinned: true, status: "shelved" });
+    const hidden = await core.recall("q", 5);
+    assert.ok(!hidden.includes("Pinned"), hidden);
+    assert.ok(/Shelved memories are kept/.test(hidden), hidden);
+    const shown = await core.recall("q", 5, { includeShelved: true });
+    assert.ok(shown.startsWith("Pinned (always in view, not ranked):"), shown);
+    assert.deepStrictEqual(rankedTexts(shown), [], "a pin still does not enter the numbered list");
+  });
+
+  await atest("save files an explicit drawer, else entity, else nearest, else inbox", async () => {
+    const above = unit2(0.75);
+    // Orthogonal to the donor. unit2(0.5) still sits ~0.95 from unit2(0.75)
+    // and would merge into the neighbor instead of proving the inbox floor.
+    const below = [0, 1];
+    assert.ok(coreCosine([1, 0], above) >= cabinet.ASSIGN_MIN_COS);
+    assert.ok(coreCosine([1, 0], above) < 0.88, "nearest must not land in the merge band");
+    assert.ok(coreCosine([1, 0], below) < cabinet.ASSIGN_MIN_COS);
+    assert.ok(coreCosine(above, below) < 0.88, "the below-threshold note must not merge into the neighbor");
+
+    const explicit = cabinetCore("cab-explicit.jsonl", {
+      "tower defense balance notes": [1, 0],
+      "tower defense enemy pathing": above,
+    });
+    await explicit.core.save("tower defense balance notes", { drawer: "projects/towerdef" });
+    await explicit.core.save("tower defense enemy pathing", { drawer: "tools" });
+    const filed = explicit.store.current().find((r) => r.text === "tower defense enemy pathing");
+    assert.strictEqual(filed.drawer, "tools", "an explicit drawer beats nearest");
+    assert.strictEqual(filed.pinned, false);
+
+    const unfile = cabinetCore("cab-unfile.jsonl", {
+      "tower defense balance notes": [1, 0],
+      "tower defense enemy pathing": above,
+    });
+    await unfile.core.save("tower defense balance notes", { drawer: "projects/towerdef" });
+    await unfile.core.save("tower defense enemy pathing", { drawer: "" });
+    assert.strictEqual(
+      unfile.store.current().find((r) => r.text === "tower defense enemy pathing").drawer,
+      "",
+      "an explicit empty drawer stays unfiled"
+    );
+
+    const illegal = cabinetCore("cab-illegal.jsonl", {
+      "a loose note about chalk": [1, 0],
+    });
+    await illegal.core.save("a loose note about chalk", { drawer: "History" });
+    const loose = illegal.store.current()[0];
+    assert.strictEqual(loose.drawer, "inbox", "an illegal drawer falls through; it is not stored");
+    assert.notStrictEqual(loose.drawer, "history");
+
+    const nearest = cabinetCore("cab-nearest.jsonl", {
+      "tower defense balance notes": [1, 0],
+      "tower defense enemy pathing": above,
+      "the weather on tuesday": below,
+    });
+    await nearest.core.save("tower defense balance notes", { drawer: "projects/towerdef" });
+    await nearest.core.save("tower defense enemy pathing");
+    await nearest.core.save("the weather on tuesday");
+    assert.strictEqual(
+      nearest.store.current().find((r) => r.text === "tower defense enemy pathing").drawer,
+      "projects/towerdef"
+    );
+    assert.strictEqual(
+      nearest.store.current().find((r) => r.text === "the weather on tuesday").drawer,
+      "inbox"
+    );
+
+    const people = cabinetCore("cab-people.jsonl", {
+      "My sister Naima likes tea": [1, 0, 0],
+    });
+    await people.core.save("My sister Naima likes tea");
+    const naima = people.store.current()[0];
+    assert.strictEqual(naima.drawer, "people");
+    assert.strictEqual(naima.pinned, false, "auto-assign never pins");
+
+    const vote = cabinetCore("cab-vote.jsonl", {
+      "My sister Naima is a chemist": [1, 0, 0],
+      "Call my sister Naima on Sunday": [0, 1, 0],
+    });
+    await vote.core.save("My sister Naima is a chemist", { drawer: "projects/lab" });
+    await vote.core.save("Call my sister Naima on Sunday");
+    assert.strictEqual(
+      vote.store.current().find((r) => r.text === "Call my sister Naima on Sunday").drawer,
+      "projects/lab",
+      "an unambiguous entity vote files with the donor"
+    );
+
+    const amb = cabinetCore("cab-amb.jsonl", {
+      "My sister Naima is a chemist": [1, 0, 0],
+      "My sister Naima keeps the spare key": [0, 1, 0],
+      "My sister Naima sent a letter": [0, 0, 1],
+    });
+    await amb.core.save("My sister Naima is a chemist", { drawer: "projects" });
+    await amb.core.save("My sister Naima keeps the spare key", { drawer: "tools" });
+    await amb.core.save("My sister Naima sent a letter");
+    assert.strictEqual(
+      amb.store.current().find((r) => r.text === "My sister Naima sent a letter").drawer,
+      "inbox",
+      "a split entity vote does not force people"
+    );
+  });
+
+  await atest("corrections keep filing; a restatement and an unrelated save do not move a pin", async () => {
+    const sup = cabinetCore("cab-sup.jsonl", {
+      "I work at Acme": [1, 0],
+      "I work at Globex": [0, 1],
+      "I work at Initech": [0, 1],
+    });
+    await sup.core.save("I work at Acme", { drawer: "projects", pinned: true, status: "shelved" });
+    await sup.core.save("I work at Globex");
+    const globex = sup.store.current()[0];
+    assert.strictEqual(globex.text, "I work at Globex");
+    assert.strictEqual(globex.drawer, "projects");
+    assert.strictEqual(globex.pinned, true);
+    assert.strictEqual(globex.status, "shelved");
+
+    const paused = cabinetCore("cab-paused-carry.jsonl", {
+      "I work at Acme": [1, 0],
+      "I work at Globex": [0, 1],
+    });
+    await paused.core.save("I work at Acme", { drawer: "projects", status: "paused" });
+    await paused.core.save("I work at Globex");
+    const next = paused.store.current()[0];
+    assert.strictEqual(next.text, "I work at Globex");
+    assert.strictEqual(next.drawer, "projects");
+    assert.strictEqual(next.status, "active", "paused does not carry onto the new row");
+
+    const re = cabinetCore("cab-restate.jsonl", {
+      "I prefer tea over coffee": [1, 0],
+    });
+    await re.core.save("I prefer tea over coffee", { drawer: "preferences", pinned: true });
+    const again = await re.core.save("I prefer tea over coffee");
+    assert.ok(/Already remembered/.test(again), again);
+    assert.strictEqual(re.store.current()[0].drawer, "preferences");
+    assert.strictEqual(re.store.current()[0].pinned, true);
+    const refused = await re.core.save("I prefer tea over coffee", { drawer: "!!!" });
+    assert.ok(/not usable/.test(refused), refused);
+    assert.strictEqual(re.store.current()[0].drawer, "preferences", "a bad drawer does not clear the row");
+
+    const pin = cabinetCore("cab-pin-still.jsonl", {
+      "who i am": [1, 0],
+      "a note about sourdough starter feeding": [0, 1],
+    });
+    await pin.core.save("who i am", { pinned: true, drawer: "preferences" });
+    const id = pin.store.current()[0].id;
+    pin.store.update(id, { modified: "2001-01-01T00:00:00.000Z" });
+    await pin.core.save("a note about sourdough starter feeding");
+    const still = pin.store.get(id);
+    assert.strictEqual(still.drawer, "preferences");
+    assert.strictEqual(still.pinned, true);
+    assert.strictEqual(still.modified, "2001-01-01T00:00:00.000Z");
+  });
+
+  await atest("a near-duplicate keeps filing only when the new wording wins", async () => {
+    const hi = unit2(0.9);
+    assert.ok(coreCosine([1, 0], hi) >= 0.88 && coreCosine([1, 0], hi) < 0.95);
+    const incoming = cabinetCore("cab-merge-in.jsonl", {
+      "Tea notes": [1, 0],
+      "Tea notes about the afternoon kettle": hi,
+    });
+    await incoming.core.save("Tea notes", { drawer: "tools", pinned: true, status: "shelved" });
+    const msg = await incoming.core.save("Tea notes about the afternoon kettle");
+    assert.ok(/merged a near-duplicate/.test(msg), msg);
+    const cur = incoming.store.current();
+    assert.strictEqual(cur.length, 1);
+    assert.strictEqual(cur[0].text, "Tea notes about the afternoon kettle");
+    assert.strictEqual(cur[0].drawer, "tools");
+    assert.strictEqual(cur[0].pinned, true);
+    assert.strictEqual(cur[0].status, "shelved");
+
+    const keep = cabinetCore("cab-merge-keep.jsonl", {
+      "Tea notes about the afternoon kettle and the blue mug": [1, 0],
+      "Tea notes": hi,
+    });
+    await keep.core.save("Tea notes about the afternoon kettle and the blue mug", {
+      drawer: "reference", pinned: true, status: "done",
+    });
+    const keptId = keep.store.current()[0].id;
+    await keep.core.save("Tea notes");
+    assert.strictEqual(keep.store.current().length, 1, "the shorter wording was merged, not appended");
+    const kept = keep.store.get(keptId);
+    assert.strictEqual(kept.valid_to, null);
+    assert.strictEqual(kept.text, "Tea notes about the afternoon kettle and the blue mug");
+    assert.strictEqual(kept.drawer, "reference");
+    assert.strictEqual(kept.pinned, true);
+    assert.strictEqual(kept.status, "done", "existing-wins does not touch cabinet fields");
+  });
+
+  await atest("a metadata edit files without re-embedding, and a bad drawer is refused", async () => {
+    const { store, core } = cabinetCore("cab-edit.jsonl", {
+      "alpha fact": [0.2, 0.3, 0.4],
+    });
+    await core.save("alpha fact");
+    const before = store.current()[0];
+    const emb = before.embedding.slice();
+    const ver = before.embedding_version;
+    const filed = await core.edit(before.id, "", { drawer: "tools", status: "paused" });
+    assert.strictEqual(filed, "Filed memory " + before.id + ".");
+    const after = store.get(before.id);
+    assert.strictEqual(after.text, "alpha fact");
+    assert.strictEqual(after.drawer, "tools");
+    assert.strictEqual(after.status, "paused");
+    assert.strictEqual(after.embedding_version, ver);
+    assert.deepStrictEqual(after.embedding, emb);
+    const bad = await core.edit(before.id, "", { drawer: "not a path!!" });
+    assert.ok(/not usable/.test(bad), bad);
+    assert.strictEqual(store.get(before.id).drawer, "tools");
+    const empty = await core.edit(before.id, "  ");
+    assert.strictEqual(empty, "Provide the new `content`.");
   });
 
   // ---------------------------------------------- RM-11 CI smoke (live --mcp)

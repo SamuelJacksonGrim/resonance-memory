@@ -24,6 +24,10 @@
  *   edit_memory({ id, content })    -> replace text, regenerate embedding
  *   delete_memory({ id })           -> soft delete (deleted=true)
  *
+ * Optional filing arguments (drawer, pinned, status) sit on those same
+ * four verbs. They label a row. They do not add a tool, and they do not
+ * rank. The model still never sees embeddings, importance, or timestamps.
+ *
  * The graph/store is the SUBSTRATE, never the interface. The model never sees
  * embeddings, importance, timestamps, or any storage internal - only the four verbs
  * and an opaque `id` it copies from a recall listing.
@@ -304,32 +308,43 @@ async function bootStore() {
 const TOOLS = [
   {
     name: "save_memory",
-    description: "Store something worth remembering in future conversations. Call this PROACTIVELY, without being asked, whenever the user tells you something durable: a preference, a decision and its reason, a correction, a personal fact or relationship, a constraint, or a commitment. Do NOT save passing small talk, one-off details that won't matter next time, or passwords/secrets. Prefer editing an existing memory over saving a near-duplicate. Pass the full statement as `content`. Example: save_memory({\"content\":\"Samuel prefers I act and report rather than ask permission.\"})",
+    description: "Store something worth remembering in future conversations. Call this PROACTIVELY, without being asked, whenever the user tells you something durable: a preference, a decision and its reason, a correction, a personal fact or relationship, a constraint, or a commitment. Do NOT save passing small talk, one-off details that won't matter next time, or passwords/secrets. Prefer editing an existing memory over saving a near-duplicate. Pass the full statement as `content`. Optional `drawer` is a subject path (people, preferences, projects/name, tools, reference); omit it and Resonance files the memory itself (nearest existing drawer, or inbox). Optional `pinned: true` ONLY for who the user is and how they want to be treated — those come back on every recall, outside the ranking. Do not ask permission to file. Example: save_memory({\"content\":\"Samuel prefers I act and report rather than ask permission.\",\"pinned\":true})",
     inputSchema: {
       type: "object",
-      properties: { content: { type: "string", description: "The text to remember." } },
+      properties: {
+        content: { type: "string", description: "The text to remember." },
+        drawer: { type: "string", description: "Optional subject path, such as people, preferences, projects/towerdef, tools, or reference. Omit it to let Resonance file the memory. Do not invent a new drawer per memory." },
+        pinned: { type: "boolean", description: "Optional. True only for who the user is and how they want to be treated. Omit otherwise." },
+      },
       required: ["content"],
     },
   },
   {
     name: "recall_memory",
-    description: "Check what you already know before you answer. Call this at the START of a conversation, and any time the user refers to earlier context, their preferences, past decisions, or anything you may have been told before — including cues like 'remember', 'as I said', or 'my ...'. When unsure whether you know something relevant, recall first: it is read-only and cheap, and the memories are the user's own. Returns the most relevant memories, each prefixed with an `[id N]` you can pass to edit_memory or delete_memory. Example: recall_memory({\"query\":\"how does Samuel want me to handle permission\"})",
+    description: "Check what you already know before you answer. Call this at the START of a conversation, and any time the user refers to earlier context, their preferences, past decisions, or anything you may have been told before — including cues like 'remember', 'as I said', or 'my ...'. When unsure whether you know something relevant, recall first: it is read-only and cheap, and the memories are the user's own. Returns pinned memories first, in their own section (not ranked), then the most relevant memories, each prefixed with an `[id N]` you can pass to edit_memory or delete_memory. Shelved memories stay out of the ranked list unless you pass include_shelved or status. Example: recall_memory({\"query\":\"how does Samuel want me to handle permission\"})",
     inputSchema: {
       type: "object",
-      properties: { query: { type: "string", description: "What you are trying to remember." } },
+      properties: {
+        query: { type: "string", description: "What you are trying to remember." },
+        status: { type: "string", enum: ["active", "paused", "shelved", "done"], description: "Optional. Rank only memories with this filing status. Omit for the normal list." },
+        include_shelved: { type: "boolean", description: "Optional. Include shelved memories in the ranked list. Omit unless the user asked for something they shelved." },
+      },
       required: ["query"],
     },
   },
   {
     name: "edit_memory",
-    description: "Update a memory when a fact changes or the user corrects something — prefer this over saving a near-duplicate. Recall first to get the `id`, then pass `id` and the new `content`. Example: edit_memory({\"id\":\"1737400000000\",\"content\":\"corrected fact\"})",
+    description: "Update a memory when a fact changes or the user corrects something — prefer this over saving a near-duplicate. Recall first to get the `id`, then pass `id` and the new `content`. You may also set `drawer`, `pinned`, or `status` (active, paused, shelved, done), with or without new content. Filing is not a request for permission. Do not unpin or rewrite a pinned memory unless the user is changing that fact. Example: edit_memory({\"id\":\"1737400000000\",\"content\":\"corrected fact\"})",
     inputSchema: {
       type: "object",
       properties: {
         id: { type: ["string", "number"], description: "The id shown as [id N] in a recall listing." },
-        content: { type: "string", description: "The new text to store." },
+        content: { type: "string", description: "The new text. Omit only when you are changing drawer, pinned, or status and the words stay the same." },
+        drawer: { type: "string", description: "Optional subject path. Omit to leave the drawer as it is." },
+        pinned: { type: "boolean", description: "Optional. Set true to pin, false to unpin. Omit to leave it." },
+        status: { type: "string", enum: ["active", "paused", "shelved", "done"], description: "Optional filing status. shelved drops the memory from ordinary recall without deleting it." },
       },
-      required: ["id", "content"],
+      required: ["id"],
     },
   },
   {
@@ -349,6 +364,10 @@ async function callTool(name, args, requestId) {
   // into every verb; EdgeStore only *uses* it on mutating ops (save-time
   // bind, reinforceRecall). Missing/null id → no dedup (eval, panel, tests).
   const opts = { requestId };
+  if (args.drawer != null && String(args.drawer).trim() !== "") opts.drawer = args.drawer;
+  if (typeof args.pinned === "boolean") opts.pinned = args.pinned;
+  if (args.status != null && String(args.status).trim() !== "") opts.status = args.status;
+  if (typeof args.include_shelved === "boolean") opts.includeShelved = args.include_shelved;
   if (name === "save_memory") return await core.save(args.content, opts);
   if (name === "recall_memory") return await core.recall(args.query, 5, opts);
   if (name === "edit_memory") return await core.edit(args.id, args.content, opts);

@@ -59,6 +59,7 @@ const COLS = [
   "valid_from", "valid_to", "last_confirmed",
   "superseded_by", "supersedes", "revision", "needs_review",
   "embedding_version", "source", "is_constraint", "deleted",
+  "drawer", "pinned", "status",
 ];
 
 function loadDatabaseSync() {
@@ -129,6 +130,11 @@ function rowToRecord(row) {
     source: row.source,
     is_constraint: !!row.is_constraint,
     deleted: !!row.deleted,
+    // Absent on a read-only open of a pre-cabinet file (no ALTER).
+    // normalize() backfills; a writable open adds the columns first.
+    drawer: row.drawer,
+    pinned: row.pinned,
+    status: row.status,
   });
   rec.embedding = emb;
   return rec;
@@ -160,9 +166,20 @@ class SqliteStore {
     }
     this.db.exec("PRAGMA busy_timeout = 5000");
     if (!this.readOnly) this._initSchema();
+    // Read-only export of a pre-cabinet file must not ALTER. SELECT *
+    // still returns the row; normalize() backfills drawer/pinned/status.
+    // Naming those columns in INSERT/UPDATE makes prepare() throw when
+    // they are absent, which would refuse to open the file at all.
+    const haveCols = new Set(
+      this.db.prepare("PRAGMA table_info(memories)").all().map((c) => c.name)
+    );
+    this._hasCabinetCols = haveCols.has("drawer") && haveCols.has("pinned") && haveCols.has("status");
+    const insertCols = this._hasCabinetCols
+      ? COLS
+      : COLS.filter((c) => c !== "drawer" && c !== "pinned" && c !== "status");
     this._insert = this.db.prepare(
-      "INSERT INTO memories (" + COLS.join(",") + ") VALUES (" +
-      COLS.map(() => "?").join(",") + ")"
+      "INSERT INTO memories (" + insertCols.join(",") + ") VALUES (" +
+      insertCols.map(() => "?").join(",") + ")"
     );
     this._get = this.db.prepare("SELECT * FROM memories WHERE id = ?");
     this._all = this.db.prepare("SELECT * FROM memories");
@@ -175,12 +192,13 @@ class SqliteStore {
       "SELECT 1 AS x FROM memories WHERE deleted = 1 LIMIT 1"
     );
     this._count = this.db.prepare("SELECT COUNT(*) AS n FROM memories");
+    const replaceTail = this._hasCabinetCols ? ", drawer=?, pinned=?, status=?" : "";
     this._replace = this.db.prepare(
       "UPDATE memories SET created=?, modified=?, text=?, embedding=?, " +
       "importance=?, access_count=?, last_access=?, valid_from=?, valid_to=?, " +
       "last_confirmed=?, superseded_by=?, supersedes=?, revision=?, " +
-      "needs_review=?, embedding_version=?, source=?, is_constraint=?, deleted=? " +
-      "WHERE id=?"
+      "needs_review=?, embedding_version=?, source=?, is_constraint=?, deleted=?" +
+      replaceTail + " WHERE id=?"
     );
     this._bump = this.db.prepare(
       // Bounded retention UPDATE (I5). importance tracks access_count the
@@ -217,11 +235,31 @@ class SqliteStore {
         embedding_version INTEGER DEFAULT 1,
         source            TEXT DEFAULT 'user_stated',
         is_constraint     INTEGER DEFAULT 0,
-        deleted           INTEGER DEFAULT 0
+        deleted           INTEGER DEFAULT 0,
+        drawer            TEXT DEFAULT '',
+        pinned            INTEGER DEFAULT 0,
+        status            TEXT DEFAULT 'active'
       );
       CREATE INDEX IF NOT EXISTS idx_current
         ON memories(deleted, valid_to);
     `);
+    // CREATE TABLE IF NOT EXISTS does not add columns to a database
+    // written before the cabinet. ALTER ADD COLUMN with a constant
+    // default is a schema change, not a row rewrite — the same "no
+    // migration step" property normalize() gives JSONL. Export opens
+    // read-only and never reaches this; a missing column backfills
+    // in rowToRecord instead of mutating the file.
+    const have = new Set(
+      this.db.prepare("PRAGMA table_info(memories)").all().map((c) => c.name)
+    );
+    const add = [
+      ["drawer", "TEXT DEFAULT ''"],
+      ["pinned", "INTEGER DEFAULT 0"],
+      ["status", "TEXT DEFAULT 'active'"],
+    ];
+    for (const [name, decl] of add) {
+      if (!have.has(name)) this.db.exec("ALTER TABLE memories ADD COLUMN " + name + " " + decl);
+    }
   }
 
   _bind(rec) {
@@ -231,7 +269,7 @@ class SqliteStore {
     // normalize(); the vector's storage form is ours.
     const rawEmb = rec && rec.embedding;
     const r = normalize(rec);
-    return [
+    const vals = [
       coerceId(r.id), r.created, r.modified, r.text, embeddingToBlob(rawEmb || r.embedding),
       r.importance, r.access_count, r.last_access,
       r.valid_from, r.valid_to, r.last_confirmed,
@@ -240,13 +278,15 @@ class SqliteStore {
       r.revision, r.needs_review ? 1 : 0,
       r.embedding_version, r.source, r.is_constraint ? 1 : 0, r.deleted ? 1 : 0,
     ];
+    if (this._hasCabinetCols) vals.push(r.drawer || "", r.pinned ? 1 : 0, r.status || "active");
+    return vals;
   }
 
   _replaceRow(rec) {
     const rawEmb = rec && rec.embedding;
     const r = normalize(Object.assign({}, rec, { embedding: null }));
     r.embedding = rawEmb;
-    this._replace.run(
+    const vals = [
       r.created, r.modified, r.text, embeddingToBlob(rawEmb),
       r.importance, r.access_count, r.last_access,
       r.valid_from, r.valid_to, r.last_confirmed,
@@ -254,8 +294,11 @@ class SqliteStore {
       r.supersedes == null ? null : coerceId(r.supersedes),
       r.revision,
       r.needs_review ? 1 : 0, r.embedding_version, r.source,
-      r.is_constraint ? 1 : 0, r.deleted ? 1 : 0, coerceId(r.id)
-    );
+      r.is_constraint ? 1 : 0, r.deleted ? 1 : 0,
+    ];
+    if (this._hasCabinetCols) vals.push(r.drawer || "", r.pinned ? 1 : 0, r.status || "active");
+    vals.push(coerceId(r.id));
+    this._replace.run(...vals);
   }
 
   _txn(fn) {

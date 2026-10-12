@@ -54,6 +54,7 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+const { normalizeDrawer, normalizeStatus, asBool } = require("./cabinet.js");
 
 // --------------------------------------------------------------- durable write
 /*
@@ -113,6 +114,11 @@ function appendLineDurable(file, line) {
  *
  * A superseded memory is never deleted. valid_to is set to the successor's
  * valid_from, producing a non-overlapping validity chain you can walk backwards.
+ *
+ * Filing (cabinet.js) is metadata, not rank. Missing values backfill here
+ * so an old store loads with no migration step: drawer "", pinned false,
+ * status "active". An illegal drawer or status fails open (unfiled /
+ * active) — a bad value must not hide the row.
  */
 function normalize(r) {
   const created = r.created || r.ts || new Date().toISOString();
@@ -158,6 +164,12 @@ function normalize(r) {
     is_constraint: typeof r.is_constraint === "boolean" ? r.is_constraint : detectConstraint(r.text),
 
     deleted: !!r.deleted,
+
+    // Filing cabinet. Labels and eligibility only — recall still sorts the
+    // eligible pool by cosine (I2). See cabinet.js for what each value means.
+    drawer: normalizeDrawer(r.drawer),
+    pinned: asBool(r.pinned),
+    status: normalizeStatus(r.status),
   };
 }
 
