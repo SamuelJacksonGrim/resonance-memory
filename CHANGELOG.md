@@ -8,6 +8,21 @@ stable; sophistication grows in the substrate, not in the API.
 
 ## [Unreleased]
 
+## [0.3.2](https://github.com/SamuelJacksonGrim/resonance-memory/releases/tag/v0.3.2) - 2026-10-12
+
+### Added
+- **It installs itself.** On first run from anywhere that isn't an installed home (e.g. Downloads), the panel asks
+  where Resonance Memory should live (default: `%LOCALAPPDATA%\Programs\Resonance Memory\` on Windows, no admin;
+  `~/Applications/Resonance Memory/` on macOS; `~/.local/bin/` on Linux), copies itself there, and offers a Desktop
+  shortcut (a `.lnk` / symlink / `.desktop` launcher, not a second copy). Connect, the memory hooks and any existing
+  configs pointing at an old location are repointed at the installed copy, so deleting the download breaks nothing.
+  The panel warns plainly that the installed file has to stay where it is; the shortcut can go anywhere.
+- **Updates in place.** A newer download notices an older install and replaces that same file, so every path stays
+  the same. On Windows a running copy (held open by an AI app as the MCP server) is renamed aside and replaced; the
+  running app picks up the new version on its next restart.
+- CLI: `--install-app [--dir X] [--no-shortcut]` and `--uninstall-app` (removes the program and the shortcut, never
+  memories). Running from source never installs.
+
 ## [0.3.1](https://github.com/SamuelJacksonGrim/resonance-memory/releases/tag/v0.3.1) - 2026-10-12
 
 ### Added
