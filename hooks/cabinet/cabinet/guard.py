@@ -8,7 +8,7 @@
 # implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public
 # License for more details. You should have received a copy of the GNU Affero General Public License along with
 # this program. If not, see <https://www.gnu.org/licenses/>.
-"""Pin guard. Restrains automation only.
+"""Surface guard. Restrains automation only.
 
 A pinned basename cannot be moved, renamed, deleted, or rewritten by a script.
 Nothing here hooks Claude's Edit tool or asks for a sign-off. Conversation

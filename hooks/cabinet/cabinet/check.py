@@ -15,7 +15,7 @@
 - every [[link]] in a live file or a generated index resolves
   (a memory, its history file, a path under the memory root, or a skill)
 - every History footer points at a real history file
-- every pin is present at the top level
+- every surface memory is present at the top level
 - the live embedding set contains no generated file
 - a scratch cache, if given, lists only live basenames
 """
@@ -202,15 +202,15 @@ def run_check(
         for name in sorted(pins):
             top = memory / f"{name}.md"
             if not top.is_file():
-                result.failures.append(f"pin missing at top level: {name}.md")
+                result.failures.append(f"surface memory missing from the top level: {name}.md")
             elif name in live_by and any(rel_of(memory, path) != f"{name}.md" for path in live_by[name]):
-                result.failures.append(f"pin {name} is not only at the top level")
+                result.failures.append(f"surface memory {name} is not only at the top level")
         for name in sorted(mapped):
             if name not in live_by:
                 result.failures.append(f"mapped name is not a live memory: {name}")
         for name in sorted(set(live_by) - mapped):
             result.failures.append(f"live memory is not in the mapping: {name}")
-        result.info.append(f"pins: {len(pins)}")
+        result.info.append(f"surface: {len(pins)}")
 
     for path in live:
         fields = parse_frontmatter(read_text(path))

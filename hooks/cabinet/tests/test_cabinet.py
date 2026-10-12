@@ -317,7 +317,7 @@ History: `history/<name>.md` (template).
         self.assertIn("unresolved [[missing-memory]]", text)
         self.assertIn("missing history/missing.md", text)
         self.assertIn("duplicate live basename only", text)
-        self.assertIn("pin only is not only at the top level", text)
+        self.assertIn("surface memory only is not only at the top level", text)
 
     def test_a_skill_basename_resolves_and_a_missing_one_does_not(self):
         path = self.root / "loose.md"

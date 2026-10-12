@@ -23,7 +23,7 @@ from cabinet.guard import PinGuard
 
 
 def move_file(src: Path, dest: Path, guard: PinGuard) -> str:
-    """Rename src to dest. Refuses pins and overwrites. Returns the sha256."""
+    """Rename src to dest. Refuses surface files and overwrites. Returns the sha256."""
     guard.require_path(src, "move")
     if dest.exists():
         raise CabinetError(f"refusing to overwrite {dest}")
@@ -39,7 +39,7 @@ def move_file(src: Path, dest: Path, guard: PinGuard) -> str:
 
 
 def rename_file(src: Path, dest: Path, guard: PinGuard) -> str:
-    """A new basename is a rename of the pin, which is refused, and a move."""
+    """A new basename is a rename of a surface file, which is refused, and a move."""
     guard.require_path(src, "rename")
     if dest.stem != src.stem:
         guard.require(dest.stem, "rename")

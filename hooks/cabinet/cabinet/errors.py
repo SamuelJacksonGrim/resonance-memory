@@ -16,14 +16,14 @@ class CabinetError(Exception):
 
 
 class PinError(CabinetError):
-    """Automation tried to move, rename, delete, or rewrite a pinned file."""
+    """Automation tried to move, rename, delete, or rewrite a surface file."""
 
     def __init__(self, name: str, op: str):
         self.name = name
         self.op = op
         super().__init__(
-            f"pin guard: refusing to {op} '{name}'. "
-            "Pins restrain scripts only; they are not a sign-off gate on Claude's own edits."
+            f"surface guard: refusing to {op} '{name}'. "
+            "The surface guard restrains scripts only; they are not a sign-off gate on Claude's own edits."
         )
 
 

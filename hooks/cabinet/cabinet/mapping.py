@@ -8,7 +8,7 @@
 # implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public
 # License for more details. You should have received a copy of the GNU Affero General Public License along with
 # this program. If not, see <https://www.gnu.org/licenses/>.
-"""Placement table. '.' rows are the pin list. There is no second pin source."""
+"""Placement table. '.' rows are the surface (they stay put). There is no second list."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ _FORBIDDEN_SEGMENTS = frozenset({".", ".."})
 @dataclass(frozen=True)
 class Row:
     name: str
-    dest_dir: str  # "" means stay at the top level (pinned)
+    dest_dir: str  # "" means stay at the top level (surface)
     line: int
 
     @property

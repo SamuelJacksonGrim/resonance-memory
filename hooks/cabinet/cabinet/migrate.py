@@ -105,11 +105,11 @@ def build_plan(memory: Path, mapping_path: Path) -> tuple[Plan, list[Row], PinGu
 def _plan_pin(plan: Plan, row: Row, top: Path) -> None:
     # A '.' row is not a mutation. The file is left where it is, unread by any writer.
     if not top.is_file():
-        plan.errors.append(f"pin missing at top level: {row.name}.md")
-        plan.items.append(Item(row.name, "error", f"{row.name}.md", f"{row.name}.md", "", "missing pin"))
+        plan.errors.append(f"surface memory missing from the top level: {row.name}.md")
+        plan.items.append(Item(row.name, "error", f"{row.name}.md", f"{row.name}.md", "", "missing surface memory"))
         return
     digest = sha256_bytes(top)
-    plan.items.append(Item(row.name, "pin", f"{row.name}.md", f"{row.name}.md", digest))
+    plan.items.append(Item(row.name, "stay", f"{row.name}.md", f"{row.name}.md", digest))
 
 
 def _plan_move(plan: Plan, row: Row, top: Path, dest: Path) -> None:
@@ -135,7 +135,7 @@ def apply_plan(plan: Plan, guard: PinGuard) -> None:
     if plan.errors:
         raise CabinetError("refusing to apply a plan that has errors")
     pin_before = {
-        item.name: item.sha256 for item in plan.items if item.action == "pin"
+        item.name: item.sha256 for item in plan.items if item.action == "stay"
     }
     for item in plan.items:
         if item.action != "move":
@@ -155,17 +155,17 @@ def apply_plan(plan: Plan, guard: PinGuard) -> None:
             item.detail = str(exc)
             break
     for item in plan.items:
-        if item.action != "pin":
+        if item.action != "stay":
             continue
         path = plan.memory / f"{item.name}.md"
         if not path.is_file():
             plan.partial = True
-            plan.errors.append(f"pin disappeared during apply: {item.name}")
+            plan.errors.append(f"surface memory disappeared during apply: {item.name}")
             continue
         digest = sha256_bytes(path)
         if digest != pin_before.get(item.name):
             plan.partial = True
-            plan.errors.append(f"pin bytes changed during apply: {item.name}")
+            plan.errors.append(f"surface memory bytes changed during apply: {item.name}")
         else:
             item.verified = True
             item.sha256 = digest
@@ -182,7 +182,7 @@ def render_report(plan: Plan, mode: str) -> str:
         f"- mode: {mode}",
         f"- memory: `{plan.memory}`",
         f"- mapping: `{plan.mapping_path}`",
-        f"- pins: {counts.get('pin', 0)}",
+        f"- surface (stays put): {counts.get('stay', 0)}",
         f"- moves: {counts.get('move', 0)}",
         f"- already at destination: {counts.get('already', 0)}",
         f"- errors: {len(plan.errors)}",

@@ -16,7 +16,7 @@
   python -m cabinet relink  --memory DIR [--apply]            point MEMORY.md's links at moved files
   python -m cabinet check   --memory DIR [--cache PATH]
   python -m cabinet list    --memory DIR
-  python -m cabinet pins    --memory DIR
+  python -m cabinet surface --memory DIR
 
 --mapping defaults to DIR/cabinet.tsv. Every command that writes is a dry run
 unless --apply is passed. Reports are never written inside the memory directory.
@@ -118,7 +118,7 @@ def main(argv: list[str] | None = None) -> int:
     list_p.add_argument("--memory", required=True)
     list_p.set_defaults(func=cmd_list)
 
-    pins_p = sub.add_parser("pins", help="print the mapping's '.' rows")
+    pins_p = sub.add_parser("surface", help="print the mapping's '.' rows (the surface: stays put)")
     pins_p.add_argument("--memory", required=True)
     pins_p.add_argument("--mapping")
     pins_p.set_defaults(func=cmd_pins)
@@ -133,11 +133,11 @@ def main(argv: list[str] | None = None) -> int:
     idx = sub.add_parser("index", help="write drawer indexes under _indexes (dry-run unless --apply)")
     idx.add_argument("--memory", required=True)
     idx.add_argument("--skills", help="defaults to ~/.claude/skills")
-    idx.add_argument("--mapping", help="defaults to DIR/cabinet.tsv; index writes are refused if they hit a pin")
+    idx.add_argument("--mapping", help="defaults to DIR/cabinet.tsv; index writes are refused if they hit a surface file")
     idx.add_argument("--apply", action="store_true")
     idx.set_defaults(func=cmd_index)
 
-    chk = sub.add_parser("check", help="basenames, links, footers, pins, generated-file exclusion")
+    chk = sub.add_parser("check", help="basenames, links, footers, surface, generated-file exclusion")
     chk.add_argument("--memory", required=True)
     chk.add_argument("--mapping")
     chk.add_argument("--cache", help="scratch embedding cache to audit; the live cache is refused")

@@ -11,7 +11,7 @@
 """Setting up a cabinet in a new memory folder, and keeping MEMORY.md's links pointed at the right files.
 
 init:   creates the drawer folders and a starter cabinet.tsv in the memory folder. Every existing memory starts as
-        "." (stays at the top level, pinned), so nothing moves until someone decides where each file goes.
+        "." (stays at the top level: the surface), so nothing moves until someone decides where each file goes.
 relink: after files move, rewrites the markdown links in MEMORY.md ("](name.md)") to each file's mapped location.
 """
 
