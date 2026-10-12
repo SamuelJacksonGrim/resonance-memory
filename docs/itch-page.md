@@ -98,11 +98,14 @@ Made by the *Architect of Resonance.*
 1. `chmod +x resonance-memory-linux-x64 && ./resonance-memory-linux-x64`. A page opens in your browser.
 
 **Then (every platform)**
-3. On that page, click **Connect** next to your app (LM Studio or Claude Desktop), then **restart that app once.**
+3. **It asks where it should live.** The default is fine. It installs itself there and puts a shortcut on your Desktop.
+   After that you can delete the downloaded file. The installed copy has to stay where you put it (your AI apps point
+   at it); the shortcut can be moved or deleted freely. A newer download updates the installed copy in place.
+4. On that page, click **Connect** next to your app (LM Studio or Claude Desktop), then **restart that app once.**
    Using Claude Code, Cursor or another MCP app? Copy the setup snippet from the same page.
-4. If "Meaning engine" says "not set up," click **Set up**: one click grabs a small helper model in LM Studio so recall
+5. If "Meaning engine" says "not set up," click **Set up**: one click grabs a small helper model in LM Studio so recall
    works by **meaning**, not just exact words.
 
-**Everything stays on your computer.** To remove it: click **Disconnect** in the app, then delete the file. Your
+**Everything stays on your computer.** To remove it: click **Disconnect** in the app, then run `uninstall.bat` in the folder it installed to (Windows), or `resonance-memory --uninstall-app` (any platform). Your
 memories stay in your user folder until you delete them yourself.
 

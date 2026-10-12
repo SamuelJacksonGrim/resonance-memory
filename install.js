@@ -35,9 +35,17 @@ const os = require("os");
 function isSea() { try { return require("node:sea").isSea(); } catch { return false; } }
 
 // How the client should launch us. From the bundled exe: the exe itself, `--mcp`.
-// In dev (plain node): node running server.js.
+// If an installed copy is recorded, Connect writes that path even when this
+// process is a spare file in Downloads. In dev (plain node): node running
+// server.js, and an install record is ignored.
 function selfLaunch() {
-  if (isSea()) return { command: process.execPath, args: ["--mcp"] };
+  if (isSea()) {
+    let stable = "";
+    try { stable = require("./install-home.js").stableCommand() || ""; }
+    catch { stable = ""; }
+    if (stable) return { command: stable, args: ["--mcp"] };
+    return { command: process.execPath, args: ["--mcp"] };
+  }
   return { command: process.execPath, args: [path.join(__dirname, "server.js")] };
 }
 

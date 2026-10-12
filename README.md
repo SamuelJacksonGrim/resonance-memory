@@ -4,7 +4,7 @@
 [![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-blue)](LICENSE)
 [![dual-license](https://img.shields.io/badge/dual--license-AGPL--3.0--only%20or%20commercial-blueviolet)](LICENSING.md)
 [![release](https://img.shields.io/github/v/release/SamuelJacksonGrim/resonance-memory)](https://github.com/SamuelJacksonGrim/resonance-memory/releases/latest)
-[![status](https://img.shields.io/badge/status-released-brightgreen)](https://github.com/SamuelJacksonGrim/resonance-memory/releases/tag/v0.3.1)
+[![status](https://img.shields.io/badge/status-released-brightgreen)](https://github.com/SamuelJacksonGrim/resonance-memory/releases/tag/v0.3.2)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D22.5-339933?logo=nodedotjs&logoColor=white)](package.json)
 [![JavaScript](https://img.shields.io/badge/JavaScript-F7DF1E?logo=javascript&logoColor=black)](https://developer.mozilla.org/docs/Web/JavaScript)
 [![MCP server](https://img.shields.io/badge/MCP-server-111111)](https://modelcontextprotocol.io/)
@@ -67,6 +67,12 @@ That's the honest hard part of memory, and it's built in. (Some distinctions sti
 - **Linux:** `chmod +x resonance-memory-linux-x64 && ./resonance-memory-linux-x64`.
 
 A page opens in your browser at `http://127.0.0.1:9090/`.
+
+**First thing it asks: where should it live?** Pick a folder (the default is fine: your own Programs folder on Windows,
+`~/Applications` on macOS, `~/.local/bin` on Linux) and it installs itself there, with a shortcut on your Desktop.
+After that the downloaded file can go: delete it or move it, nothing breaks. The installed copy has to stay where you
+put it, because your AI apps and the memory hooks point at it; the shortcut can go anywhere. A newer download updates
+that same installed copy in place.
 
 **One-time: give it a "meaning engine."** Resonance finds things by meaning, borrowed from a tiny helper model in **LM Studio**. Search for **`nomic-embed-text-v1.5`** (~80 MB), download it, make sure LM Studio's local server is running. LM Studio loads it automatically the first time your AI saves a memory. *(No LM Studio? Memory still works — it just matches on exact words instead of meaning.)*
 

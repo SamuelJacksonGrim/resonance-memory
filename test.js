@@ -4856,6 +4856,7 @@ test("panel page source ships a Terminal commands reference of real entry.js fla
     "--import", "--migrate", "--migrate-sqlite",
     "--dedup-existing",
     "--install-memory-system", "--recall", "--recall-hook", "--rebuild-on-write",
+    "--install-app", "--uninstall-app",
   ];
   for (const f of flags) {
     assert.ok(entry.includes(JSON.stringify(f)) || entry.includes("'" + f + "'") || entry.includes(f),
@@ -6894,6 +6895,167 @@ async function asyncTests() {
         try { fs.writeFileSync(hold, "go\n"); } catch { /* */ }
         await stopPanelChild(panel.child);
         await embedder.close();
+      }
+    });
+
+    function installPanelEnv(home) {
+      const local = path.join(home, "AppData", "Local");
+      const roaming = path.join(home, "AppData", "Roaming");
+      const desktop = path.join(home, "Desktop");
+      fs.mkdirSync(local, { recursive: true });
+      fs.mkdirSync(roaming, { recursive: true });
+      fs.mkdirSync(desktop, { recursive: true });
+      const db = path.join(home, ".resonance-memory", "resonance-memory.db");
+      fs.mkdirSync(path.dirname(db), { recursive: true });
+      fs.writeFileSync(db, "MEMORIES-STAY");
+      return {
+        local: local,
+        roaming: roaming,
+        desktop: desktop,
+        db: db,
+        extraEnv: {
+          LOCALAPPDATA: local,
+          APPDATA: roaming,
+          RESONANCE_MEMORY_DESKTOP: desktop,
+          RESONANCE_MEMORY_CONFIGS_JSON: "[]",
+        },
+      };
+    }
+
+    await atest("install card is on the page; a source checkout writes nothing", async () => {
+      const home = tmp("panel-install-source");
+      const laid = installPanelEnv(home);
+      const before = fs.readFileSync(laid.db);
+      const panel = await startPanelChild({ home, extraEnv: laid.extraEnv });
+      try {
+        const page = await (await fetch(panel.url + "/")).text();
+        assert.ok(page.includes('id="installRow"'), "install card is in the page");
+        assert.ok(page.includes("Where should Resonance Memory live?"));
+        assert.ok(page.includes("The installed file has to stay where you put it."));
+        assert.ok(page.includes("The Desktop shortcut can be moved or deleted freely."));
+        assert.ok(page.includes("--install-app") && page.includes("--no-shortcut"));
+        assert.ok(page.includes("--uninstall-app"));
+        assert.ok(/Does not delete your memories/.test(page));
+        assert.ok(page.includes("#installGo { white-space: nowrap; }"));
+        const status = await (await fetch(panel.url + "/api/install-home")).json();
+        assert.strictEqual(status.mode, "source");
+        assert.ok(status.defaultDir.startsWith(home), status.defaultDir);
+        const token = await readPanelToken(panel.url);
+        const bare = await fetch(panel.url + "/api/install-home", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "install", dir: status.defaultDir, shortcut: true }),
+        });
+        assert.strictEqual(bare.status, 403);
+        assert.strictEqual((await bare.json()).code, "forbidden_csrf");
+        const posted = await fetch(panel.url + "/api/install-home", {
+          method: "POST",
+          headers: panelPostHeaders(token),
+          body: JSON.stringify({ action: "install", dir: status.defaultDir, shortcut: true }),
+        });
+        const body = await posted.json();
+        assert.strictEqual(posted.status, 200, JSON.stringify(body));
+        assert.strictEqual(body.ok, false);
+        assert.strictEqual(body.code, "source");
+        assert.strictEqual(body.wrote, false);
+        assert.strictEqual(body.relaunch, false);
+        assert.ok(!fs.existsSync(require("./install-home.js").defaultInstallDir(Object.assign({ HOME: home, USERPROFILE: home }, laid.extraEnv))));
+        assert.deepStrictEqual(fs.readFileSync(laid.db), before);
+        assert.ok(!fs.existsSync(path.join(home, ".resonance-memory", "install-home.json")));
+      } finally {
+        await stopPanelChild(panel.child);
+      }
+    });
+
+    await atest("seam install copies into the temp home and does not relaunch", async () => {
+      const home = tmp("panel-install-seam");
+      const laid = installPanelEnv(home);
+      const before = fs.readFileSync(laid.db);
+      const source = path.join(home, "Downloads", "resonance-memory.exe");
+      fs.mkdirSync(path.dirname(source), { recursive: true });
+      fs.writeFileSync(source, "seam-bytes");
+      const panel = await startPanelChild({
+        home,
+        extraEnv: Object.assign({}, laid.extraEnv, {
+          RESONANCE_MEMORY_ASSUME_SEA: "1",
+          RESONANCE_MEMORY_INSTALL_SOURCE: source,
+        }),
+      });
+      try {
+        const status = await (await fetch(panel.url + "/api/install-home")).json();
+        assert.strictEqual(status.mode, "offer", JSON.stringify(status));
+        assert.strictEqual(status.defaultDir, require("./install-home.js").defaultInstallDir(Object.assign({ HOME: home, USERPROFILE: home }, laid.extraEnv)));
+        assert.ok(status.defaultDir.startsWith(home), "refusing to install outside the temp home: " + status.defaultDir);
+        assert.ok(String(status.warning || "").indexOf("Desktop shortcut") !== -1);
+        const token = await readPanelToken(panel.url);
+        const posted = await fetch(panel.url + "/api/install-home", {
+          method: "POST",
+          headers: panelPostHeaders(token),
+          body: JSON.stringify({ action: "install", dir: status.defaultDir, shortcut: true }),
+        });
+        const body = await posted.json();
+        assert.strictEqual(posted.status, 200, JSON.stringify(body));
+        assert.strictEqual(body.ok, true, JSON.stringify(body));
+        assert.strictEqual(body.wrote, true);
+        assert.strictEqual(body.action, "install");
+        assert.strictEqual(body.relaunch, false, "NO_OPEN must not hand the browser to another process");
+        assert.ok(body.exe && body.exe.startsWith(home), body.exe);
+        assert.strictEqual(fs.readFileSync(body.exe, "utf8"), "seam-bytes");
+        assert.ok(body.shortcut && body.shortcut.startsWith(home), "shortcut left the temp home: " + body.shortcut);
+        assert.ok(fs.existsSync(body.shortcut));
+        assert.deepStrictEqual(fs.readFileSync(laid.db), before);
+        const again = await (await fetch(panel.url + "/api/install-home")).json();
+        assert.strictEqual(again.mode, "spare");
+      } finally {
+        await stopPanelChild(panel.child);
+      }
+    });
+
+    await atest("in-flight install returns 409 and pauses the watchdog", async () => {
+      const hold = tmp("panel-install.hold");
+      try { if (fs.existsSync(hold)) fs.unlinkSync(hold); } catch { /* */ }
+      const home = tmp("panel-install-hold");
+      const laid = installPanelEnv(home);
+      const panel = await startPanelChild({
+        home,
+        watchdogMs: 400,
+        extraEnv: Object.assign({}, laid.extraEnv, { RM_PANEL_INSTALL_HOLD: hold }),
+      });
+      try {
+        const token = await readPanelToken(panel.url);
+        await fetch(panel.url + "/api/ping", { method: "POST", headers: panelPostHeaders(token) });
+        const first = fetch(panel.url + "/api/install-home", {
+          method: "POST",
+          headers: panelPostHeaders(token),
+          body: JSON.stringify({ action: "install", shortcut: false }),
+        });
+        const t0 = Date.now();
+        let snap = null;
+        while (Date.now() - t0 < 5000) {
+          snap = await (await fetch(panel.url + "/api/install-home")).json();
+          if (snap.busy && snap.watchdog_paused) break;
+          await new Promise((r) => setTimeout(r, 30));
+        }
+        assert.ok(snap && snap.busy, "in-flight is server-observable");
+        assert.ok(snap.watchdog_paused, "watchdog paused for the duration");
+        const dup = await fetch(panel.url + "/api/install-home", {
+          method: "POST",
+          headers: panelPostHeaders(token),
+          body: JSON.stringify({ action: "install", shortcut: false }),
+        });
+        assert.strictEqual(dup.status, 409);
+        assert.strictEqual((await dup.json()).code, "busy");
+        await new Promise((r) => setTimeout(r, 1200));
+        assert.strictEqual(panel.child.exitCode, null, "paused watchdog must not process.exit");
+        fs.writeFileSync(hold, "go\n");
+        const result = await first;
+        const body = await result.json();
+        assert.strictEqual(body.code, "source", JSON.stringify(body));
+        assert.strictEqual(body.wrote, false);
+        assert.ok(!fs.existsSync(require("./install-home.js").defaultInstallDir(Object.assign({ HOME: home, USERPROFILE: home }, laid.extraEnv))));
+      } finally {
+        try { fs.writeFileSync(hold, "go\n"); } catch { /* */ }
+        await stopPanelChild(panel.child);
       }
     });
   }
@@ -10180,6 +10342,531 @@ async function asyncTests() {
       assert.deepStrictEqual(names, smokeExe.EXPECTED_TOOLS.slice().sort());
     });
   }
+
+  section("install home — CLI and a running Windows exe");
+
+  {
+    const { spawn } = require("child_process");
+
+    function runEntry(args, env, timeoutMs) {
+      return new Promise((resolve) => {
+        const child = spawn(process.execPath, [path.join(__dirname, "entry.js")].concat(args), {
+          env: env,
+          stdio: ["ignore", "pipe", "pipe"],
+          windowsHide: true,
+        });
+        let out = "";
+        let err = "";
+        child.stdout.on("data", (d) => { out += d; });
+        child.stderr.on("data", (d) => { err += d; });
+        const timer = setTimeout(() => {
+          try { child.kill(); } catch { /* */ }
+          resolve({ code: child.exitCode, out: out, err: err, timeout: true });
+        }, timeoutMs || 20000);
+        child.on("exit", (code) => {
+          clearTimeout(timer);
+          resolve({ code: code, out: out, err: err, timeout: false });
+        });
+      });
+    }
+
+    function cliEnv(name) {
+      const home = tmp("cli-" + name);
+      const local = path.join(home, "AppData", "Local");
+      const roaming = path.join(home, "AppData", "Roaming");
+      fs.mkdirSync(path.join(home, "Desktop"), { recursive: true });
+      fs.mkdirSync(local, { recursive: true });
+      fs.mkdirSync(roaming, { recursive: true });
+      const env = Object.assign({}, process.env, {
+        USERPROFILE: home,
+        HOME: home,
+        LOCALAPPDATA: local,
+        APPDATA: roaming,
+        RESONANCE_MEMORY_NO_OPEN: "1",
+        RESONANCE_MEMORY_DESKTOP: path.join(home, "Desktop"),
+        RESONANCE_MEMORY_CONFIGS_JSON: "[]",
+      });
+      delete env.RESONANCE_MEMORY_ASSUME_SEA;
+      delete env.RESONANCE_MEMORY_INSTALL_SOURCE;
+      return { home: home, local: local, env: env };
+    }
+
+    await atest("node entry.js --install-app refuses a source checkout and writes nothing", async () => {
+      const t = cliEnv("install-app");
+      const result = await runEntry(["--install-app"], t.env, 20000);
+      assert.strictEqual(result.timeout, false, "CLI hung");
+      assert.strictEqual(result.code, 1, result.out + "\n" + result.err);
+      assert.ok(/source checkout/i.test(result.out), result.out);
+      assert.ok(/Nothing was written/.test(result.out));
+      assert.ok(!fs.existsSync(path.join(t.home, ".resonance-memory", "install-home.json")));
+      assert.ok(!fs.existsSync(path.join(t.local, "Programs")));
+    });
+
+    await atest("node entry.js --install-app --help names --dir and --no-shortcut", async () => {
+      const t = cliEnv("install-help");
+      const result = await runEntry(["--install-app", "--help"], t.env, 20000);
+      assert.strictEqual(result.timeout, false, result.out + "\n" + result.err);
+      assert.strictEqual(result.code, 0, result.out + "\n" + result.err);
+      assert.ok(result.out.includes("--no-shortcut"), result.out);
+      assert.ok(result.out.includes("--dir"), result.out);
+      assert.ok(!fs.existsSync(path.join(t.home, ".resonance-memory", "install-home.json")));
+    });
+
+    await atest("a running exe can be renamed aside but not overwritten", async () => {
+      if (process.platform !== "win32") return;
+      if (/resonance-memory/i.test(process.execPath)) {
+        throw new Error("refusing to copy the live resonance-memory binary");
+      }
+      const dir = tmp("running-exe");
+      fs.mkdirSync(dir, { recursive: true });
+      const live = path.join(dir, "scratch-node.exe");
+      fs.copyFileSync(process.execPath, live);
+      const child = spawn(live, ["-e", "setInterval(function(){}, 1000);"], {
+        stdio: "ignore",
+        windowsHide: true,
+      });
+      const pid = await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("scratch node did not stay up")), 10000);
+        child.once("error", (e) => { clearTimeout(timer); reject(e); });
+        child.once("spawn", () => {
+          setTimeout(() => {
+            clearTimeout(timer);
+            if (child.exitCode != null) reject(new Error("scratch node exited " + child.exitCode));
+            else resolve(child.pid);
+          }, 400);
+        });
+      });
+      try {
+        let overwriteCode = "";
+        try { fs.copyFileSync(process.execPath, live); }
+        catch (e) { overwriteCode = e.code || ""; }
+        assert.ok(overwriteCode === "EBUSY" || overwriteCode === "EPERM" || overwriteCode === "EACCES",
+          "overwrite of the running file should fail, got " + (overwriteCode || "success"));
+        const oldPath = live + ".old";
+        fs.renameSync(live, oldPath);
+        await new Promise((r) => setTimeout(r, 200));
+        assert.strictEqual(child.exitCode, null, "renaming the running file must not kill it");
+        fs.copyFileSync(process.execPath, live);
+        assert.strictEqual(fs.statSync(live).size, fs.statSync(process.execPath).size);
+        let deletedWhileRunning = false;
+        let unlinkCode = "";
+        try {
+          fs.unlinkSync(oldPath);
+          deletedWhileRunning = !fs.existsSync(oldPath);
+        } catch (e) {
+          unlinkCode = e.code || "";
+          assert.ok(unlinkCode === "EBUSY" || unlinkCode === "EPERM" || unlinkCode === "EACCES",
+            "unexpected unlink error " + unlinkCode);
+        }
+        child.kill();
+        await new Promise((resolve) => {
+          if (child.exitCode != null) return resolve();
+          child.once("exit", () => resolve());
+          setTimeout(resolve, 8000);
+        });
+        if (fs.existsSync(oldPath)) {
+          let gone = false;
+          for (let i = 0; i < 30; i++) {
+            try { fs.unlinkSync(oldPath); } catch { /* still mapped */ }
+            if (!fs.existsSync(oldPath)) { gone = true; break; }
+            await new Promise((r) => setTimeout(r, 100));
+          }
+          assert.ok(gone, "the renamed file should be deletable once the process is gone");
+        }
+        console.log("       (running-exe pid " + pid + ": overwrite " + overwriteCode
+          + ", .old while alive " + (deletedWhileRunning ? "deleted" : unlinkCode) + ")");
+      } finally {
+        try { child.kill(); } catch { /* */ }
+      }
+    });
+  }
+}
+
+section("install home — the program stays in one folder");
+
+{
+  const installHome = require("./install-home.js");
+  const memInstall = require("./hooks/memory-system/install-memory.js");
+
+  function tempEnv(name) {
+    const home = tmp("ihome-" + name);
+    const local = path.join(home, "AppData", "Local");
+    const roaming = path.join(home, "AppData", "Roaming");
+    fs.mkdirSync(path.join(home, "Desktop"), { recursive: true });
+    fs.mkdirSync(local, { recursive: true });
+    fs.mkdirSync(roaming, { recursive: true });
+    const env = {
+      USERPROFILE: home,
+      HOME: home,
+      LOCALAPPDATA: local,
+      APPDATA: roaming,
+      RESONANCE_MEMORY_NO_OPEN: "1",
+    };
+    return { home: home, local: local, roaming: roaming, env: env };
+  }
+
+  function memorySentinel(home) {
+    const db = path.join(home, ".resonance-memory", "resonance-memory.db");
+    fs.mkdirSync(path.dirname(db), { recursive: true });
+    fs.writeFileSync(db, "MEMORIES-STAY");
+    return db;
+  }
+
+  test("default install folders stay outside the memory directory", () => {
+    const win = installHome.defaultInstallDir({
+      USERPROFILE: "C:\\Users\\a",
+      LOCALAPPDATA: "C:\\Users\\a\\AppData\\Local",
+    }, "win32");
+    assert.strictEqual(win, "C:\\Users\\a\\AppData\\Local\\Programs\\Resonance Memory");
+    const mac = installHome.defaultInstallDir({ HOME: "/Users/a" }, "darwin");
+    assert.strictEqual(mac, "/Users/a/Applications/Resonance Memory");
+    const linux = installHome.defaultInstallDir({ HOME: "/home/a" }, "linux");
+    assert.strictEqual(linux, "/home/a/.local/bin");
+    assert.strictEqual(installHome.shortcutKind("win32"), "lnk");
+    assert.strictEqual(installHome.shortcutKind("darwin"), "symlink");
+    assert.strictEqual(installHome.shortcutKind("linux"), "desktop");
+    assert.ok(installHome.cmpVersion("0.3.2", "0.3.1") > 0);
+    assert.ok(installHome.cmpVersion("0.3.1", "0.3.1") === 0);
+    assert.ok(installHome.cmpVersion("0.9.0", "0.10.0") < 0);
+    assert.ok(installHome.cmpVersion("1.0.0", "0.9.9") > 0);
+  });
+
+  test("a partial env does not fall through to the real home", () => {
+    assert.strictEqual(installHome.homeFromEnv({}), "");
+    const desk = installHome.desktopDir({ HOME: tmp("desk-home"), USERPROFILE: tmp("desk-home"), RESONANCE_MEMORY_NO_OPEN: "1" });
+    assert.ok(desk.startsWith(tmpRoot), desk);
+    assert.ok(!desk.startsWith(os.homedir() + path.sep) || desk.startsWith(tmpRoot));
+  });
+
+  test("source checkout refuses to install and writes nothing", () => {
+    const t = tempEnv("source");
+    const db = memorySentinel(t.home);
+    const before = fs.readFileSync(db);
+    const r = installHome.installApp({
+      env: t.env, isSea: false, sourceExe: process.execPath, version: "0.3.1", dir: installHome.defaultInstallDir(t.env),
+    });
+    assert.strictEqual(r.ok, false);
+    assert.strictEqual(r.code, "source");
+    assert.strictEqual(r.wrote, false);
+    assert.deepStrictEqual(fs.readFileSync(db), before);
+    assert.ok(!fs.existsSync(path.join(t.home, ".resonance-memory", "install-home.json")));
+    const status = installHome.inspect({ env: t.env, isSea: false, sourceExe: process.execPath });
+    assert.strictEqual(status.mode, "source");
+  });
+
+  test("validateDir refuses the memory folder, a relative path, and a drive root", () => {
+    const t = tempEnv("bad-dir");
+    const data = path.join(t.home, ".resonance-memory");
+    const inside = installHome.validateDir(path.join(data, "bin"), t.env);
+    assert.strictEqual(inside.ok, false);
+    assert.ok(/memories/i.test(inside.error), inside.error);
+    const rel = installHome.validateDir("Programs\\Resonance Memory", t.env);
+    assert.strictEqual(rel.ok, false);
+    const root = installHome.validateDir(process.platform === "win32" ? "C:\\" : "/", t.env);
+    assert.strictEqual(root.ok, false);
+  });
+
+  test("install copies the file, writes a shortcut, and repoints only our configs", () => {
+    const t = tempEnv("install");
+    const db = memorySentinel(t.home);
+    const before = fs.readFileSync(db);
+    const src = path.join(t.home, "Downloads", "resonance-memory.exe");
+    fs.mkdirSync(path.dirname(src), { recursive: true });
+    fs.writeFileSync(src, "program-v1");
+    const mcpFile = path.join(t.home, ".lmstudio", "mcp.json");
+    fs.mkdirSync(path.dirname(mcpFile), { recursive: true });
+    fs.writeFileSync(mcpFile, JSON.stringify({
+      mcpServers: {
+        other: { command: "keep-me", args: ["--stay"] },
+        "resonance-memory": { command: src, args: ["--mcp"] },
+      },
+    }, null, 2));
+    const settings = path.join(t.home, ".claude", "settings.json");
+    fs.mkdirSync(path.dirname(settings), { recursive: true });
+    fs.writeFileSync(settings, JSON.stringify({
+      hooks: {
+        UserPromptSubmit: [{ hooks: [{
+          type: "command", command: src, args: ["--recall-hook"], timeout: 15, statusMessage: "recalling memory...",
+        }] }],
+        PostToolUse: [{ matcher: "Write|Edit|MultiEdit", hooks: [
+          { type: "command", command: src, args: ["--rebuild-on-write"], timeout: 10, statusMessage: "refreshing recall index..." },
+          { type: "command", command: "echo", args: ["keep"] },
+        ] }],
+      },
+    }, null, 2));
+    t.env.RESONANCE_MEMORY_CONFIGS_JSON = JSON.stringify([{ id: "lmstudio", name: "LM Studio", file: mcpFile }]);
+    const dir = installHome.defaultInstallDir(t.env);
+    const dest = path.join(dir, installHome.exeName());
+    const status = installHome.inspect({ env: t.env, isSea: true, sourceExe: src, version: "0.3.1" });
+    assert.strictEqual(status.mode, "offer");
+    assert.strictEqual(status.defaultDir, dir);
+    assert.ok(status.warning.indexOf("Desktop shortcut") !== -1);
+    const r = installHome.installApp({
+      env: t.env, isSea: true, sourceExe: src, version: "0.3.1", dir: dir, shortcut: true,
+    });
+    assert.strictEqual(r.ok, true, JSON.stringify(r));
+    assert.strictEqual(r.wrote, true);
+    assert.strictEqual(r.action, "install");
+    assert.strictEqual(r.exe, dest);
+    assert.strictEqual(fs.readFileSync(dest, "utf8"), "program-v1");
+    assert.ok(installHome.hasMarker(dest));
+    assert.strictEqual(fs.readFileSync(db, "utf8"), "MEMORIES-STAY");
+    assert.deepStrictEqual(fs.readFileSync(db), before);
+    const mcp = JSON.parse(fs.readFileSync(mcpFile, "utf8"));
+    assert.strictEqual(mcp.mcpServers.other.command, "keep-me");
+    assert.strictEqual(mcp.mcpServers["resonance-memory"].command, dest);
+    assert.deepStrictEqual(mcp.mcpServers["resonance-memory"].args, ["--mcp"]);
+    assert.ok(fs.existsSync(mcpFile + ".bak"));
+    const hooks = JSON.parse(fs.readFileSync(settings, "utf8"));
+    const recall = hooks.hooks.UserPromptSubmit[0].hooks[0];
+    assert.strictEqual(recall.command, dest);
+    assert.deepStrictEqual(recall.args, ["--recall-hook"]);
+    assert.strictEqual(recall.timeout, 15, "timeout stays");
+    assert.strictEqual(recall.statusMessage, "recalling memory...");
+    const post = hooks.hooks.PostToolUse[0].hooks;
+    assert.strictEqual(post[0].command, dest);
+    assert.deepStrictEqual(post[0].args, ["--rebuild-on-write"]);
+    assert.strictEqual(post[1].command, "echo");
+    assert.deepStrictEqual(post[1].args, ["keep"]);
+    assert.ok(fs.existsSync(settings + ".bak"));
+    const link = installHome.shortcutPathFor(t.env);
+    assert.strictEqual(r.shortcut, link);
+    assert.ok(link.startsWith(t.home), "shortcut stays under the temp home, not the real Desktop: " + link);
+    assert.ok(fs.existsSync(link), "shortcut was created under the temp Desktop");
+    if (process.platform === "win32") {
+      assert.ok(fs.existsSync(path.join(dir, "uninstall.bat")));
+      assert.ok(fs.readFileSync(path.join(dir, "uninstall.bat"), "utf8").includes("--uninstall-app"));
+      const { spawnSync } = require("child_process");
+      const ps = "(New-Object -ComObject WScript.Shell).CreateShortcut('" + link.replace(/'/g, "''") + "').TargetPath";
+      const read = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", ps], {
+        encoding: "utf8", windowsHide: true, timeout: 20000,
+      });
+      assert.strictEqual(read.status, 0, String(read.stderr || read.stdout));
+      assert.ok(String(read.stdout || "").toLowerCase().includes(dest.toLowerCase()), "lnk target: " + read.stdout);
+    }
+    const homeAgain = installHome.inspect({ env: t.env, isSea: true, sourceExe: dest, version: "0.3.1" });
+    assert.strictEqual(homeAgain.mode, "home");
+    const spare = installHome.inspect({ env: t.env, isSea: true, sourceExe: src, version: "0.3.1" });
+    assert.strictEqual(spare.mode, "spare");
+    const again = installHome.installApp({
+      env: t.env, isSea: true, sourceExe: src, version: "0.3.1", dir: dir,
+    });
+    assert.strictEqual(again.wrote, false, "same version does not copy again");
+    assert.strictEqual(fs.readFileSync(dest, "utf8"), "program-v1");
+    assert.strictEqual(fs.readFileSync(db, "utf8"), "MEMORIES-STAY");
+  });
+
+  test("decline is remembered, and the warning is not offered again", () => {
+    const t = tempEnv("decline");
+    const src = path.join(t.home, "Downloads", "resonance-memory.exe");
+    fs.mkdirSync(path.dirname(src), { recursive: true });
+    fs.writeFileSync(src, "program-v1");
+    const first = installHome.inspect({ env: t.env, isSea: true, sourceExe: src, version: "0.3.1" });
+    assert.strictEqual(first.mode, "offer");
+    const d = installHome.declineInstall({ env: t.env, isSea: true, sourceExe: src, version: "0.3.1" });
+    assert.strictEqual(d.ok, true);
+    assert.strictEqual(d.wrote, true);
+    const second = installHome.inspect({ env: t.env, isSea: true, sourceExe: src, version: "0.3.1" });
+    assert.strictEqual(second.mode, "declined");
+    assert.ok(!fs.existsSync(path.join(t.local, "Programs", "Resonance Memory", "resonance-memory.exe")));
+  });
+
+  test("a newer file updates in place and a different folder is refused", () => {
+    const t = tempEnv("update");
+    const db = memorySentinel(t.home);
+    const dir = installHome.defaultInstallDir(t.env);
+    const dest = path.join(dir, installHome.exeName());
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(dest, "old-bytes");
+    fs.writeFileSync(path.join(dir, installHome.MARKER_NAME), JSON.stringify({ installed: true, version: "0.3.0", exe: "resonance-memory.exe" }));
+    fs.mkdirSync(path.join(t.home, ".resonance-memory"), { recursive: true });
+    fs.writeFileSync(path.join(t.home, ".resonance-memory", "install-home.json"), JSON.stringify({
+      exe: dest, dir: dir, version: "0.3.0", shortcut: "", declined: false,
+    }));
+    const src = path.join(t.home, "Downloads", "resonance-memory.exe");
+    fs.mkdirSync(path.dirname(src), { recursive: true });
+    fs.writeFileSync(src, "new-bytes");
+    const seen = installHome.inspect({ env: t.env, isSea: true, sourceExe: src, version: "0.3.2" });
+    assert.strictEqual(seen.mode, "update");
+    assert.strictEqual(seen.installedVersion, "0.3.0");
+    const other = path.join(t.local, "SomewhereElse");
+    const refused = installHome.installApp({
+      env: t.env, isSea: true, sourceExe: src, version: "0.3.2", dir: other, action: "update",
+    });
+    assert.strictEqual(refused.ok, false);
+    assert.strictEqual(refused.code, "already_installed");
+    assert.strictEqual(fs.readFileSync(dest, "utf8"), "old-bytes");
+    const updated = installHome.installApp({
+      env: t.env, isSea: true, sourceExe: src, version: "0.3.2", shortcut: false,
+    });
+    assert.strictEqual(updated.ok, true, JSON.stringify(updated));
+    assert.strictEqual(updated.action, "update");
+    assert.strictEqual(updated.exe, dest, "the path does not change");
+    assert.strictEqual(fs.readFileSync(dest, "utf8"), "new-bytes");
+    const marker = JSON.parse(fs.readFileSync(path.join(dir, installHome.MARKER_NAME), "utf8"));
+    assert.strictEqual(marker.version, "0.3.2");
+    if (process.platform === "win32") {
+      assert.ok(fs.existsSync(dest + ".old"), "the previous file is renamed aside, not left locked in place");
+      assert.strictEqual(fs.readFileSync(dest + ".old", "utf8"), "old-bytes");
+      assert.strictEqual(installHome.cleanupOld(dest), true);
+      assert.ok(!fs.existsSync(dest + ".old"));
+    }
+    assert.strictEqual(fs.readFileSync(db, "utf8"), "MEMORIES-STAY");
+    const downgrade = installHome.installApp({
+      env: t.env, isSea: true, sourceExe: src, version: "0.3.1",
+    });
+    assert.strictEqual(downgrade.ok, false);
+    assert.strictEqual(downgrade.code, "newer_installed");
+    assert.strictEqual(fs.readFileSync(dest, "utf8"), "new-bytes");
+  });
+
+  test("a locked rename leaves the installed file untouched", () => {
+    const t = tempEnv("locked");
+    const dir = installHome.defaultInstallDir(t.env);
+    const dest = path.join(dir, installHome.exeName());
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(dest, "live");
+    fs.writeFileSync(path.join(dir, installHome.MARKER_NAME), JSON.stringify({ installed: true, version: "0.1.0", exe: "resonance-memory.exe" }));
+    fs.mkdirSync(path.join(t.home, ".resonance-memory"), { recursive: true });
+    fs.writeFileSync(path.join(t.home, ".resonance-memory", "install-home.json"), JSON.stringify({
+      exe: dest, dir: dir, version: "0.1.0", declined: false,
+    }));
+    const src = path.join(t.home, "Downloads", "resonance-memory.exe");
+    fs.mkdirSync(path.dirname(src), { recursive: true });
+    fs.writeFileSync(src, "incoming");
+    const r = installHome.installApp({
+      env: t.env, isSea: true, sourceExe: src, version: "0.2.0", shortcut: false,
+      hooks: {
+        renameSync(from, to) {
+          // Windows renames the running copy aside (from === dest); macOS/Linux rename the staged copy over it (to === dest).
+          if (from === dest || to === dest) {
+            const err = new Error("busy");
+            err.code = "EPERM";
+            throw err;
+          }
+          return fs.renameSync(from, to);
+        },
+      },
+    });
+    assert.strictEqual(r.ok, false);
+    assert.strictEqual(r.code, "locked");
+    assert.strictEqual(fs.readFileSync(dest, "utf8"), "live");
+    assert.ok(!fs.existsSync(dest + ".new"));
+  });
+
+  test("uninstall removes the program and the shortcut, not the memories", () => {
+    const t = tempEnv("uninstall");
+    const db = memorySentinel(t.home);
+    const src = path.join(t.home, "Downloads", "resonance-memory.exe");
+    fs.mkdirSync(path.dirname(src), { recursive: true });
+    fs.writeFileSync(src, "program-v1");
+    const mcpFile = path.join(t.roaming, "Claude", "claude_desktop_config.json");
+    fs.mkdirSync(path.dirname(mcpFile), { recursive: true });
+    const dir = installHome.defaultInstallDir(t.env);
+    const dest = path.join(dir, installHome.exeName());
+    fs.writeFileSync(mcpFile, JSON.stringify({
+      mcpServers: {
+        other: { command: "keep-me" },
+        "resonance-memory": { command: "old", args: ["--mcp"] },
+      },
+    }));
+    const settings = path.join(t.home, ".claude", "settings.json");
+    fs.mkdirSync(path.dirname(settings), { recursive: true });
+    fs.writeFileSync(settings, JSON.stringify({
+      hooks: {
+        UserPromptSubmit: [{ hooks: [{ type: "command", command: "old", args: ["--recall-hook"] }] }],
+        PostToolUse: [{ hooks: [
+          { type: "command", command: "old", args: ["--rebuild-on-write"] },
+          { type: "command", command: "echo", args: ["keep"] },
+        ] }],
+      },
+    }));
+    t.env.RESONANCE_MEMORY_CONFIGS_JSON = JSON.stringify([{ id: "claude", name: "Claude Desktop", file: mcpFile }]);
+    const installed = installHome.installApp({
+      env: t.env, isSea: true, sourceExe: src, version: "0.3.1", dir: dir, shortcut: true,
+    });
+    assert.strictEqual(installed.ok, true, JSON.stringify(installed));
+    assert.ok(fs.existsSync(dest));
+    assert.ok(fs.existsSync(installed.shortcut));
+    const removed = installHome.uninstallApp({ env: t.env, sourceExe: src });
+    assert.ok(removed.hooksRemoved >= 2, "both owned hooks removed");
+    assert.strictEqual(removed.shortcutRemoved, true);
+    assert.ok(!fs.existsSync(dest), "installed exe removed because this process is not that file");
+    assert.ok(!fs.existsSync(installed.shortcut));
+    assert.ok(!fs.existsSync(path.join(t.home, ".resonance-memory", "install-home.json")));
+    assert.strictEqual(fs.readFileSync(db, "utf8"), "MEMORIES-STAY");
+    const hooks = JSON.parse(fs.readFileSync(settings, "utf8"));
+    assert.ok(!hooks.hooks.UserPromptSubmit, "recall hook group is gone");
+    assert.strictEqual(hooks.hooks.PostToolUse[0].hooks[0].command, "echo");
+    const mcp = JSON.parse(fs.readFileSync(mcpFile, "utf8"));
+    assert.ok(!mcp.mcpServers["resonance-memory"]);
+    assert.strictEqual(mcp.mcpServers.other.command, "keep-me");
+    assert.ok(fs.existsSync(src), "the Downloads copy is not the installed file");
+  });
+
+  test("retarget keeps timeout and leaves hooks we do not own", () => {
+    const settings = {
+      hooks: {
+        UserPromptSubmit: [{ hooks: [{
+          type: "command", command: "C:\\Downloads\\resonance-memory.exe", args: ["--recall-hook"], timeout: 15, statusMessage: "recalling memory...",
+        }] }],
+        PostToolUse: [{ matcher: "Write|Edit|MultiEdit", hooks: [
+          { type: "command", command: "powershell", args: ["-File", "C:\\tools\\rebuild-on-memory-write.ps1"] },
+          { type: "command", command: "echo", args: ["keep"] },
+        ] }],
+      },
+    };
+    const recall = { command: "C:\\Installed\\resonance-memory.exe", args: ["--recall-hook"] };
+    const rebuild = { command: "C:\\Installed\\resonance-memory.exe", args: ["--rebuild-on-write"] };
+    const changed = memInstall.retargetOwnedHooks(settings, recall, rebuild);
+    assert.strictEqual(changed.recall, true);
+    assert.strictEqual(changed.rebuild, true);
+    const h = settings.hooks.UserPromptSubmit[0].hooks[0];
+    assert.strictEqual(h.command, recall.command);
+    assert.deepStrictEqual(h.args, ["--recall-hook"]);
+    assert.strictEqual(h.timeout, 15);
+    assert.strictEqual(h.statusMessage, "recalling memory...");
+    assert.strictEqual(settings.hooks.PostToolUse[0].hooks[1].command, "echo");
+    const again = memInstall.retargetOwnedHooks(settings, recall, rebuild);
+    assert.strictEqual(again.recall, false);
+    assert.strictEqual(again.rebuild, false);
+  });
+
+  test("linux shortcut is a .desktop file, not a second binary", () => {
+    const text = installHome.desktopFileText("/home/a/.local/bin/resonance-memory", "/home/a/.local/bin");
+    assert.ok(text.indexOf("Exec=/home/a/.local/bin/resonance-memory") !== -1);
+    assert.ok(text.indexOf("X-Resonance-Memory=install-home") !== -1);
+    assert.ok(text.indexOf("Terminal=false") !== -1);
+    const t = tempEnv("desktop-file");
+    const target = path.join(t.home, "bin", "resonance-memory");
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, "bin");
+    const link = path.join(t.home, "Desktop", "Resonance Memory.desktop");
+    const written = installHome.writeShortcut({
+      platform: "linux", shortcutPath: link, target: target, workDir: path.dirname(target),
+    });
+    assert.strictEqual(written.kind, "desktop");
+    assert.ok(fs.readFileSync(link, "utf8").indexOf("X-Resonance-Memory=install-home") !== -1);
+    assert.strictEqual(fs.readFileSync(target, "utf8"), "bin");
+  });
+
+  test("selfLaunch from source still launches node, not an installed exe", () => {
+    const launch = install.selfLaunch();
+    assert.strictEqual(launch.command, process.execPath);
+    assert.ok(/server\.js$/.test(launch.args[0] || ""), JSON.stringify(launch));
+    assert.strictEqual(installHome.stableCommand({ isSea: false, env: { HOME: tmp("no-home-stable"), USERPROFILE: tmp("no-home-stable") } }), "");
+  });
+
+  test("uninstall.bat still names the memory file and now removes the installed program", () => {
+    const bat = fs.readFileSync(path.join(__dirname, "uninstall.bat"), "utf8");
+    const generated = installHome.uninstallBatText();
+    for (const text of [bat, generated]) {
+      assert.ok(text.includes("--uninstall-app"));
+      assert.ok(/resonance-memory\.db/.test(text));
+      assert.ok(/NOT deleted/.test(text));
+      assert.ok(/Desktop shortcut/.test(text));
+    }
+  });
 }
 
 // ------------------------------------------------------------------- report
