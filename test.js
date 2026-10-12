@@ -6939,7 +6939,7 @@ async function asyncTests() {
         assert.ok(page.includes("#installGo { white-space: nowrap; }"));
         const status = await (await fetch(panel.url + "/api/install-home")).json();
         assert.strictEqual(status.mode, "source");
-        assert.ok(status.defaultDir.startsWith(laid.local), status.defaultDir);
+        assert.ok(status.defaultDir.startsWith(home), status.defaultDir);
         const token = await readPanelToken(panel.url);
         const bare = await fetch(panel.url + "/api/install-home", {
           method: "POST",
@@ -6985,7 +6985,7 @@ async function asyncTests() {
         const status = await (await fetch(panel.url + "/api/install-home")).json();
         assert.strictEqual(status.mode, "offer", JSON.stringify(status));
         assert.strictEqual(status.defaultDir, require("./install-home.js").defaultInstallDir(Object.assign({ HOME: home, USERPROFILE: home }, laid.extraEnv)));
-        assert.ok(status.defaultDir.startsWith(laid.local), "refusing to install outside the temp home: " + status.defaultDir);
+        assert.ok(status.defaultDir.startsWith(home), "refusing to install outside the temp home: " + status.defaultDir);
         assert.ok(String(status.warning || "").indexOf("Desktop shortcut") !== -1);
         const token = await readPanelToken(panel.url);
         const posted = await fetch(panel.url + "/api/install-home", {
@@ -6999,7 +6999,7 @@ async function asyncTests() {
         assert.strictEqual(body.wrote, true);
         assert.strictEqual(body.action, "install");
         assert.strictEqual(body.relaunch, false, "NO_OPEN must not hand the browser to another process");
-        assert.ok(body.exe && body.exe.startsWith(laid.local), body.exe);
+        assert.ok(body.exe && body.exe.startsWith(home), body.exe);
         assert.strictEqual(fs.readFileSync(body.exe, "utf8"), "seam-bytes");
         assert.ok(body.shortcut && body.shortcut.startsWith(home), "shortcut left the temp home: " + body.shortcut);
         assert.ok(fs.existsSync(body.shortcut));
@@ -10738,7 +10738,8 @@ section("install home — the program stays in one folder");
       env: t.env, isSea: true, sourceExe: src, version: "0.2.0", shortcut: false,
       hooks: {
         renameSync(from, to) {
-          if (from === dest) {
+          // Windows renames the running copy aside (from === dest); macOS/Linux rename the staged copy over it (to === dest).
+          if (from === dest || to === dest) {
             const err = new Error("busy");
             err.code = "EPERM";
             throw err;
