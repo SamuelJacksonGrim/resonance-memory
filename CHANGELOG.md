@@ -16,6 +16,13 @@ stable; sophistication grows in the substrate, not in the API.
   custom `MEMORY_FILE_PATH`; `RM_RECALL_DEBUG=1` explains silence during setup. Measured ~0.1–0.2 s per message.
   Claude Code only (other MCP clients have no per-message hook). The guide is written so a user's own Claude
   can carry out the setup.
+- **Memory filing cabinet for Claude Code** (`hooks/cabinet/` + [`CABINET.md`](CABINET.md)). Files Claude Code's
+  markdown memory folder: a pinned baseline at the top (relationship-shaping memories are never filed away),
+  `projects/` / `tools/` / `reference/` subject drawers, flat `history/`, generated drawer + skills indexes.
+  Python 3.9+, standard library only. Commands: `init` (drawers + starter `cabinet.tsv`, nothing moves),
+  `migrate` (refuses pins and overwrites, byte-identical moves), `index`, `relink` (retargets `MEMORY.md` links),
+  `check`. Every write is a dry run unless `--apply`. Pins restrain the scripts only, never the model's own edits.
+  Built and proven on a real 85-memory folder first (recall results identical before and after the move).
 
 ## [0.2.0](https://github.com/SamuelJacksonGrim/resonance-memory/releases/tag/v0.2.0) - 2026-09-10
 
