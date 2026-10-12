@@ -8,6 +8,8 @@ stable; sophistication grows in the substrate, not in the API.
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/SamuelJacksonGrim/resonance-memory/releases/tag/v0.3.0) - 2026-10-11
+
 ### Added
 - **Auto-recall for Claude Code** (`hooks/auto-recall.js` + [`AUTO-RECALL.md`](AUTO-RECALL.md)). A
   `UserPromptSubmit` hook that runs RM's own `recall_memory` on every user message and injects the result, so

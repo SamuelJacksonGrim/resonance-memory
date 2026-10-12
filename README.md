@@ -4,7 +4,7 @@
 [![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-blue)](LICENSE)
 [![dual-license](https://img.shields.io/badge/dual--license-AGPL--3.0--only%20or%20commercial-blueviolet)](LICENSING.md)
 [![release](https://img.shields.io/github/v/release/SamuelJacksonGrim/resonance-memory)](https://github.com/SamuelJacksonGrim/resonance-memory/releases/latest)
-[![status](https://img.shields.io/badge/status-released-brightgreen)](https://github.com/SamuelJacksonGrim/resonance-memory/releases/tag/v0.2.0)
+[![status](https://img.shields.io/badge/status-released-brightgreen)](https://github.com/SamuelJacksonGrim/resonance-memory/releases/tag/v0.3.0)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D22.5-339933?logo=nodedotjs&logoColor=white)](package.json)
 [![JavaScript](https://img.shields.io/badge/JavaScript-F7DF1E?logo=javascript&logoColor=black)](https://developer.mozilla.org/docs/Web/JavaScript)
 [![MCP server](https://img.shields.io/badge/MCP-server-111111)](https://modelcontextprotocol.io/)
