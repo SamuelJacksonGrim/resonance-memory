@@ -178,7 +178,7 @@ function resolveConfig(opts) {
 function getField(text, key, fallback) {
   const re = new RegExp("^\\s*" + key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ":\\s*[\"']?(.+?)[\"']?\\s*$", "im");
   const m = re.exec(text == null ? "" : String(text));
-  return m ? m[1] : fallback;
+  return m ? m[1].replace(/\\"/g, '"') : fallback;   // unescape \" from quoted YAML (same as recall.ps1)
 }
 
 function parseWeight(raw) {
