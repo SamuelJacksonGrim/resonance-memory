@@ -6062,6 +6062,13 @@ async function asyncTests() {
       if (opts.watchdogMs) env.RESONANCE_MEMORY_WATCHDOG_MS = String(opts.watchdogMs);
       if (hold) env.RM_PANEL_EXPORT_HOLD = hold;
       if (opts.importHold) env.RM_PANEL_IMPORT_HOLD = opts.importHold;
+      if (opts.memoryHold) env.RM_PANEL_MEMORY_HOLD = opts.memoryHold;
+      if (opts.scrubRecall) {
+        for (const k of ["RECALL_MEMORY", "RECALL_CACHE", "RECALL_ENDPOINT", "RECALL_MODEL", "RECALL_CONFIG", "EMBED_ENDPOINT", "EMBED_MODEL"]) {
+          delete env[k];
+        }
+      }
+      if (opts.extraEnv) Object.assign(env, opts.extraEnv);
       const child = spawn(process.execPath, [path.join(__dirname, "panel.js")], {
         env,
         stdio: ["ignore", "pipe", "pipe"],
@@ -6154,6 +6161,7 @@ async function asyncTests() {
       try {
         const page = await (await fetch(panel.url + "/")).text();
         assert.ok(page.includes("Export my memories"));
+        assert.ok(page.includes("Memory system for Claude Code"), "memory-system step is on the page");
         assert.ok(/read-only/i.test(page));
         assert.ok(page.includes("Terminal commands"), "CLI reference is on the served page");
         assert.ok(page.includes("What can I ship / license?"), "license explainer is on the served page");
@@ -6633,6 +6641,261 @@ async function asyncTests() {
         }
       });
     }
+
+    const http = require("http");
+    const memInstall = require("./hooks/memory-system/install-memory.js");
+
+    function listenEmbedder(statusCode, payload) {
+      return new Promise((resolve) => {
+        const srv = http.createServer((req, res) => {
+          req.on("data", () => {});
+          req.on("end", () => {
+            res.writeHead(statusCode, { "Content-Type": "application/json" });
+            res.end(payload);
+          });
+        });
+        srv.listen(0, "127.0.0.1", () => {
+          resolve({
+            url: "http://127.0.0.1:" + srv.address().port,
+            close: () => new Promise((r) => srv.close(() => r())),
+          });
+        });
+      });
+    }
+
+    await atest("GET /api/memory-system stays hidden without ~/.claude and POST writes nothing", async () => {
+      const panel = await startPanelChild({ scrubRecall: true });
+      try {
+        const status = await (await fetch(panel.url + "/api/memory-system")).json();
+        assert.strictEqual(status.claude, false);
+        assert.strictEqual(status.state, "hidden");
+        assert.ok(!fs.existsSync(path.join(panel.home, ".claude")));
+        const token = await readPanelToken(panel.url);
+        const posted = await fetch(panel.url + "/api/memory-system", {
+          method: "POST",
+          headers: panelPostHeaders(token),
+          body: JSON.stringify({ apply: true }),
+        });
+        const body = await posted.json();
+        assert.strictEqual(posted.status, 200, JSON.stringify(body));
+        assert.strictEqual(body.ok, false);
+        assert.strictEqual(body.code, "no_claude");
+        assert.strictEqual(body.wrote, false);
+        assert.ok(!fs.existsSync(path.join(panel.home, ".claude")));
+        assert.ok(!fs.existsSync(path.join(panel.home, ".resonance-memory")));
+      } finally {
+        await stopPanelChild(panel.child);
+      }
+    });
+
+    await atest("memory-system dry-run is the installer plan; W-02 and a foreign folder write nothing", async () => {
+      const home = tmp("panel-mem-dry");
+      fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
+      fs.mkdirSync(path.join(home, "Desktop"), { recursive: true });
+      const panel = await startPanelChild({ home, scrubRecall: true });
+      try {
+        const expected = memInstall.defaultMemoryDir(home);
+        const token = await readPanelToken(panel.url);
+        const noToken = await fetch(panel.url + "/api/memory-system", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ apply: false }),
+        });
+        assert.strictEqual(noToken.status, 403);
+        assert.strictEqual((await noToken.json()).code, "forbidden_csrf");
+        const evil = await fetch(panel.url + "/api/memory-system", {
+          method: "POST",
+          headers: panelPostHeaders(token, { Origin: "http://evil.example" }),
+          body: JSON.stringify({ apply: false }),
+        });
+        assert.strictEqual(evil.status, 403);
+        assert.strictEqual((await evil.json()).code, "forbidden_origin");
+        assert.ok(!fs.existsSync(path.join(home, ".claude", "settings.json")));
+
+        const dry = await fetch(panel.url + "/api/memory-system", {
+          method: "POST",
+          headers: panelPostHeaders(token),
+          body: JSON.stringify({ apply: false }),
+        });
+        const plan = await dry.json();
+        assert.strictEqual(dry.status, 200, JSON.stringify(plan));
+        assert.strictEqual(plan.ok, true);
+        assert.strictEqual(plan.apply, false);
+        assert.strictEqual(plan.wrote, false);
+        assert.ok(plan.plan.includes(expected), plan.plan);
+        assert.ok(plan.plan.includes("(default)"), plan.plan);
+        assert.ok(plan.plan.includes("dry run: nothing will be written"));
+        assert.ok(!fs.existsSync(path.join(home, ".claude", "settings.json")));
+        assert.ok(!fs.existsSync(path.join(home, ".resonance-memory")));
+
+        const bad = await fetch(panel.url + "/api/memory-system", {
+          method: "POST",
+          headers: panelPostHeaders(token),
+          body: JSON.stringify({ apply: true, memoryDir: path.join(home, "not-a-project", "memory") }),
+        });
+        const refused = await bad.json();
+        assert.strictEqual(bad.status, 400, JSON.stringify(refused));
+        assert.strictEqual(refused.code, "bad_dir");
+        assert.strictEqual(refused.wrote, false);
+        assert.ok(!fs.existsSync(path.join(home, "not-a-project")));
+        assert.ok(!fs.existsSync(path.join(home, ".claude", "settings.json")));
+      } finally {
+        await stopPanelChild(panel.child);
+      }
+    });
+
+    await atest("POST /api/memory-system apply runs the installer; hand-merge is a next step", async () => {
+      const embedder = await listenEmbedder(200, JSON.stringify({ data: [{ embedding: [1, 0, 0] }] }));
+      const home = tmp("panel-mem-apply");
+      fs.mkdirSync(path.join(home, "Desktop"), { recursive: true });
+      const memoryDir = memInstall.defaultMemoryDir(home);
+      fs.mkdirSync(memoryDir, { recursive: true });
+      fs.writeFileSync(path.join(memoryDir, "MEMORY.md"), "USER OWNED\n");
+      const other = path.join(home, ".claude", "projects", "other-proj", "memory");
+      fs.mkdirSync(other, { recursive: true });
+      const panel = await startPanelChild({
+        home,
+        scrubRecall: true,
+        extraEnv: { RECALL_ENDPOINT: embedder.url },
+      });
+      try {
+        const before = await (await fetch(panel.url + "/api/memory-system")).json();
+        assert.strictEqual(before.claude, true);
+        assert.strictEqual(before.state, "absent");
+        assert.ok(before.choices.some((c) => c.isDefault));
+        assert.ok(before.choices.some((c) => c.label === "other-proj"));
+        const token = await readPanelToken(panel.url);
+        const posted = await fetch(panel.url + "/api/memory-system", {
+          method: "POST",
+          headers: panelPostHeaders(token),
+          body: JSON.stringify({ apply: true }),
+        });
+        const body = await posted.json();
+        assert.strictEqual(posted.status, 200, JSON.stringify(body));
+        assert.strictEqual(body.ok, true, JSON.stringify(body));
+        assert.strictEqual(body.wrote, true);
+        assert.strictEqual(body.state, "ready");
+        assert.strictEqual(body.index, "built");
+        assert.strictEqual(fs.readFileSync(path.join(memoryDir, "MEMORY.md"), "utf8"), "USER OWNED\n");
+        assert.strictEqual(body.nextStep, memInstall.HAND_MERGE_NEXT);
+        assert.ok(!String(body.plan).includes("merge by hand"), "panel plan says the next step, not merge by hand");
+        const cfg = JSON.parse(fs.readFileSync(path.join(home, ".resonance-memory", "memory-system.json"), "utf8"));
+        assert.strictEqual(cfg.memoryDir, memoryDir);
+        assert.ok(cfg.cache.startsWith(home), cfg.cache);
+        const cached = JSON.parse(fs.readFileSync(cfg.cache, "utf8"));
+        assert.ok(cached.some((row) => Array.isArray(row.vector) && row.vector.length > 0));
+        const settings = JSON.parse(fs.readFileSync(path.join(home, ".claude", "settings.json"), "utf8"));
+        const prompt = JSON.stringify(settings.hooks.UserPromptSubmit);
+        assert.ok(prompt.includes("--recall-hook"));
+        const again = await (await fetch(panel.url + "/api/memory-system")).json();
+        assert.strictEqual(again.state, "ready");
+
+        const otherApply = await fetch(panel.url + "/api/memory-system", {
+          method: "POST",
+          headers: panelPostHeaders(token),
+          body: JSON.stringify({ apply: true, memoryDir: other }),
+        });
+        const moved = await otherApply.json();
+        assert.strictEqual(moved.ok, true, JSON.stringify(moved));
+        const cfg2 = JSON.parse(fs.readFileSync(path.join(home, ".resonance-memory", "memory-system.json"), "utf8"));
+        assert.strictEqual(cfg2.memoryDir, other);
+        assert.ok(fs.existsSync(path.join(other, "cabinet.tsv")));
+      } finally {
+        await stopPanelChild(panel.child);
+        await embedder.close();
+      }
+    });
+
+    await atest("apply finishes when the meaning engine is down; rebuild waits", async () => {
+      const embedder = await listenEmbedder(500, "{\"error\":\"down\"}");
+      const home = tmp("panel-mem-defer");
+      fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
+      fs.mkdirSync(path.join(home, "Desktop"), { recursive: true });
+      const panel = await startPanelChild({
+        home,
+        scrubRecall: true,
+        extraEnv: { RECALL_ENDPOINT: embedder.url },
+      });
+      try {
+        const token = await readPanelToken(panel.url);
+        const posted = await fetch(panel.url + "/api/memory-system", {
+          method: "POST",
+          headers: panelPostHeaders(token),
+          body: JSON.stringify({ apply: true }),
+        });
+        const body = await posted.json();
+        assert.strictEqual(body.ok, true, JSON.stringify(body));
+        assert.strictEqual(body.index, "pending");
+        assert.strictEqual(body.state, "index-pending");
+        assert.ok(fs.existsSync(path.join(home, ".claude", "settings.json")));
+        assert.ok(fs.existsSync(memInstall.defaultMemoryDir(home)));
+        assert.ok(!fs.existsSync(path.join(home, ".resonance-memory", "memory-embeddings.json")));
+        const rebuilt = await fetch(panel.url + "/api/memory-system", {
+          method: "POST",
+          headers: panelPostHeaders(token),
+          body: JSON.stringify({ rebuildIndex: true }),
+        });
+        const again = await rebuilt.json();
+        assert.strictEqual(again.deferred, true, JSON.stringify(again));
+        assert.strictEqual(again.state, "index-pending");
+        assert.ok(!fs.existsSync(path.join(home, ".resonance-memory", "memory-embeddings.json")));
+      } finally {
+        await stopPanelChild(panel.child);
+        await embedder.close();
+      }
+    });
+
+    await atest("in-flight memory setup returns 409 and pauses the watchdog", async () => {
+      const embedder = await listenEmbedder(200, JSON.stringify({ data: [{ embedding: [1, 0, 0] }] }));
+      const hold = tmp("panel-memory.hold");
+      try { if (fs.existsSync(hold)) fs.unlinkSync(hold); } catch { /* */ }
+      const home = tmp("panel-mem-hold");
+      fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
+      fs.mkdirSync(path.join(home, "Desktop"), { recursive: true });
+      const panel = await startPanelChild({
+        home,
+        scrubRecall: true,
+        memoryHold: hold,
+        watchdogMs: 400,
+        extraEnv: { RECALL_ENDPOINT: embedder.url },
+      });
+      try {
+        const token = await readPanelToken(panel.url);
+        await fetch(panel.url + "/api/ping", { method: "POST", headers: panelPostHeaders(token) });
+        const first = fetch(panel.url + "/api/memory-system", {
+          method: "POST",
+          headers: panelPostHeaders(token),
+          body: JSON.stringify({ apply: true }),
+        });
+        const t0 = Date.now();
+        let snap = null;
+        while (Date.now() - t0 < 5000) {
+          snap = await (await fetch(panel.url + "/api/memory-system")).json();
+          if (snap.busy && snap.watchdog_paused) break;
+          await new Promise((r) => setTimeout(r, 30));
+        }
+        assert.ok(snap && snap.busy, "in-flight is server-observable");
+        assert.ok(snap.watchdog_paused, "watchdog paused for the duration");
+        const dup = await fetch(panel.url + "/api/memory-system", {
+          method: "POST",
+          headers: panelPostHeaders(token),
+          body: JSON.stringify({ apply: true }),
+        });
+        assert.strictEqual(dup.status, 409);
+        assert.strictEqual((await dup.json()).code, "busy");
+        await new Promise((r) => setTimeout(r, 1200));
+        assert.strictEqual(panel.child.exitCode, null, "paused watchdog must not process.exit");
+        fs.writeFileSync(hold, "go\n");
+        const result = await first;
+        const body = await result.json();
+        assert.strictEqual(body.ok, true, JSON.stringify(body));
+        assert.strictEqual(body.state, "ready");
+      } finally {
+        try { fs.writeFileSync(hold, "go\n"); } catch { /* */ }
+        await stopPanelChild(panel.child);
+        await embedder.close();
+      }
+    });
   }
 
   section("RM-17 import — sovereignty return trip");

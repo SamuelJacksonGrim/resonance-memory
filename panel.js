@@ -35,6 +35,9 @@
  *   - imports a zip or memories.jsonl (RM-17 panel button: confirm modal,
  *     POST /api/import shells runImport(), --with-edges checkbox default-off,
  *     heartbeat pause + yield like export; not an MCP tool),
+ *   - sets up the Claude Code memory system when ~/.claude is present
+ *     (one button, confirm modal shows the installer dry-run, Apply calls
+ *     installMemorySystem in-process; not an MCP tool),
  *   - Terminal commands: a closed-by-default reference of every flag entry.js
  *     actually dispatches (arg parser is the authority). Copy-paste uses this
  *     binary (the exe, or `node entry.js` from source — never `node panel.js`).
@@ -73,6 +76,7 @@ const { pairConflictFn, resolveEntities } = require("./entity.js");
 const extract = require("./extract.js");
 const exp = require("./export-memory.js");
 const imp = require("./import-memory.js");
+const memInstall = require("./hooks/memory-system/install-memory.js");
 
 function baseDir() {
   // In a bundled single-executable, __dirname is virtual; resolve next to the exe.
@@ -291,6 +295,9 @@ const PAGE = `<!doctype html>
   button:disabled { opacity: .55; cursor: default; }
   .btncol { display: flex; flex-direction: column; gap: 8px; align-items: stretch; }
   .pickrow { display: flex; gap: 8px; margin: 0 0 12px; }
+  #memoryPlan { max-height: 240px; overflow: auto; margin: 0 0 12px; }
+  #memoryChoices { margin: 0 0 8px; }
+  .modal-card.wide { width: min(92vw, 560px); }
   .pickrow input[type=text] { flex: 1; font-family: ui-monospace, Consolas, monospace; font-size: 12px;
     padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(0,0,0,.12); background: #f7f8fa; color: inherit; }
   .modal-card label.check { display: flex; align-items: flex-start; gap: 8px; font-size: 13px;
@@ -407,6 +414,15 @@ const PAGE = `<!doctype html>
         <div class="hint" id="engineHint">The model that lets recall match by meaning, not just exact words.</div>
       </div>
       <button id="engineBtn" style="display:none"></button>
+    </div>
+
+    <div class="row" id="memoryRow" style="margin-top:10px" hidden>
+      <div>
+        <div class="label">Memory system for Claude Code <span id="memoryPill" class="pill off">checking&hellip;</span></div>
+        <div class="hint" id="memoryHint">The folder Claude Code already keeps for this machine, plus recall on each prompt.</div>
+        <div id="memoryToast" class="toast" hidden></div>
+      </div>
+      <button id="memoryBtn" class="primary" style="display:none">Set up</button>
     </div>
 
     <div class="row" id="embedderRow" style="margin-top:10px">
@@ -546,7 +562,7 @@ const PAGE = `<!doctype html>
         <div class="cname">Install the memory system <code>--install-memory-system</code> <span class="pill warn">writes with --apply</span></div>
         <pre class="mcp"><span class="cli-prefix"></span> --install-memory-system --memory-dir &lt;dir&gt;</pre>
         <div class="copyrow"><button type="button" data-cli-copy="--install-memory-system --memory-dir &lt;dir&gt;">Copy</button><span class="hint cli-copy-msg"></span></div>
-        <div class="hint">Dry-run is the default (prints the plan, writes nothing). <code>--apply</code> copies the memory-folder template into the directory you pass (a Claude Code memory folder). An existing file is left in place, including <code>MEMORY.md</code> and <code>memory-architecture.md</code>. It merges <code>--recall-hook</code> (every prompt) and <code>--rebuild-on-write</code> (Write, Edit, MultiEdit) into <code>~/.claude/settings.json</code>, keeps every other hook, and leaves a <code>.bak</code>. The memory block is appended to <code>~/.claude/CLAUDE.md</code> once. Then it full-rebuilds the recall cache. Not an MCP tool.</div>
+        <div class="hint">Dry-run is the default (prints the plan, writes nothing). Omit <code>--memory-dir</code> and the folder is your home directory&rsquo;s Claude Code project (<code>~/.claude/projects/&lt;encoded home&gt;/memory</code>). The plan prints the folder it chose. <code>--apply</code> copies the template there. An existing file is left in place, including <code>MEMORY.md</code> and <code>memory-architecture.md</code>. It merges <code>--recall-hook</code> (every prompt) and <code>--rebuild-on-write</code> (Write, Edit, MultiEdit) into <code>~/.claude/settings.json</code>, keeps every other hook, and leaves a <code>.bak</code>. The memory block is appended to <code>~/.claude/CLAUDE.md</code> once. Then it full-rebuilds the recall cache. If that rebuild fails, the files stay and the command exits 1 &mdash; re-run <code>--apply</code> when the embedder is up. The <b>Set up</b> button on this page runs the same installer and finishes even when the meaning engine is not up yet. Not an MCP tool.</div>
         <div class="hint">Search by hand with <code>--recall</code> (<code>--query</code>, <code>--rebuild</code>, <code>--history</code>, <code>--plan</code>). Re-index still needs Python 3.9+ (<code>python -m cabinet</code>).</div>
         <div class="hint cli-flags">--apply &nbsp; --memory-dir &lt;dir&gt; &nbsp; --cache &lt;file&gt; &nbsp; --endpoint &lt;url&gt; &nbsp; --model &lt;name&gt;</div>
       </div>
@@ -619,6 +635,21 @@ const PAGE = `<!doctype html>
       </div>
     </div>
   </div>
+
+  <div id="memoryModal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="memoryModalTitle">
+    <div class="modal-card wide">
+      <h2 id="memoryModalTitle">Memory system for Claude Code</h2>
+      <p>This is the plan. Nothing is written until you press <b>Set up</b>. It copies the memory folder, merges two hooks into Claude Code, and builds the recall index.</p>
+      <div id="memoryChoices" hidden></div>
+      <pre class="mcp" id="memoryPlan">Reading the plan&hellip;</pre>
+      <p id="memoryNext" hidden></p>
+      <p id="memoryModalBusy" class="busy-note" hidden>Setting up&hellip;</p>
+      <div class="modal-actions">
+        <button type="button" id="memoryCancel">Cancel</button>
+        <button type="button" id="memoryConfirm" class="primary" disabled>Set up</button>
+      </div>
+    </div>
+  </div>
 <script>
   var RM_PANEL_TOKEN = ${JSON.stringify(PANEL_TOKEN)};
   var MCP_SNIPPET = ${JSON.stringify(install.mcpSnippet())};
@@ -666,6 +697,10 @@ const PAGE = `<!doctype html>
 
   var firstRunMemories = null;
   var firstRunConnected = false;
+  var memoryStatus = null;
+  var memoryBusy = false;
+  var memoryIndexAttempted = false;
+  var memoryChosen = '';
   var SEED_PROMPT = 'Please remember these things about me, then check your memory so I know they stuck:\\n' +
     '- My name is \\u2026\\n' +
     '- I live in \\u2026\\n' +
@@ -678,14 +713,18 @@ const PAGE = `<!doctype html>
     var title = document.getElementById('firstRunTitle');
     var hint = document.getElementById('firstRunHint');
     if(!box) return;
+    var extra = '';
+    if(memoryStatus && memoryStatus.claude && memoryStatus.state === 'absent'){
+      extra = ' Claude Code is on this machine. <b>Memory system for Claude Code</b> below sets that up in one click, the same way Connect and the meaning engine do.';
+    }
     if(firstRunMemories === 0){
       box.hidden = false;
       if(firstRunConnected){
         title.textContent = 'Connected, but nothing saved yet';
-        hint.innerHTML = 'You\\u2019re hooked up, and the store is still empty. In your next chat, tell your AI who you are and a rule it should follow, then say <b>remember that</b>. Smaller models sometimes need the nudge. Have a zip from another machine? Use <b>Import memories</b> below.';
+        hint.innerHTML = 'You\\u2019re hooked up, and the store is still empty. In your next chat, tell your AI who you are and a rule it should follow, then say <b>remember that</b>. Smaller models sometimes need the nudge. Have a zip from another machine? Use <b>Import memories</b> below.' + extra;
       } else {
         title.textContent = 'Nothing saved yet';
-        hint.innerHTML = 'Your AI has a memory, but the store is empty. Connect an app above, then in your next chat tell it a few things worth keeping &mdash; who you are, a rule it should follow, the project you&rsquo;re in &mdash; and say <b>remember that</b>. Have a zip from another machine? Use <b>Import memories</b> below.';
+        hint.innerHTML = 'Your AI has a memory, but the store is empty. Connect an app above, then in your next chat tell it a few things worth keeping &mdash; who you are, a rule it should follow, the project you&rsquo;re in &mdash; and say <b>remember that</b>. Have a zip from another machine? Use <b>Import memories</b> below.' + extra;
       }
     } else {
       box.hidden = true;
@@ -1194,13 +1233,213 @@ const PAGE = `<!doctype html>
     if(engineBusy) return;
     try { renderEngine(await (await fetch('/api/engine')).json()); } catch(e){}
   }
+  // --- Claude Code memory system (same installer as --install-memory-system) ---
+  var memoryBtn = document.getElementById('memoryBtn');
+  var memoryModal = document.getElementById('memoryModal');
+  var memoryPlanEl = document.getElementById('memoryPlan');
+  var memoryNextEl = document.getElementById('memoryNext');
+  var memoryConfirm = document.getElementById('memoryConfirm');
+  var memoryCancel = document.getElementById('memoryCancel');
+  var memoryModalBusy = document.getElementById('memoryModalBusy');
+  var memoryToast = document.getElementById('memoryToast');
+
+  function renderMemory(s){
+    var row = document.getElementById('memoryRow');
+    if(!row) return;
+    if(memoryBusy) return;
+    if(!s || !s.claude){ row.hidden = true; renderFirstRun(); return; }
+    row.hidden = false;
+    var pill = document.getElementById('memoryPill');
+    var hint = document.getElementById('memoryHint');
+    if(s.state === 'ready'){
+      pill.className = 'pill on'; pill.textContent = 'set up';
+      hint.textContent = s.handMerge && s.nextStep
+        ? 'Claude Code recalls this folder on each prompt. A memory file you already had was left alone. Tell Claude: ' + s.nextStep
+        : 'Claude Code recalls this folder on each prompt.';
+      memoryBtn.style.display = 'none';
+    } else if(s.state === 'index-pending'){
+      pill.className = 'pill warn'; pill.textContent = 'index not built';
+      hint.textContent = 'Set up, but the recall index is not built yet. It builds once the meaning engine is up: after Set up above, the next time you open this panel, or the first memory write.';
+      if(s.handMerge && s.nextStep) hint.textContent += ' Tell Claude: ' + s.nextStep;
+      memoryBtn.style.display = 'none';
+    } else {
+      pill.className = 'pill warn'; pill.textContent = 'not set up';
+      hint.textContent = 'One click lays down the memory folder, the recall hooks, and the index. You do not type a path.';
+      memoryBtn.style.display = '';
+      memoryBtn.className = 'primary';
+      memoryBtn.textContent = 'Set up';
+      memoryBtn.disabled = false;
+    }
+    renderFirstRun();
+  }
+
+  async function loadMemory(){
+    try {
+      var s = await (await fetch('/api/memory-system')).json();
+      memoryStatus = s;
+      renderMemory(s);
+    } catch(e){}
+  }
+
+  async function maybeBuildMemoryIndex(force){
+    if(memoryBusy) return;
+    if(!force && memoryIndexAttempted) return;
+    if(!memoryStatus || memoryStatus.state !== 'index-pending') return;
+    var eng;
+    try { eng = await (await fetch('/api/engine')).json(); } catch(e){ return; }
+    if(!eng || eng.state !== 'ready') return;
+    memoryIndexAttempted = true;
+    memoryBusy = true;
+    var pill = document.getElementById('memoryPill');
+    var hint = document.getElementById('memoryHint');
+    if(pill){ pill.className = 'pill warn'; pill.textContent = 'building index'; }
+    if(hint) hint.textContent = 'The meaning engine is up. Building the recall index.';
+    try {
+      var r = await (await fetch('/api/memory-system', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ rebuildIndex: true })
+      })).json();
+      if(r && r.state && memoryStatus){
+        memoryStatus.state = r.state;
+        memoryStatus.indexBuilt = !!r.indexBuilt;
+      }
+    } catch(e){}
+    memoryBusy = false;
+    renderMemory(memoryStatus);
+  }
+
+  function renderMemoryChoices(choices, selected){
+    var box = document.getElementById('memoryChoices');
+    box.innerHTML = '';
+    if(!choices || choices.length < 2){ box.hidden = true; return; }
+    box.hidden = false;
+    var lead = document.createElement('p');
+    lead.textContent = 'Which Claude Code memory folder? Home is the usual one. The others are folders already on this machine.';
+    box.appendChild(lead);
+    choices.forEach(function(c){
+      var label = document.createElement('label');
+      label.className = 'check';
+      var input = document.createElement('input');
+      input.type = 'radio';
+      input.name = 'memoryChoice';
+      input.value = c.path;
+      input.checked = selected ? (c.path === selected) : !!c.isDefault;
+      input.addEventListener('change', function(){
+        memoryChosen = c.path;
+        loadMemoryPlan(c.isDefault ? '' : c.path);
+      });
+      var span = document.createElement('span');
+      span.textContent = (c.isDefault ? 'Home directory' : c.label) + ' (' + c.path + ')';
+      label.appendChild(input);
+      label.appendChild(span);
+      box.appendChild(label);
+    });
+  }
+
+  async function loadMemoryPlan(dir){
+    memoryPlanEl.textContent = 'Reading the plan...';
+    memoryNextEl.hidden = true;
+    memoryConfirm.disabled = true;
+    try {
+      var body = { apply: false };
+      if(dir) body.memoryDir = dir;
+      var r = await (await fetch('/api/memory-system', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(body)
+      })).json();
+      memoryPlanEl.textContent = r.plan || (r.lines || []).join('\\n') || r.error || 'No plan.';
+      if(r.nextStep){
+        memoryNextEl.hidden = false;
+        memoryNextEl.textContent = 'Next: tell Claude "' + r.nextStep + '". The guide is written for exactly that.';
+      }
+      memoryConfirm.disabled = !r.ok;
+    } catch(e){
+      memoryPlanEl.textContent = 'Could not read the plan.';
+      memoryConfirm.disabled = true;
+    }
+  }
+
+  function closeMemoryModal(){
+    memoryModal.hidden = true;
+    memoryModalBusy.hidden = true;
+    memoryConfirm.disabled = false;
+  }
+
+  if(memoryBtn){
+    memoryBtn.addEventListener('click', async function(){
+      memoryModal.hidden = false;
+      memoryModalBusy.hidden = true;
+      var s = memoryStatus || {};
+      var choices = s.choices || [];
+      var def = null;
+      var planDir = '';
+      for(var i = 0; i < choices.length; i++) if(choices[i].isDefault) def = choices[i];
+      memoryChosen = def ? def.path : (s.memoryDir || '');
+      if(s.memoryDir){
+        for(var j = 0; j < choices.length; j++){
+          if(choices[j].path === s.memoryDir){
+            memoryChosen = choices[j].path;
+            if(!choices[j].isDefault) planDir = choices[j].path;
+          }
+        }
+      }
+      renderMemoryChoices(choices, memoryChosen);
+      await loadMemoryPlan(planDir);
+    });
+  }
+  if(memoryCancel) memoryCancel.addEventListener('click', closeMemoryModal);
+  if(memoryConfirm){
+    memoryConfirm.addEventListener('click', async function(){
+      memoryConfirm.disabled = true;
+      memoryModalBusy.hidden = false;
+      memoryBusy = true;
+      try {
+        var body = { apply: true };
+        var chosen = null;
+        var choices = (memoryStatus && memoryStatus.choices) || [];
+        for(var i = 0; i < choices.length; i++){
+          if(choices[i].path === memoryChosen) chosen = choices[i];
+        }
+        if(chosen && !chosen.isDefault) body.memoryDir = chosen.path;
+        var r = await (await fetch('/api/memory-system', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify(body)
+        })).json();
+        if(r && r.ok){
+          closeMemoryModal();
+          memoryBusy = false;
+          if(r.state) memoryStatus = r;
+          var msg = (r.index === 'pending' || r.state === 'index-pending')
+            ? 'Set up. The recall index will build once the meaning engine is up.'
+            : 'Set up. The recall index is built.';
+          if(r.nextStep) msg += ' Tell Claude: ' + r.nextStep;
+          memoryToast.hidden = false;
+          memoryToast.textContent = msg;
+          renderMemory(memoryStatus);
+          if(r.state === 'index-pending') maybeBuildMemoryIndex(true);
+        } else {
+          memoryBusy = false;
+          memoryModalBusy.hidden = true;
+          if(r && r.state){ memoryStatus = r; renderMemory(r); }
+          memoryPlanEl.textContent = (r && (r.plan || r.error)) || 'Setup did not finish.';
+          memoryConfirm.disabled = false;
+        }
+      } catch(e){
+        memoryBusy = false;
+        memoryModalBusy.hidden = true;
+        memoryPlanEl.textContent = 'Setup did not finish.';
+        memoryConfirm.disabled = false;
+      }
+    });
+  }
+
   engineBtn.addEventListener('click', async function(){
     engineBusy = true; engineBtn.disabled = true; engineBtn.textContent = 'Setting up\\u2026';
     enginePill.className = 'pill warn'; enginePill.textContent = 'working';
     engineHint.textContent = 'Downloading and loading the model. The first time this can take a minute or two\\u2026';
     var r; try { r = await (await fetch('/api/engine/setup', { method:'POST' })).json(); } catch(e){ r = { ok:false }; }
     engineBusy = false;
-    if(r && r.ok){ renderEngine({ state:'ready' }); if(!graphCollapsed) loadGraph(); }
+    if(r && r.ok){ renderEngine({ state:'ready' }); if(!graphCollapsed) loadGraph(); maybeBuildMemoryIndex(true); }
     else {
       renderEngine({ state:'needs-setup' });
       engineHint.textContent = (r && r.message) ? r.message : 'Setup didn\\u2019t complete. Make sure LM Studio is installed, then try again.';
@@ -1402,7 +1641,8 @@ const PAGE = `<!doctype html>
   setInterval(ping, 4000); ping();
 
   loadState(); loadClients(); loadEngine(); applyGraphCollapsed();
-  setInterval(function(){ loadState(); loadEngine(); if(!showDemo && !graphCollapsed) loadGraph(); }, 8000);
+  loadMemory().then(function(){ maybeBuildMemoryIndex(false); });
+  setInterval(function(){ loadState(); loadEngine(); loadMemory(); if(!showDemo && !graphCollapsed) loadGraph(); }, 8000);
 </script>
 </body></html>`;
 
@@ -1419,6 +1659,7 @@ let connectedOnce = false;
 let watchdogPaused = false;
 let exportInFlight = false;
 let importInFlight = false;
+let memoryInFlight = false;
 
 function pauseWatchdog() { watchdogPaused = true; }
 function resumeWatchdog() {
@@ -1445,9 +1686,11 @@ async function waitForTestHold() {
   // exists. Lets tests prove 409-on-double-POST and "no pings for >12s
   // does not kill the process" without a 50k zip. Import uses the
   // sibling RM_PANEL_IMPORT_HOLD so the two cannot starve each other.
-  const p = importInFlight
-    ? process.env.RM_PANEL_IMPORT_HOLD
-    : process.env.RM_PANEL_EXPORT_HOLD;
+  const p = memoryInFlight
+    ? process.env.RM_PANEL_MEMORY_HOLD
+    : importInFlight
+      ? process.env.RM_PANEL_IMPORT_HOLD
+      : process.env.RM_PANEL_EXPORT_HOLD;
   if (!p) return;
   await new Promise((resolve) => {
     const t = setInterval(() => {
@@ -1545,6 +1788,35 @@ function revealExportedFile(filePath) {
 function json(res, code, obj) {
   res.writeHead(code, { "Content-Type": "application/json" });
   res.end(JSON.stringify(obj));
+}
+
+function memoryPayload(result, apply) {
+  const lines = (result && result.lines) || [];
+  const plan = lines.map((l) => String(l).replace(/; merge by hand/g, "")).join("\n");
+  const status = memInstall.inspectMemorySystem(process.env);
+  return {
+    ok: !!(result && !result.exitCode),
+    apply: !!apply,
+    exitCode: result && result.exitCode || 0,
+    wrote: !!(result && result.wrote),
+    lines: lines,
+    plan: plan,
+    memoryDir: (result && result.memoryDir) || status.memoryDir || "",
+    index: (result && result.index) || (status.indexBuilt ? "built" : status.state),
+    handMerge: !!((result && result.handMerge) || status.handMerge),
+    nextStep: (result && result.nextStep) || status.nextStep || "",
+    state: status.state,
+    claude: status.claude,
+    choices: status.choices,
+    indexBuilt: status.indexBuilt,
+    installed: status.installed,
+    busy: memoryInFlight,
+    watchdog_paused: watchdogPaused,
+  };
+}
+
+function panelBusy() {
+  return !!(exportInFlight || importInFlight || memoryInFlight);
 }
 
 function body(req, cb) { let b = ""; req.on("data", (d) => (b += d)); req.on("end", () => cb(b)); }
@@ -1809,7 +2081,7 @@ const server = http.createServer((req, res) => {
   }
   if (req.method === "POST" && url === "/api/export") {
     body(req, () => {
-      if (exportInFlight || importInFlight) {
+      if (panelBusy()) {
         json(res, 409, { ok: false, code: "busy", error: "export already in progress" });
         return;
       }
@@ -1868,7 +2140,7 @@ const server = http.createServer((req, res) => {
         destBackend: dest.backend || "jsonl",
         suggestedSource: suggestImportSource(),
         withEdgesDefault: false,
-        busy: !!(exportInFlight || importInFlight),
+        busy: panelBusy(),
         import_busy: !!importInFlight,
         watchdog_paused: watchdogPaused,
       });
@@ -1878,7 +2150,7 @@ const server = http.createServer((req, res) => {
         destPath: STORE_PATH, destBackend: "jsonl",
         suggestedSource: suggestImportSource(),
         withEdgesDefault: false,
-        busy: !!(exportInFlight || importInFlight),
+        busy: panelBusy(),
         import_busy: !!importInFlight,
         watchdog_paused: watchdogPaused,
         error: String(e && e.message || e),
@@ -1927,7 +2199,7 @@ const server = http.createServer((req, res) => {
         });
         return;
       }
-      if (exportInFlight || importInFlight) {
+      if (panelBusy()) {
         json(res, 409, { ok: false, code: "busy", error: "import already in progress" });
         return;
       }
@@ -1953,6 +2225,132 @@ const server = http.createServer((req, res) => {
         });
       }).finally(() => {
         importInFlight = false;
+        resumeWatchdog();
+      });
+    });
+    return;
+  }
+  // Claude Code memory system. GET is the card state (read-only).
+  // POST dry-run (apply:false) is the confirm-modal plan. POST apply:true
+  // calls the same installer as --install-memory-system. POST rebuildIndex
+  // builds the recall cache after the meaning engine is up. W-02 already
+  // gates every POST. Not an MCP tool.
+  if (req.method === "GET" && (url === "/api/memory-system" || url.startsWith("/api/memory-system?"))) {
+    try {
+      const status = memInstall.inspectMemorySystem(process.env);
+      json(res, 200, Object.assign({ busy: memoryInFlight, watchdog_paused: watchdogPaused }, status));
+    } catch (e) {
+      json(res, 200, {
+        claude: false, state: "hidden", choices: [], installed: false, indexBuilt: false,
+        memoryDir: "", handMerge: false, nextStep: "",
+        busy: memoryInFlight, watchdog_paused: watchdogPaused,
+        error: String(e && e.message || e),
+      });
+    }
+    return;
+  }
+  if (req.method === "POST" && url === "/api/memory-system") {
+    body(req, (b) => {
+      let parsed = {};
+      try { parsed = JSON.parse(b) || {}; } catch { parsed = {}; }
+      const rebuildIndex = !!parsed.rebuildIndex;
+      const apply = !!parsed.apply;
+      if (rebuildIndex && apply) {
+        json(res, 400, { ok: false, code: "bad_request", error: "rebuild and apply are separate steps", wrote: false });
+        return;
+      }
+      if (!memInstall.claudeCodePresent(process.env)) {
+        json(res, 200, {
+          ok: false, code: "no_claude", wrote: false, claude: false, state: "hidden",
+          error: "Claude Code is not on this machine (~/.claude is absent). Nothing written.",
+        });
+        return;
+      }
+      if (rebuildIndex) {
+        const status = memInstall.inspectMemorySystem(process.env);
+        if (status.state === "hidden" || status.state === "absent") {
+          json(res, 200, { ok: false, code: "not_installed", state: status.state, wrote: false, error: "The memory system is not set up yet." });
+          return;
+        }
+        if (status.state === "ready") {
+          json(res, 200, { ok: true, rebuildIndex: true, state: "ready", index: "built", indexBuilt: true, wrote: false, memoryDir: status.memoryDir });
+          return;
+        }
+        if (panelBusy()) {
+          json(res, 409, { ok: false, code: "busy", error: "memory setup already in progress" });
+          return;
+        }
+        memoryInFlight = true;
+        pauseWatchdog();
+        const run = async () => {
+          await waitForTestHold();
+          await yieldToEventLoop();
+          return memInstall.rebuildInstalledIndex(process.env);
+        };
+        run().then((rebuilt) => {
+          const after = rebuilt.status || memInstall.inspectMemorySystem(process.env);
+          json(res, 200, {
+            ok: !rebuilt.exitCode,
+            rebuildIndex: true,
+            deferred: rebuilt.reason === "embedder",
+            state: after.state,
+            index: after.indexBuilt ? "built" : "pending",
+            indexBuilt: !!after.indexBuilt,
+            memoryDir: after.memoryDir || "",
+            handMerge: !!after.handMerge,
+            nextStep: after.nextStep || "",
+            claude: !!after.claude,
+            wrote: false,
+          });
+        }).catch((e) => {
+          json(res, 200, { ok: false, rebuildIndex: true, code: "failed", error: String(e && e.message || e), wrote: false });
+        }).finally(() => {
+          memoryInFlight = false;
+          resumeWatchdog();
+        });
+        return;
+      }
+      const requested = parsed.memoryDir ? String(parsed.memoryDir) : "";
+      const choice = memInstall.allowedMemoryDir(process.env, requested);
+      if (!choice) {
+        json(res, 400, {
+          ok: false, code: "bad_dir", wrote: false,
+          error: "That folder is not a Claude Code memory folder this panel will set up. Nothing written.",
+        });
+        return;
+      }
+      const runInstall = () => memInstall.installMemorySystem({
+        apply: apply,
+        deferIndex: true,
+        // Home is the default. Passing it through would hide "(default)" in the plan.
+        memoryDir: choice.isDefault ? "" : choice.path,
+        env: process.env,
+      });
+      if (!apply) {
+        runInstall().then((result) => {
+          json(res, 200, memoryPayload(result, false));
+        }).catch((e) => {
+          json(res, 200, { ok: false, apply: false, wrote: false, code: "failed", error: String(e && e.message || e) });
+        });
+        return;
+      }
+      if (panelBusy()) {
+        json(res, 409, { ok: false, code: "busy", error: "memory setup already in progress" });
+        return;
+      }
+      memoryInFlight = true;
+      pauseWatchdog();
+      const run = async () => {
+        await waitForTestHold();
+        await yieldToEventLoop();
+        return runInstall();
+      };
+      run().then((result) => {
+        json(res, 200, memoryPayload(result, true));
+      }).catch((e) => {
+        json(res, 200, { ok: false, apply: true, wrote: false, code: "failed", error: String(e && e.message || e) });
+      }).finally(() => {
+        memoryInFlight = false;
         resumeWatchdog();
       });
     });
