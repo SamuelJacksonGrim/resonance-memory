@@ -38,6 +38,10 @@
  *   - sets up the Claude Code memory system when ~/.claude is present
  *     (one button, confirm modal shows the installer dry-run, Apply calls
  *     installMemorySystem in-process; not an MCP tool),
+ *   - on a packaged first run from anywhere that is not the installed copy,
+ *     offers a folder (default per OS, editable text — no folder-picker
+ *     window) and a Desktop shortcut. The shortcut can move. The installed
+ *     file cannot. Source checkouts never see this. Not an MCP tool.
  *   - Terminal commands: a closed-by-default reference of every flag entry.js
  *     actually dispatches (arg parser is the authority). Copy-paste uses this
  *     binary (the exe, or `node entry.js` from source — never `node panel.js`).
@@ -64,8 +68,9 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
-const { exec, execFile } = require("child_process");
+const { exec, execFile, spawn } = require("child_process");
 const install = require("./install.js");
+const installHome = require("./install-home.js");
 const field = require("./field.js");
 const engine = require("./engine.js");
 const { openEdgeStore } = require("./edges.js");
@@ -341,6 +346,11 @@ const PAGE = `<!doctype html>
   .firstrun .label { margin-bottom: 4px; }
   .firstrun .hint { margin: 0 0 8px; color: #5b4a20; }
   .firstrun button { margin-top: 2px; }
+  label.check { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; margin: 8px 0; line-height: 1.4; }
+  label.check input { margin-top: 3px; flex: none; }
+  .install-actions { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; align-items: center; }
+  #installGo { white-space: nowrap; }
+  #installDir[readonly] { opacity: .85; }
   details.mcpother { margin: 8px 0 12px; padding: 10px 14px; border-radius: 12px;
     background: #f7f8fa; border: 1px solid rgba(0,0,0,.05); }
   details.mcpother summary { cursor: pointer; font-weight: 600; font-size: 13px; }
@@ -389,6 +399,21 @@ const PAGE = `<!doctype html>
   <div class="card">
     <h1>&#128220; Resonance Memory</h1>
     <p class="sub">A local memory for your AI. Nothing leaves this machine.</p>
+
+    <div id="installRow" class="firstrun" hidden>
+      <div class="label" id="installTitle">Where should Resonance Memory live?</div>
+      <div class="hint" id="installHint">Pick a folder and the program stays there. Connect and the memory hooks remember that path. The program file goes inside the folder.</div>
+      <div class="pickrow" id="installDirRow">
+        <input type="text" id="installDir" spellcheck="false" aria-label="Install folder">
+      </div>
+      <label class="check" id="installShortcutLabel"><input type="checkbox" id="installShortcut" checked> Put a shortcut on the Desktop</label>
+      <div class="hint" id="installWarn">The installed file has to stay where you put it. Moving or deleting it breaks Connect and the memory hooks until you put the file back. The Desktop shortcut can be moved or deleted freely.</div>
+      <div class="install-actions">
+        <button type="button" id="installGo" class="primary">Install</button>
+        <button type="button" id="installSkip">Not now</button>
+      </div>
+      <div id="installMsg" class="hint"></div>
+    </div>
 
     <div id="clients" class="clients sec"></div>
     <details class="mcpother" id="mcpOther">
@@ -512,7 +537,22 @@ const PAGE = `<!doctype html>
         <div class="cname">Disconnect apps <code>--uninstall</code></div>
         <pre class="mcp"><span class="cli-prefix"></span> --uninstall</pre>
         <div class="copyrow"><button type="button" data-cli-copy="--uninstall">Copy</button><span class="hint cli-copy-msg"></span></div>
-        <div class="hint">Disconnects those apps. Same as <b>Disconnect</b>. <b>Does not delete your memories.</b></div>
+        <div class="hint">Disconnects those apps. Same as <b>Disconnect</b>. <b>Does not delete your memories.</b> It also does not delete the installed program file. That is <code>--uninstall-app</code>.</div>
+      </div>
+
+      <div class="cli-cmd">
+        <div class="cname">Install the program <code>--install-app</code></div>
+        <pre class="mcp"><span class="cli-prefix"></span> --install-app</pre>
+        <div class="copyrow"><button type="button" data-cli-copy="--install-app">Copy</button><span class="hint cli-copy-msg"></span></div>
+        <div class="hint">Copies this program into a fixed folder and points Connect and the memory hooks at that copy. The default folder is <code>%LOCALAPPDATA%\Programs\Resonance Memory</code> on Windows, <code>~/Applications/Resonance Memory</code> on macOS, and <code>~/.local/bin</code> on Linux. A Desktop shortcut is added unless you pass <code>--no-shortcut</code>. The shortcut can be moved or deleted. The installed file cannot: moving or deleting it breaks Connect and the memory hooks until you put the file back. A newer copy updates that same file, so the path does not change. From source (<code>node entry.js</code>) this refuses and writes nothing. Not an MCP tool.</div>
+        <div class="hint cli-flags">--dir &lt;folder&gt; &nbsp; --no-shortcut</div>
+      </div>
+
+      <div class="cli-cmd">
+        <div class="cname">Remove the installed program <code>--uninstall-app</code></div>
+        <pre class="mcp"><span class="cli-prefix"></span> --uninstall-app</pre>
+        <div class="copyrow"><button type="button" data-cli-copy="--uninstall-app">Copy</button><span class="hint cli-copy-msg"></span></div>
+        <div class="hint">Disconnects LM Studio and Claude Desktop, removes the two memory hooks this program added, and deletes the Desktop shortcut and the installed program file. <b>Does not delete your memories.</b> Disconnect above only unwires an app. It does not remove the program.</div>
       </div>
 
       <div class="cli-cmd">
@@ -593,7 +633,7 @@ const PAGE = `<!doctype html>
 
     <div class="foot">
       <div><b>For weaker models</b> that forget to save or recall: <a href="#" id="spBtn">copy a ready-made system prompt</a> and paste it into your app's system-prompt box. <span id="spMsg"></span></div>
-      <div style="margin-top:11px"><b>Removing it?</b> Click <b>Disconnect</b> next to each app above, then delete <code>resonance-memory.exe</code> &mdash; that's the whole app. Your memories live at <code id="storePath">&hellip;</code> and stay put unless you delete that file too. SQLite (the default) is one <code>.db</code>. A JSONL pin still has the small <code>.edges.json</code> / <code>.access.json</code> companions beside the <code>.jsonl</code> (and a leftover <code>.assoc.json</code> if an older build wrote one).</div>
+      <div style="margin-top:11px"><b>Removing it?</b> Click <b>Disconnect</b> next to each app above. That only unwires the app. It does not delete the program, and it does not delete memories. To remove the program, delete the installed file (or run <code>uninstall.bat</code> beside it) and the Desktop shortcut. The shortcut can be moved or deleted freely. The installed file has to stay where you put it: moving or deleting it breaks Connect and the memory hooks until you put the file back. Your memories live at <code id="storePath">&hellip;</code> and stay put unless you delete that file too. SQLite (the default) is one <code>.db</code>. A JSONL pin still has the small <code>.edges.json</code> / <code>.access.json</code> companions beside the <code>.jsonl</code> (and a leftover <code>.assoc.json</code> if an older build wrote one).</div>
       <div style="margin-top:11px">The field and extraction switches apply instantly &mdash; no restart. This panel closes itself a few seconds after you close the tab.</div>
     </div>
   </div>
@@ -1640,7 +1680,110 @@ const PAGE = `<!doctype html>
   function ping(){ fetch('/api/ping', { method:'POST' }).catch(function(){}); }
   setInterval(ping, 4000); ping();
 
+  var installMode = '';
+  function renderInstall(s){
+    var row = document.getElementById('installRow');
+    if(!row) return;
+    installMode = (s && s.mode) || '';
+    var show = installMode === 'offer' || installMode === 'update' || installMode === 'spare';
+    row.hidden = !show;
+    if(!show) return;
+    var title = document.getElementById('installTitle');
+    var hint = document.getElementById('installHint');
+    var dirRow = document.getElementById('installDirRow');
+    var dir = document.getElementById('installDir');
+    var go = document.getElementById('installGo');
+    var skip = document.getElementById('installSkip');
+    var shortcutLabel = document.getElementById('installShortcutLabel');
+    var shortcut = document.getElementById('installShortcut');
+    var warn = document.getElementById('installWarn');
+    if(warn && s.warning) warn.textContent = s.warning;
+    if(installMode === 'offer'){
+      title.textContent = 'Where should Resonance Memory live?';
+      hint.textContent = 'Pick a folder and the program stays there. Connect and the memory hooks remember that path. The program file goes inside the folder.';
+      dirRow.hidden = false;
+      dir.readOnly = false;
+      dir.value = s.suggestedDir || s.defaultDir || '';
+      shortcutLabel.hidden = false;
+      if(shortcut) shortcut.checked = s.shortcutDefault !== false;
+      go.hidden = false;
+      go.textContent = 'Install';
+      skip.hidden = false;
+    } else if(installMode === 'update'){
+      title.textContent = 'Update the installed copy?';
+      hint.textContent = 'An older copy is already installed (version ' + (s.installedVersion || '') + '). This one is version ' + (s.version || '') + '. Updating replaces the file in that same folder, so Connect and the memory hooks keep the same path. An app that already has the file open keeps the old version until you restart it.';
+      dirRow.hidden = false;
+      dir.readOnly = true;
+      dir.value = s.dir || '';
+      shortcutLabel.hidden = false;
+      if(shortcut) shortcut.checked = true;
+      go.hidden = false;
+      go.textContent = 'Update';
+      skip.hidden = false;
+    } else {
+      title.textContent = 'Already installed';
+      hint.textContent = s.newerInstalled
+        ? 'A newer copy is already installed at ' + (s.exe || '') + '. This file is an older extra copy. Open the installed one.'
+        : 'Resonance Memory is already installed at ' + (s.exe || '') + '. This file is an extra copy. You can delete it. Open the installed one to use the copy that stays put.';
+      dirRow.hidden = true;
+      shortcutLabel.hidden = true;
+      go.hidden = false;
+      go.textContent = 'Open installed copy';
+      skip.hidden = true;
+    }
+  }
+  async function loadInstall(){
+    try { renderInstall(await (await fetch('/api/install-home')).json()); } catch(e){}
+  }
+  (function setupInstall(){
+    var go = document.getElementById('installGo');
+    var skip = document.getElementById('installSkip');
+    var msg = document.getElementById('installMsg');
+    if(skip) skip.addEventListener('click', async function(){
+      if(installMode === 'offer'){
+        try {
+          await fetch('/api/install-home', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'decline' }) });
+        } catch(e){}
+      }
+      var row = document.getElementById('installRow');
+      if(row) row.hidden = true;
+    });
+    if(!go) return;
+    go.addEventListener('click', async function(){
+      var action = installMode === 'update' ? 'update' : (installMode === 'spare' ? 'open' : 'install');
+      var shortcut = document.getElementById('installShortcut');
+      var dir = document.getElementById('installDir');
+      go.disabled = true;
+      if(msg) msg.textContent = '';
+      try {
+        var r = await (await fetch('/api/install-home', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ action: action, dir: dir ? dir.value : '', shortcut: !!(shortcut && shortcut.checked) })
+        })).json();
+        if(r && r.ok && r.relaunch){
+          if(msg) msg.textContent = 'Installed. Opening the copy that stays put. You can close this tab.';
+        } else if(r && r.ok && (r.action === 'decline' || r.mode === 'declined')){
+          var row = document.getElementById('installRow');
+          if(row) row.hidden = true;
+        } else if(r && r.ok){
+          var note = r.message || ('Installed at ' + (r.exe || ''));
+          if(r.warnings && r.warnings.length) note += ' ' + r.warnings.join(' ');
+          if(msg) msg.textContent = note;
+          go.disabled = false;
+          loadInstall();
+        } else {
+          if(msg) msg.textContent = (r && (r.error || r.message)) || 'That did not work.';
+          go.disabled = false;
+        }
+      } catch(e){
+        if(msg) msg.textContent = 'That did not work.';
+        go.disabled = false;
+      }
+    });
+  })();
+
   loadState(); loadClients(); loadEngine(); applyGraphCollapsed();
+  loadInstall();
   loadMemory().then(function(){ maybeBuildMemoryIndex(false); });
   setInterval(function(){ loadState(); loadEngine(); loadMemory(); if(!showDemo && !graphCollapsed) loadGraph(); }, 8000);
 </script>
@@ -1660,6 +1803,7 @@ let watchdogPaused = false;
 let exportInFlight = false;
 let importInFlight = false;
 let memoryInFlight = false;
+let installInFlight = false;
 
 function pauseWatchdog() { watchdogPaused = true; }
 function resumeWatchdog() {
@@ -1690,7 +1834,9 @@ async function waitForTestHold() {
     ? process.env.RM_PANEL_MEMORY_HOLD
     : importInFlight
       ? process.env.RM_PANEL_IMPORT_HOLD
-      : process.env.RM_PANEL_EXPORT_HOLD;
+      : installInFlight
+        ? process.env.RM_PANEL_INSTALL_HOLD
+        : process.env.RM_PANEL_EXPORT_HOLD;
   if (!p) return;
   await new Promise((resolve) => {
     const t = setInterval(() => {
@@ -1816,7 +1962,29 @@ function memoryPayload(result, apply) {
 }
 
 function panelBusy() {
-  return !!(exportInFlight || importInFlight || memoryInFlight);
+  return !!(exportInFlight || importInFlight || memoryInFlight || installInFlight);
+}
+
+// The installed copy opens its own panel. This process has to let go of the
+// port first. Tests set RESONANCE_MEMORY_NO_OPEN, so they never spawn it.
+function scheduleHandoff(exe) {
+  if (process.env.RESONANCE_MEMORY_NO_OPEN === "1") return false;
+  if (!exe || !fs.existsSync(exe)) return false;
+  setTimeout(() => {
+    try { server.close(); } catch { /* */ }
+    try { if (typeof server.closeAllConnections === "function") server.closeAllConnections(); } catch { /* */ }
+    try {
+      const child = spawn(exe, [], {
+        detached: true,
+        stdio: "ignore",
+        windowsHide: true,
+        env: process.env,
+      });
+      child.unref();
+    } catch { /* the shortcut still opens the installed copy */ }
+    process.exit(0);
+  }, 250);
+  return true;
 }
 
 function body(req, cb) { let b = ""; req.on("data", (d) => (b += d)); req.on("end", () => cb(b)); }
@@ -2351,6 +2519,95 @@ const server = http.createServer((req, res) => {
         json(res, 200, { ok: false, apply: true, wrote: false, code: "failed", error: String(e && e.message || e) });
       }).finally(() => {
         memoryInFlight = false;
+        resumeWatchdog();
+      });
+    });
+    return;
+  }
+  // Where the packaged program lives. GET is read-only. POST install / update
+  // copies the exe, repoints Connect and the two memory hooks, and (unless
+  // RESONANCE_MEMORY_NO_OPEN) hands the browser to the installed copy.
+  // Source checkouts get mode "source" and a POST that writes nothing.
+  // Not an MCP tool.
+  if (req.method === "GET" && (url === "/api/install-home" || url.startsWith("/api/install-home?"))) {
+    try {
+      const status = installHome.inspect({ env: process.env });
+      json(res, 200, Object.assign({}, status, {
+        busy: !!installInFlight,
+        watchdog_paused: !!watchdogPaused,
+      }));
+    } catch (e) {
+      json(res, 200, {
+        mode: "source",
+        error: String(e && e.message || e),
+        warning: installHome.WARNING,
+        busy: !!installInFlight,
+        watchdog_paused: !!watchdogPaused,
+      });
+    }
+    return;
+  }
+  if (req.method === "POST" && url === "/api/install-home") {
+    body(req, (b) => {
+      let parsed = {};
+      try { parsed = JSON.parse(b) || {}; } catch { parsed = {}; }
+      const action = parsed.action ? String(parsed.action) : "";
+      if (action !== "install" && action !== "update" && action !== "decline" && action !== "open") {
+        json(res, 400, { ok: false, code: "bad_request", wrote: false, error: "Unknown install action." });
+        return;
+      }
+      if (action === "decline") {
+        try {
+          json(res, 200, installHome.declineInstall({ env: process.env }));
+        } catch (e) {
+          json(res, 200, { ok: false, code: "failed", wrote: false, error: String(e && e.message || e) });
+        }
+        return;
+      }
+      if (action === "open") {
+        const status = installHome.inspect({ env: process.env });
+        if (!status.exe) {
+          json(res, 200, { ok: false, code: "not_installed", wrote: false, error: "There is no installed copy to open." });
+          return;
+        }
+        const relaunch = scheduleHandoff(status.exe);
+        json(res, 200, {
+          ok: true,
+          action: "open",
+          wrote: false,
+          exe: status.exe,
+          relaunch: relaunch,
+          message: relaunch ? "Opening the installed copy." : "The installed copy is at " + status.exe + ".",
+        });
+        return;
+      }
+      if (panelBusy()) {
+        json(res, 409, { ok: false, code: "busy", wrote: false, error: "Install already in progress" });
+        return;
+      }
+      installInFlight = true;
+      pauseWatchdog();
+      const run = async () => {
+        await waitForTestHold();
+        const bits = installHome.runtimeFromEnv(process.env);
+        return installHome.installApp({
+          env: process.env,
+          isSea: bits.isSea,
+          sourceExe: bits.sourceExe,
+          version: bits.version,
+          action: action,
+          dir: parsed.dir ? String(parsed.dir) : "",
+          shortcut: parsed.shortcut !== false,
+        });
+      };
+      run().then((result) => {
+        let relaunch = false;
+        if (result && result.ok && result.wrote && result.exe) relaunch = scheduleHandoff(result.exe);
+        json(res, 200, Object.assign({}, result, { relaunch: relaunch }));
+      }).catch((e) => {
+        json(res, 200, { ok: false, code: "failed", wrote: false, error: String(e && e.message || e) });
+      }).finally(() => {
+        installInFlight = false;
         resumeWatchdog();
       });
     });

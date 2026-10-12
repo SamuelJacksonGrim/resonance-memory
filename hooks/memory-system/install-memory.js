@@ -35,8 +35,13 @@
  *
  * Hook entries are Claude Code exec form (command + args, no shell). The
  * command is this program: the exe when packaged, `node entry.js` from
- * source. Paths the hooks cannot put in the environment live in the config
- * file, which recall.js reads when the flag and the env are both absent.
+ * source. A packaged run prefers the installed copy (install-home.js) when
+ * one is recorded, so a spare Downloads launch does not point the hooks at
+ * itself. Existing hooks are still detected by flag name. From the packaged
+ * program, a hook that already matches the flag but names an older path is
+ * retargeted. From source it is left alone. Paths the hooks cannot put in
+ * the environment live in the config file, which recall.js reads when the
+ * flag and the env are both absent.
  *
  * Not an MCP tool.
  */
@@ -83,8 +88,53 @@ function pick() {
 }
 
 function selfExe() {
-  if (isSea()) return { command: process.execPath, args: [] };
+  if (isSea()) {
+    let stable = "";
+    try { stable = require("../../install-home.js").stableCommand() || ""; }
+    catch { stable = ""; }
+    if (stable) return { command: stable, args: [] };
+    return { command: process.execPath, args: [] };
+  }
   return { command: process.execPath, args: [entryScript()] };
+}
+
+function sameLaunch(h, spec) {
+  if (!h || !spec) return false;
+  if (String(h.command || "") !== String(spec.command || "")) return false;
+  const args = Array.isArray(h.args) ? h.args.map(String) : [];
+  const want = (spec.args || []).map(String);
+  if (args.length !== want.length) return false;
+  for (let i = 0; i < args.length; i++) if (args[i] !== want[i]) return false;
+  return true;
+}
+
+// Detection stays by flag name. Only the command and args change; timeout
+// and statusMessage stay. Returns whether anything was rewritten.
+function retargetOwnedHooks(settings, recallSpec, rebuildSpec) {
+  const out = { recall: false, rebuild: false };
+  const jobs = [
+    ["recall", isRecallHook, recallSpec],
+    ["rebuild", isRebuildHook, rebuildSpec],
+  ];
+  const events = settings && settings.hooks;
+  if (!events || typeof events !== "object") return out;
+  for (const [key, pred, spec] of jobs) {
+    for (const event of Object.keys(events)) {
+      const list = events[event];
+      if (!Array.isArray(list)) continue;
+      for (const g of list) {
+        if (!g || !Array.isArray(g.hooks)) continue;
+        for (const h of g.hooks) {
+          if (!pred(h) || sameLaunch(h, spec)) continue;
+          h.type = "command";
+          h.command = spec.command;
+          h.args = (spec.args || []).slice();
+          out[key] = true;
+        }
+      }
+    }
+  }
+  return out;
 }
 
 function invocationPrefix() {
@@ -668,19 +718,28 @@ async function installMemorySystem(opts) {
         if (badRebuild) blockers.push(settingsPath + ": " + badRebuild + ". Nothing written.");
         const haveRecall = findHook(settings, "UserPromptSubmit", isRecallHook);
         const haveRebuild = findHook(settings, "PostToolUse", isRebuildHook);
-        if (haveRecall) {
+        // From source, an existing hook is left alone (today's behaviour).
+        // From the packaged program, a hook we own that still names an old
+        // path is retargeted. Detection is still the flag name.
+        const retarget = isSea() ? retargetOwnedHooks(settings, recallHook, rebuildHook) : { recall: false, rebuild: false };
+        if (retarget.recall) {
+          say("would retarget UserPromptSubmit: " + formatLaunch(recallHook));
+        } else if (haveRecall) {
           say("UserPromptSubmit already has a recall hook (" + describeHook(haveRecall) + "); not adding another");
         } else if (!badRecall) {
           addCommandHook(settings, "UserPromptSubmit", "", recallHook);
           say("would add UserPromptSubmit: " + formatLaunch(recallHook));
         }
-        if (haveRebuild) {
+        if (retarget.rebuild) {
+          say("would retarget PostToolUse " + POST_MATCHER + ": " + formatLaunch(rebuildHook));
+        } else if (haveRebuild) {
           say("PostToolUse already has a rebuild hook (" + describeHook(haveRebuild) + "); not adding another");
         } else if (!badRebuild) {
           addCommandHook(settings, "PostToolUse", POST_MATCHER, rebuildHook);
           say("would add PostToolUse " + POST_MATCHER + ": " + formatLaunch(rebuildHook));
         }
-        if ((!haveRecall || !haveRebuild) && !badRecall && !badRebuild) {
+        const addedOrMoved = ((!haveRecall && !badRecall) || (!haveRebuild && !badRebuild) || retarget.recall || retarget.rebuild);
+        if (addedOrMoved && !badRecall && !badRebuild) {
           settingsWrite = {
             text: JSON.stringify(settings, null, 2) + "\n",
             backup: loaded.exists,
@@ -843,6 +902,8 @@ module.exports = {
   invocationPrefix,
   isRecallHook,
   isRebuildHook,
+  sameLaunch,
+  retargetOwnedHooks,
   fillClaudeBlock,
   loadTemplate,
   loadCabinet,

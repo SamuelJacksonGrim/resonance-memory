@@ -28,7 +28,13 @@
 //   memory --recall                     -> recall rebuild / query / history / plan
 //   memory --recall-hook                -> Claude Code UserPromptSubmit hook
 //   memory --rebuild-on-write           -> Claude Code PostToolUse hook
-// These four are CLI and hooks, not MCP tools.
+//   memory --install-app [--dir] [--no-shortcut] -> copy this exe to a fixed folder
+//   memory --uninstall-app              -> disconnect, shortcut, installed file; not memories
+// These are CLI and hooks, not MCP tools.
+
+// A previous update may have left <this-exe>.old while a client still had the
+// old file mapped. Once that client is gone, delete it. No-op from source.
+try { require("./install-home.js").cleanupOld(process.execPath); } catch { /* */ }
 
 const mode = process.argv[2];
 
@@ -63,6 +69,20 @@ if (mode === "--mcp") {
   });
 } else if (mode === "--import") {
   require("./import-memory.js").main(process.argv.slice(2)).then((code) => {
+    if (code) process.exit(code);
+  }).catch((e) => {
+    console.error(String(e.message || e));
+    process.exit(2);
+  });
+} else if (mode === "--install-app") {
+  require("./install-home.js").mainInstall(process.argv.slice(3)).then((code) => {
+    if (code) process.exit(code);
+  }).catch((e) => {
+    console.error(String(e.message || e));
+    process.exit(2);
+  });
+} else if (mode === "--uninstall-app") {
+  require("./install-home.js").mainUninstall(process.argv.slice(3)).then((code) => {
     if (code) process.exit(code);
   }).catch((e) => {
     console.error(String(e.message || e));
