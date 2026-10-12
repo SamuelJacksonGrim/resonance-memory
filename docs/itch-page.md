@@ -1,15 +1,28 @@
 # itch.io page copy (source of truth for https://samueljacksongrim.itch.io/resonance-memory)
 
-itch.io doesn't update from the README the way the GitHub page does, so its text lives here. When a release changes
-what the app does, edit this file in the same PR, then paste it into the itch "Edit game" form.
+itch.io does not update from GitHub (neither the README nor the landing page), so its text lives here. When a release
+changes what the app does, edit this file in the same PR; the release kit on the Desktop gets a paste-ready copy.
 
-**Platforms to tick:** Windows, macOS, Linux. Upload one file per platform from the GitHub Release
-(`resonance-memory.exe`, `resonance-memory-macos-arm64`, `resonance-memory-linux-x64`), each tagged with its
-platform. Checksums are in the Release's `SHA256SUMS`.
+## Uploads
+
+Delete the old `resonance-memory.exe` upload, then upload these three from the GitHub Release,
+each with its platform ticked:
+
+| File | Tick |
+|---|---|
+| `resonance-memory.exe` | Windows |
+| `resonance-memory-macos-arm64` | macOS |
+| `resonance-memory-linux-x64` | Linux |
+
+(`SHA256SUMS` doesn't need uploading; it's on the GitHub release.)
+
+## Short description / tagline
+
+Your AI takes notes. This builds the mind. A lasting, private memory for your local AI.
 
 ---
 
-## Description
+## Description (paste into the "Description" box)
 
 **Your AI takes notes. This builds the mind.**
 
@@ -32,11 +45,25 @@ as a set. **That's the difference between a notebook and a memory.**
 - **Connects the dots you didn't.** Surfaces related memories you never thought to ask for, and strengthens the links
   you actually use.
 
+**NEW IN 0.3: THE WHOLE MEMORY SYSTEM**
+
+The memory system we built and run every day with Claude now ships inside the app, exactly as it runs: plain folders
+and files on your computer.
+
+- **Who you are stays on top.** How you want to be treated and how you work together are never filed away.
+- **Everything else is filed** into subject drawers, each with its own index card. Replaced facts fade into a dated
+  history instead of being lost.
+- **Recall on every message.** Each message you send surfaces the memories that match it, so the AI never has to
+  remember to look.
+- **Keeps itself current.** Every memory write updates the recall index in the background.
+
+**One click in the app sets it up for Claude Code**, and any other AI agent can be pointed at the same folder.
+
 **PRIVATE AND YOURS**
 
-Everything (your memories and the graph) lives in **one file** under your user folder. No servers, no telemetry, no
-account. **Export my memories** writes a `.zip` you own, including a plain file any other tool can read; **Import**
-brings it back on any machine. **Open source (AGPL-3.0).**
+Everything lives on **your computer**, under your user folder. No servers, no telemetry, no account. **Export my
+memories** writes a `.zip` you own, including a plain file any other tool can read; **Import** brings it back on any
+machine. **Open source (AGPL-3.0).**
 
 **WHAT YOU NEED**
 
@@ -44,13 +71,7 @@ An AI app that speaks **MCP**: **LM Studio** or **Claude Desktop** (one-click co
 Continue, Hermes** and others (copy-paste setup from the app). For meaning-based recall, LM Studio with a small
 embedding model. **The app sets that up in one click.**
 
-**FOR CLAUDE CODE USERS**
-
-- **Auto-recall:** one hook and it recalls on every message, so Claude never has to remember to ask.
-- **A filing cabinet for Claude's own memory:** keeps who you are and how you work at the front, and files
-  everything else into subject folders. Hand Claude the guide and it sets it up.
-
-Both guides are in the repo: github.com/SamuelJacksonGrim/resonance-memory
+Guides and source: github.com/SamuelJacksonGrim/resonance-memory
 
 Free, and it stays free. If it earns a place in how you work, there's a Ko-fi link right in the app.
 
@@ -58,7 +79,7 @@ Made by the *Architect of Resonance.*
 
 ---
 
-## Install instructions
+## Install instructions (paste into the "Install instructions" box)
 
 **Windows, macOS and Linux.** One file, no installer.
 
@@ -84,3 +105,4 @@ Made by the *Architect of Resonance.*
 
 **Everything stays on your computer.** To remove it: click **Disconnect** in the app, then delete the file. Your
 memories stay in your user folder until you delete them yourself.
+

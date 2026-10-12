@@ -480,7 +480,7 @@ async function rebuild(opts) {
   // the lock, so a rebuild that waited sees the latest files.
   if (!fs.existsSync(cfg.memoryDir) || !fs.statSync(cfg.memoryDir).isDirectory()) {
     io.host("No directory at " + cfg.memoryDir + ". Cache not touched.");
-    return { exitCode: 1, cfg };
+    return { exitCode: 1, cfg, reason: "missing" };
   }
   fs.mkdirSync(path.dirname(cfg.cache), { recursive: true });
   const lock = await acquireLock(cfg.cache, cfg.lockTimeoutMs);
@@ -488,7 +488,7 @@ async function rebuild(opts) {
     const msg = "Another rebuild held the lock for 5 min; giving up. Cache untouched.";
     io.host(msg);
     io.out(msg);
-    return { exitCode: 1, cfg };
+    return { exitCode: 1, cfg, reason: "lock" };
   }
   try {
     const old = ciMap();
@@ -502,13 +502,13 @@ async function rebuild(opts) {
     const listed = recallFiles(cfg);
     if (listed.error) {
       io.host(listed.error);
-      return { exitCode: 1, cfg };
+      return { exitCode: 1, cfg, reason: "list" };
     }
     const dup = duplicateMessage(listed.files);
     if (dup) {
       io.host(dup);
       io.out(dup);
-      return { exitCode: 1, cfg };
+      return { exitCode: 1, cfg, reason: "duplicate" };
     }
     const rows = listed.files.map((f) => {
       const row = rowFromFile(f, cfg.model);
@@ -526,7 +526,7 @@ async function rebuild(opts) {
         const msg = "Rebuild aborted: " + err.message + " Cache NOT modified.";
         io.host(msg);
         io.out(msg);
-        return { exitCode: 1, cfg };
+        return { exitCode: 1, cfg, reason: "embedder" };
       }
     }
     const outRows = [];
@@ -544,7 +544,7 @@ async function rebuild(opts) {
           const msg = "Rebuild aborted after a failed embedding. Cache NOT modified.";
           io.host(msg);
           io.out(msg);
-          return { exitCode: 1, cfg };
+          return { exitCode: 1, cfg, reason: "embedder" };
         }
       }
       outRows.push({
@@ -562,7 +562,7 @@ async function rebuild(opts) {
       const msg = "No memory files found; cache NOT modified.";
       io.host(msg);
       io.out(msg);
-      return { exitCode: 1, cfg };
+      return { exitCode: 1, cfg, reason: "empty" };
     }
     writeCacheAtomic(cfg.cache, JSON.stringify(outRows));
     const names = ciMap();

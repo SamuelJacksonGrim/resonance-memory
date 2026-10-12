@@ -4,7 +4,7 @@
 [![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-blue)](LICENSE)
 [![dual-license](https://img.shields.io/badge/dual--license-AGPL--3.0--only%20or%20commercial-blueviolet)](LICENSING.md)
 [![release](https://img.shields.io/github/v/release/SamuelJacksonGrim/resonance-memory)](https://github.com/SamuelJacksonGrim/resonance-memory/releases/latest)
-[![status](https://img.shields.io/badge/status-released-brightgreen)](https://github.com/SamuelJacksonGrim/resonance-memory/releases/tag/v0.3.0)
+[![status](https://img.shields.io/badge/status-released-brightgreen)](https://github.com/SamuelJacksonGrim/resonance-memory/releases/tag/v0.3.1)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D22.5-339933?logo=nodedotjs&logoColor=white)](package.json)
 [![JavaScript](https://img.shields.io/badge/JavaScript-F7DF1E?logo=javascript&logoColor=black)](https://developer.mozilla.org/docs/Web/JavaScript)
 [![MCP server](https://img.shields.io/badge/MCP-server-111111)](https://modelcontextprotocol.io/)
@@ -86,7 +86,7 @@ Done. Your AI can save and recall memories on its own. Click **Show demo graph**
   a memory folder with an index, the surface (who you are, how you work together) at the top and everything else
   filed in subject drawers, auto-recall on every message, a recall index that rebuilds itself after every memory
   write, and the rules that keep memory honest over time. Plain folders and files on your computer; the AI keeps
-  them, you just talk. `--install-memory-system` sets it up for Claude Code; any other agent can be pointed at the
+  them, you just talk. One click in the app sets it up for Claude Code (or `--install-memory-system`); any other agent can be pointed at the
   folder. Hand [MEMORY-SYSTEM.md](MEMORY-SYSTEM.md) to Claude Code and it installs it.
 - **Completely private.** Everything — memories, meaning-fingerprints, the graph — lives in a file on your machine. Default: `%USERPROFILE%\.resonance-memory\resonance-memory.db` (Windows) or `~/.resonance-memory/resonance-memory.db` (macOS/Linux). An older build that stored this under `~/.lmstudio/` copies it here on first start (the original is left in place as a backup). Export in the app is the backup; to move the store, copy that file (and `resonance-memory.config.json` beside it) or use Export / Import. No servers, no telemetry, no account.
 - **It scales.** Everything sits in a fast local database (SQLite), so recall stays quick whether you've saved a hundred things or a hundred thousand. An older text-file store upgrades itself safely on first open, keeping a backup.

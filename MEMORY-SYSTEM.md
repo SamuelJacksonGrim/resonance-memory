@@ -39,7 +39,16 @@ The structure, the index tiers, the recall, the rules and the cabinet are this s
   the embedder is down, auto-recall stays silent and never blocks a message.
 - **Python 3.9+** for the cabinet tools (standard library only). Recall and the hooks don't need it.
 
-## Install in Claude Code (hand this file to Claude)
+## Install in Claude Code: one click
+
+Run Resonance Memory. When Claude Code is on the machine, the page that opens has a **Memory system for Claude Code**
+step next to Connect and the meaning engine. Press **Set up**: it shows exactly what it will do, then does it. The
+memory folder is chosen for you (Claude Code's memory folder for your home directory; other existing project folders
+are offered as choices). If the meaning engine isn't running yet, setup still finishes and the recall index builds
+itself once it is. If your memory folder already has an index or rules, the page tells you the one sentence to say to
+Claude to merge them.
+
+## Install in Claude Code: by hand (hand this file to Claude)
 
 Open Claude Code and say: *"Read MEMORY-SYSTEM.md from the resonance-memory repo and install the memory system for me."*
 These are the steps Claude carries out:
@@ -47,7 +56,8 @@ These are the steps Claude carries out:
 1. **Find the memory folder.** Claude Code's memory folder is `~/.claude/projects/<project-folder>/memory/` for the
    project you start Claude in (the folder that holds, or will hold, `MEMORY.md`). Call it `DIR`. If it already has
    memories, back it up first (copy it next to itself, or commit if it's a git repo).
-2. **Dry run:** `resonance-memory --install-memory-system --memory-dir DIR`
+2. **Dry run:** `resonance-memory --install-memory-system --memory-dir DIR` (leave out `--memory-dir` to use the
+   home-directory project's folder; the plan prints which folder it chose)
    (from source: `node entry.js --install-memory-system --memory-dir DIR`). It prints exactly what it will do and
    writes nothing. Show the user the plan.
 3. **Install:** the same command plus `--apply`. It:

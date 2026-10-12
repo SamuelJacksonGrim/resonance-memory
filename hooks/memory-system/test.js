@@ -1117,20 +1117,128 @@ test("dry run writes nothing", async () => {
   }
 });
 
-test("missing --memory-dir writes nothing", async () => {
+test("no home and no --memory-dir writes nothing", async () => {
+  const result = await installMem.installMemorySystem({
+    apply: true,
+    env: {},
+    embed: scriptedEmbed(),
+  });
+  assert.strictEqual(result.exitCode, 1);
+  assert.strictEqual(result.wrote, false);
+  assert.ok(result.lines[0].includes("refusing"));
+  assert.ok(result.lines.some((l) => l.includes("No home directory")));
+  assert.ok(result.lines.some((l) => l.includes("Missing --memory-dir")));
+});
+
+test("Claude project encoding matches the observed home-directory rule", () => {
+  // Live check on this machine: ~/.claude/projects/C--Users-spamw is
+  // C:\Users\spamw. The rest is the same character class (not collapsed).
+  assert.strictEqual(installMem.encodeClaudeProject("C:\\Users\\spamw"), "C--Users-spamw");
+  assert.strictEqual(installMem.encodeClaudeProject("C:\\Users\\spamw\\"), "C--Users-spamw");
+  assert.strictEqual(installMem.encodeClaudeProject("C:/Users/spamw"), "C--Users-spamw");
+  assert.strictEqual(installMem.encodeClaudeProject("/home/sam"), "-home-sam");
+  assert.strictEqual(installMem.encodeClaudeProject("C:\\Users\\spamw\\My Documents"), "C--Users-spamw-My-Documents");
+  assert.strictEqual(installMem.encodeClaudeProject("D:\\work_dir"), "D--work-dir");
+});
+
+test("omitted --memory-dir uses the encoded home project and prints it", async () => {
   const home = tmpdir();
+  const env = installEnv(home);
+  const expected = installMem.defaultMemoryDir(home);
   try {
-    const result = await installMem.installMemorySystem({
-      apply: true,
-      env: installEnv(home),
-      embed: scriptedEmbed(),
-    });
-    assert.strictEqual(result.exitCode, 1);
-    assert.strictEqual(result.wrote, false);
-    assert.ok(result.lines[0].includes("refusing"));
-    assert.ok(result.lines.some((l) => l.includes("Missing --memory-dir")));
-    assert.ok(!fs.existsSync(path.join(home, ".claude")));
+    const dry = await installMem.installMemorySystem({ env: env, embed: scriptedEmbed() });
+    assert.strictEqual(dry.exitCode, 0, dry.lines.join("\n"));
+    assert.strictEqual(dry.wrote, false);
+    assert.strictEqual(dry.usedDefault, true);
+    assert.strictEqual(dry.memoryDir, expected);
+    assert.ok(dry.lines.some((l) => l.includes(expected) && l.includes("(default)")));
+    assert.ok(!fs.existsSync(path.join(home, ".claude", "settings.json")));
     assert.ok(!fs.existsSync(path.join(home, ".resonance-memory")));
+
+    const applied = await installMem.installMemorySystem({
+      apply: true,
+      env: env,
+      embed: scriptedEmbed([1, 0, 0, 0]),
+    });
+    assert.strictEqual(applied.exitCode, 0, applied.lines.join("\n"));
+    assert.strictEqual(applied.index, "built");
+    assert.strictEqual(applied.usedDefault, true);
+    assert.ok(fs.existsSync(path.join(expected, "cabinet.tsv")));
+    const cfg = JSON.parse(fs.readFileSync(path.join(home, ".resonance-memory", "memory-system.json"), "utf8"));
+    assert.strictEqual(cfg.memoryDir, expected);
+    assert.ok(cfg.cache.startsWith(home), cfg.cache);
+    const status = installMem.inspectMemorySystem(env);
+    assert.strictEqual(status.state, "ready");
+    assert.strictEqual(status.indexBuilt, true);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("choices are the home default plus existing project memory folders", async () => {
+  const home = tmpdir();
+  const env = installEnv(home);
+  try {
+    const hidden = installMem.inspectMemorySystem(env);
+    assert.strictEqual(hidden.claude, false);
+    assert.strictEqual(hidden.state, "hidden");
+    assert.strictEqual(hidden.choices.length, 0);
+    assert.strictEqual(installMem.allowedMemoryDir(env, ""), null);
+
+    const other = path.join(home, ".claude", "projects", "other-proj", "memory");
+    fs.mkdirSync(other, { recursive: true });
+    const outside = path.join(home, "not-a-project", "memory");
+    fs.mkdirSync(outside, { recursive: true });
+    const seen = installMem.inspectMemorySystem(env);
+    assert.strictEqual(seen.claude, true);
+    assert.strictEqual(seen.state, "absent");
+    assert.ok(seen.choices.some((c) => c.isDefault && c.path === installMem.defaultMemoryDir(home)));
+    assert.ok(seen.choices.some((c) => c.label === "other-proj" && c.path === other));
+    assert.strictEqual(installMem.allowedMemoryDir(env, outside), null);
+    assert.ok(installMem.allowedMemoryDir(env, other));
+    assert.ok(installMem.allowedMemoryDir(env, ""));
+    const climb = path.join(other, "..", "..", "..", "not-a-project", "memory");
+    assert.strictEqual(installMem.allowedMemoryDir(env, climb), null);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("CLI exits 1 when the embedder is down; deferIndex still finishes", async () => {
+  const home = tmpdir();
+  const env = installEnv(home);
+  const memoryDir = path.join(home, "mem");
+  const embed = scriptedEmbed();
+  embed.failOn = "healthcheck";
+  try {
+    const hard = await installMem.installMemorySystem({
+      apply: true,
+      memoryDir: memoryDir,
+      env: env,
+      embed: embed,
+    });
+    assert.strictEqual(hard.exitCode, 1, hard.lines.join("\n"));
+    assert.strictEqual(hard.wrote, true);
+    assert.strictEqual(hard.index, "failed");
+    assert.ok(hard.lines.some((l) => l.includes("Re-run --apply when the embedder is up")));
+    assert.ok(fs.existsSync(path.join(home, ".claude", "settings.json")));
+    assert.ok(fs.existsSync(path.join(memoryDir, "cabinet.tsv")));
+    assert.ok(!fs.existsSync(path.join(home, ".resonance-memory", "memory-embeddings.json")));
+    const pending = installMem.inspectMemorySystem(env);
+    assert.strictEqual(pending.state, "index-pending");
+    assert.strictEqual(pending.indexBuilt, false);
+
+    const soft = await installMem.installMemorySystem({
+      apply: true,
+      memoryDir: memoryDir,
+      deferIndex: true,
+      env: env,
+      embed: embed,
+    });
+    assert.strictEqual(soft.exitCode, 0, soft.lines.join("\n"));
+    assert.strictEqual(soft.index, "pending");
+    assert.ok(soft.lines.some((l) => /meaning engine/i.test(l)));
+    assert.strictEqual(installMem.inspectMemorySystem(env).state, "index-pending");
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }
@@ -1338,6 +1446,33 @@ test("PowerShell recall hooks are preserved and not duplicated", async () => {
     assert.ok(result.lines.some((l) => l.includes("rebuild-on-memory-write.ps1") && l.includes("not adding another")));
     const parsed = JSON.parse(text);
     assert.strictEqual(parsed.hooks.UserPromptSubmit[0].hooks.length, 1);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("CLI with no --memory-dir prints the default folder and writes nothing", async () => {
+  const entry = path.join(__dirname, "..", "..", "entry.js");
+  const home = tmpdir();
+  const env = scrubRecallEnv(Object.assign({}, process.env, installEnv(home)));
+  const expected = installMem.defaultMemoryDir(home);
+  try {
+    const dry = spawnSync(process.execPath, [entry, "--install-memory-system"], {
+      encoding: "utf8",
+      env: env,
+    });
+    assert.strictEqual(dry.status, 0, dry.stderr || dry.stdout);
+    assert.ok(dry.stdout.includes("dry run: nothing will be written"), dry.stdout);
+    assert.ok(dry.stdout.includes(expected), dry.stdout);
+    assert.ok(dry.stdout.includes("(default)"), dry.stdout);
+    assert.ok(!fs.existsSync(path.join(home, ".claude", "settings.json")));
+    assert.ok(!fs.existsSync(path.join(home, ".resonance-memory", "memory-system.json")));
+    const help = spawnSync(process.execPath, [entry, "--install-memory-system", "--help"], {
+      encoding: "utf8",
+      env: env,
+    });
+    assert.strictEqual(help.status, 0, help.stderr || help.stdout);
+    assert.ok(help.stdout.includes("encoded home"), help.stdout);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }

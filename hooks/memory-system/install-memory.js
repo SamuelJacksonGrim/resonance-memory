@@ -20,13 +20,18 @@
 /*
  * install-memory.js — lay the Resonance memory system down for Claude Code.
  *
- *   node entry.js --install-memory-system --memory-dir <dir> [--apply]
+ *   node entry.js --install-memory-system [--memory-dir <dir>] [--apply]
  *
  * Dry-run is the default and writes nothing. --apply copies the folder
  * template (never overwrites a file that is already there), merges the
  * recall hooks into ~/.claude/settings.json, appends the memory block to
  * ~/.claude/CLAUDE.md once, writes ~/.resonance-memory/memory-system.json,
  * copies the Python cabinet package, and full-rebuilds the recall cache.
+ *
+ * --memory-dir defaults to the home directory's Claude Code project memory
+ * folder (~/.claude/projects/<encoded home>/memory). The plan prints it.
+ * deferIndex (the panel path) still finishes the install when the embedder
+ * is down; the CLI keeps exit 1 so a missing index stays visible.
  *
  * Hook entries are Claude Code exec form (command + args, no shell). The
  * command is this program: the exe when packaged, `node entry.js` from
@@ -287,9 +292,194 @@ function addCommandHook(settings, event, matcher, hook) {
   group.hooks.push(hook);
 }
 
+// The sentence the panel shows when MEMORY.md or memory-architecture.md
+// is left in place. The CLI plan still says "merge by hand".
+const HAND_MERGE_NEXT = "Read MEMORY-SYSTEM.md from the resonance-memory repo and merge the memory system into my memory folder";
+
+// Claude Code names a project by replacing every character outside
+// [A-Za-z0-9] with "-". Confirmed here: ~/.claude/projects contains
+// C--Users-spamw for C:\Users\spamw. Dashes are not collapsed and case
+// stays. A trailing separator is dropped so the two spellings match.
+function encodeClaudeProject(dir) {
+  const s = String(dir || "").replace(/[\\/]+$/, "");
+  return s.replace(/[^A-Za-z0-9]/g, "-");
+}
+
+function defaultMemoryDir(home) {
+  if (!home) return "";
+  return path.join(home, ".claude", "projects", encodeClaudeProject(home), "memory");
+}
+
+function samePath(a, b) {
+  if (!a || !b) return false;
+  const ra = path.resolve(String(a));
+  const rb = path.resolve(String(b));
+  if (process.platform === "win32") return ra.toLowerCase() === rb.toLowerCase();
+  return ra === rb;
+}
+
+function realDir(p) {
+  try {
+    if (p && fs.existsSync(p)) return fs.realpathSync(p);
+  } catch { /* keep the lexical path */ }
+  return path.resolve(String(p || ""));
+}
+
+// A memory folder the panel may write: <projects>/<one segment>/memory,
+// and a symlink may not leave that projects directory.
+function underClaudeProjects(home, dir) {
+  if (!home || !dir) return false;
+  const rootReal = realDir(path.join(home, ".claude", "projects"));
+  const target = realDir(dir);
+  const rel = path.relative(rootReal, target);
+  if (rel === "" || rel.startsWith("..") || path.isAbsolute(rel)) return false;
+  const parts = rel.split(path.sep).filter((s) => s && s !== ".");
+  return parts.length === 2 && parts[1].toLowerCase() === "memory";
+}
+
+function claudeCodePresent(env) {
+  const home = recall.homeFromEnv(env || process.env);
+  if (!home) return false;
+  try { return fs.statSync(path.join(home, ".claude")).isDirectory(); }
+  catch { return false; }
+}
+
+function memoryChoices(env) {
+  const home = recall.homeFromEnv(env || process.env);
+  if (!home || !claudeCodePresent(env)) return [];
+  const choices = [];
+  const def = defaultMemoryDir(home);
+  if (def && underClaudeProjects(home, def)) {
+    let exists = false;
+    try { exists = fs.statSync(def).isDirectory(); } catch { exists = false; }
+    choices.push({ path: def, label: "Home directory", isDefault: true, exists: exists });
+  }
+  const projects = path.join(home, ".claude", "projects");
+  let names = [];
+  try {
+    names = fs.readdirSync(projects, { withFileTypes: true })
+      .filter((d) => d.isDirectory() && !d.isSymbolicLink())
+      .map((d) => d.name)
+      .sort((a, b) => a.localeCompare(b));
+  } catch { names = []; }
+  for (const name of names) {
+    const mem = path.join(projects, name, "memory");
+    let exists = false;
+    try { exists = fs.statSync(mem).isDirectory(); } catch { exists = false; }
+    if (!exists) continue;
+    if (!underClaudeProjects(home, mem)) continue;
+    if (choices.some((c) => samePath(c.path, mem))) continue;
+    choices.push({ path: mem, label: name, isDefault: false, exists: true });
+  }
+  return choices;
+}
+
+function allowedMemoryDir(env, requested) {
+  const choices = memoryChoices(env);
+  if (!requested) return choices.find((c) => c.isDefault) || null;
+  return choices.find((c) => samePath(c.path, requested)) || null;
+}
+
+function indexIsBuilt(cachePath) {
+  if (!cachePath || !fs.existsSync(cachePath)) return false;
+  try {
+    const rows = recall.readCacheEntries(cachePath);
+    return rows.some((e) => e && Array.isArray(e.vector) && e.vector.length > 0);
+  } catch { return false; }
+}
+
+function hooksInstalled(settingsPath) {
+  const loaded = readJsonFile(settingsPath);
+  if (!loaded.exists || loaded.error || !loaded.value || typeof loaded.value !== "object") return false;
+  return !!(findHook(loaded.value, "UserPromptSubmit", isRecallHook)
+    && findHook(loaded.value, "PostToolUse", isRebuildHook));
+}
+
+function handMergeRows(rows) {
+  return (rows || []).filter((r) => r.hand && r.state === "keep");
+}
+
+function inspectMemorySystem(env) {
+  const e = env || process.env;
+  const home = recall.homeFromEnv(e);
+  const claude = claudeCodePresent(e);
+  const choices = claude ? memoryChoices(e) : [];
+  const configPath = home ? path.join(home, ".resonance-memory", "memory-system.json") : "";
+  let cfg = null;
+  if (configPath) {
+    const loaded = readJsonFile(configPath);
+    if (loaded.exists && loaded.value && typeof loaded.value === "object" && !Array.isArray(loaded.value)) {
+      cfg = loaded.value;
+    }
+  }
+  const settingsPath = home ? path.join(home, ".claude", "settings.json") : "";
+  const hooks = !!(settingsPath && hooksInstalled(settingsPath));
+  const configuredDir = cfg && typeof cfg.memoryDir === "string" ? cfg.memoryDir : "";
+  const cache = cfg && typeof cfg.cache === "string" ? cfg.cache : "";
+  const endpoint = cfg && typeof cfg.endpoint === "string" ? cfg.endpoint : "";
+  const model = cfg && typeof cfg.model === "string" ? cfg.model : "";
+  const installed = !!(configuredDir && hooks);
+  const indexBuilt = installed && indexIsBuilt(cache);
+  let state = "hidden";
+  if (claude) {
+    if (!installed) state = "absent";
+    else if (!indexBuilt) state = "index-pending";
+    else state = "ready";
+  }
+  const fallback = choices.find((c) => c.isDefault);
+  const memoryDir = configuredDir || (fallback ? fallback.path : "");
+  let handMerge = false;
+  if (memoryDir) {
+    try {
+      if (fs.statSync(memoryDir).isDirectory()) {
+        const template = loadTemplate();
+        if (template) handMerge = handMergeRows(filePlan(template, memoryDir)).length > 0;
+      }
+    } catch { handMerge = false; }
+  }
+  return {
+    claude: claude,
+    state: state,
+    installed: installed,
+    indexBuilt: indexBuilt,
+    memoryDir: memoryDir,
+    cache: cache,
+    endpoint: endpoint,
+    model: model,
+    choices: choices,
+    handMerge: handMerge,
+    nextStep: handMerge ? HAND_MERGE_NEXT : "",
+  };
+}
+
+async function rebuildInstalledIndex(env) {
+  const e = env || process.env;
+  const before = inspectMemorySystem(e);
+  if (!before.installed) {
+    return { exitCode: 1, reason: "not_installed", status: before };
+  }
+  // Pass the folder from the config file. A RECALL_MEMORY left in the
+  // environment must not steer this at some other directory.
+  const rebuilt = await recall.rebuild({
+    env: e,
+    memoryDir: before.memoryDir,
+    cache: before.cache,
+    endpoint: before.endpoint,
+    model: before.model,
+    full: false,
+    skipConfig: true,
+  });
+  const after = inspectMemorySystem(e);
+  return {
+    exitCode: rebuilt && rebuilt.exitCode ? rebuilt.exitCode : 0,
+    reason: rebuilt && rebuilt.reason || "",
+    status: after,
+  };
+}
+
 function usage() {
   return [
-    "Usage: --install-memory-system --memory-dir <dir> [--apply]",
+    "Usage: --install-memory-system [--memory-dir <dir>] [--apply]",
     "",
     "  Lays down the Resonance memory system for Claude Code.",
     "  Dry-run is the default: prints the plan and writes nothing.",
@@ -299,12 +489,18 @@ function usage() {
     "  once, writes ~/.resonance-memory/memory-system.json, copies the",
     "  cabinet tools, and full-rebuilds the recall cache.",
     "",
-    "  --memory-dir <dir>   Claude Code memory folder (required; no default)",
+    "  --memory-dir <dir>   Claude Code memory folder.",
+    "                       Default: ~/.claude/projects/<encoded home>/memory",
+    "                       (non-alphanumeric characters in the home path become -).",
+    "                       The plan prints the folder it will use.",
     "  --cache <file>       Recall cache (default: ~/.resonance-memory/memory-embeddings.json)",
     "  --endpoint <url>     Embedder base URL (default: " + recall.DEFAULT_ENDPOINT + ")",
     "  --model <name>       Embed model (default: " + recall.DEFAULT_MODEL + ")",
     "  --apply              Do it. Without this, nothing is written.",
     "",
+    "  If the rebuild fails, the files stay and this command exits 1.",
+    "  Re-run --apply when the embedder is up. The panel finishes anyway",
+    "  and builds the index once the meaning engine is up.",
     "  Hooks run this same program (--recall-hook, --rebuild-on-write).",
     "  Search by hand with --recall (--query, --rebuild, --history, --plan).",
     "  Cabinet re-index needs Python 3.9+ (python -m cabinet). Not an MCP tool.",
@@ -372,7 +568,13 @@ async function installMemorySystem(opts) {
   const home = recall.homeFromEnv(env);
   if (!home) blockers.push("No home directory. Set USERPROFILE or HOME. Nothing written.");
 
-  const memoryDir = absPath(pick(o.memoryDir), cwd);
+  const requestedDir = pick(o.memoryDir);
+  let usedDefault = false;
+  let memoryDir = absPath(requestedDir, cwd);
+  if (!memoryDir && home) {
+    memoryDir = defaultMemoryDir(home);
+    usedDefault = !!memoryDir;
+  }
   if (!memoryDir) blockers.push("Missing --memory-dir. Pass the Claude Code memory folder. Nothing written.");
 
   const template = loadTemplate();
@@ -401,6 +603,7 @@ async function installMemorySystem(opts) {
 
   say("");
   if (memoryDir) {
+    say("memory directory: " + memoryDir + (usedDefault ? " (default)" : ""));
     if (!fs.existsSync(memoryDir)) say("would create directory " + memoryDir);
     else if (fs.statSync(memoryDir).isDirectory()) say("memory directory exists: " + memoryDir);
   }
@@ -513,13 +716,30 @@ async function installMemorySystem(opts) {
     say("would full-rebuild " + cache + " (model " + model + " at " + endpoint + ")");
   }
 
+  const merged = handMergeRows(templateRows);
+  const pack = (exitCode, wrote, index) => ({
+    exitCode: exitCode,
+    lines: lines,
+    wrote: !!wrote,
+    memoryDir: memoryDir,
+    cache: cache,
+    endpoint: endpoint,
+    model: model,
+    index: index,
+    usedDefault: usedDefault,
+    handMerge: merged.length > 0,
+    handMergeFiles: merged.map((r) => r.rel),
+    nextStep: merged.length ? HAND_MERGE_NEXT : "",
+    blockers: blockers.slice(),
+  });
+
   if (blockers.length) {
     lines[0] = apply ? "refusing to apply; nothing written" : "dry run: nothing will be written";
     for (const b of blockers) say("stopped: " + b);
-    return { exitCode: 1, lines, wrote: false };
+    return pack(1, false, "skipped");
   }
   lines[0] = apply ? "applying" : "dry run: nothing will be written";
-  if (!apply) return { exitCode: 0, lines, wrote: false };
+  if (!apply) return pack(0, false, "skipped");
 
   if (memoryDir) fs.mkdirSync(memoryDir, { recursive: true });
   if (template && template.dirs) {
@@ -543,24 +763,37 @@ async function installMemorySystem(opts) {
     writeUtf8(claudeMdPath, claudeWrite.text);
   }
 
-  const rebuilt = await recall.rebuild({
-    memoryDir: memoryDir,
-    cache: cache,
-    endpoint: endpoint,
-    model: model,
-    full: true,
-    embed: o.embed || null,
-    env: env,
-    skipConfig: true,
-    host: (m) => say(String(m)),
-    out: () => {},
-  });
+  let rebuilt;
+  try {
+    rebuilt = await recall.rebuild({
+      memoryDir: memoryDir,
+      cache: cache,
+      endpoint: endpoint,
+      model: model,
+      full: true,
+      embed: o.embed || null,
+      env: env,
+      skipConfig: true,
+      host: (m) => say(String(m)),
+      out: () => {},
+    });
+  } catch (err) {
+    say("full rebuild failed: " + (err && err.message || err));
+    rebuilt = { exitCode: 1, reason: "throw" };
+  }
   if (!rebuilt || rebuilt.exitCode) {
+    // The panel finishes the install when the meaning engine is simply
+    // not up yet. Any other rebuild failure still exits 1, and the CLI
+    // (deferIndex unset) always exits 1 so a missing index is visible.
+    if (o.deferIndex && rebuilt && rebuilt.reason === "embedder") {
+      say("recall index was not built. It will build once the meaning engine is up (the next time this panel is open after Set up, or the first memory write).");
+      return pack(0, true, "pending");
+    }
     say("full rebuild failed; template and hooks were left in place. Re-run --apply when the embedder is up.");
-    return { exitCode: 1, lines, wrote: true };
+    return pack(1, true, "failed");
   }
   say("applied");
-  return { exitCode: 0, lines, wrote: true };
+  return pack(0, true, "built");
 }
 
 async function main(argv, opts) {
@@ -602,6 +835,7 @@ if (require.main === module) {
 module.exports = {
   BLOCK_MARKER,
   POST_MATCHER,
+  HAND_MERGE_NEXT,
   usage,
   parseInstallArgs,
   hookSpec,
@@ -614,6 +848,13 @@ module.exports = {
   loadCabinet,
   loadClaudeBlock,
   filePlan,
+  encodeClaudeProject,
+  defaultMemoryDir,
+  claudeCodePresent,
+  memoryChoices,
+  allowedMemoryDir,
+  inspectMemorySystem,
+  rebuildInstalledIndex,
   installMemorySystem,
   main,
 };
