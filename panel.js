@@ -541,6 +541,15 @@ const PAGE = `<!doctype html>
         <div class="hint cli-flags">--apply &nbsp; --json &nbsp; [store.jsonl]</div>
         <div class="hint"><b>Export a backup first</b> before <code>--apply</code>.</div>
       </div>
+
+      <div class="cli-cmd">
+        <div class="cname">Install the memory system <code>--install-memory-system</code> <span class="pill warn">writes with --apply</span></div>
+        <pre class="mcp"><span class="cli-prefix"></span> --install-memory-system --memory-dir &lt;dir&gt;</pre>
+        <div class="copyrow"><button type="button" data-cli-copy="--install-memory-system --memory-dir &lt;dir&gt;">Copy</button><span class="hint cli-copy-msg"></span></div>
+        <div class="hint">Dry-run is the default (prints the plan, writes nothing). <code>--apply</code> copies the memory-folder template into the directory you pass (a Claude Code memory folder). An existing file is left in place, including <code>MEMORY.md</code> and <code>memory-architecture.md</code>. It merges <code>--recall-hook</code> (every prompt) and <code>--rebuild-on-write</code> (Write, Edit, MultiEdit) into <code>~/.claude/settings.json</code>, keeps every other hook, and leaves a <code>.bak</code>. The memory block is appended to <code>~/.claude/CLAUDE.md</code> once. Then it full-rebuilds the recall cache. Not an MCP tool.</div>
+        <div class="hint">Search by hand with <code>--recall</code> (<code>--query</code>, <code>--rebuild</code>, <code>--history</code>, <code>--plan</code>). Re-index still needs Python 3.9+ (<code>python -m cabinet</code>).</div>
+        <div class="hint cli-flags">--apply &nbsp; --memory-dir &lt;dir&gt; &nbsp; --cache &lt;file&gt; &nbsp; --endpoint &lt;url&gt; &nbsp; --model &lt;name&gt;</div>
+      </div>
     </details>
 
     <details class="mcpother" id="licenseFaq">

@@ -24,6 +24,12 @@
 //   memory --export [--name] [--out]    -> RM-07 slice 2b sovereignty zip
 //   memory --export-jsonl               -> raw memories.jsonl (scripting primitive)
 //   memory --import <zip-or-jsonl>      -> RM-17 sovereignty restore (dry-run default)
+//   memory --install-memory-system     -> Claude Code memory folder + hooks (dry-run default)
+//   memory --recall                     -> recall rebuild / query / history / plan
+//   memory --recall-hook                -> Claude Code UserPromptSubmit hook
+//   memory --rebuild-on-write           -> Claude Code PostToolUse hook
+// These four are CLI and hooks, not MCP tools.
+
 const mode = process.argv[2];
 
 if (mode === "--mcp") {
@@ -61,6 +67,32 @@ if (mode === "--mcp") {
   }).catch((e) => {
     console.error(String(e.message || e));
     process.exit(2);
+  });
+} else if (mode === "--install-memory-system") {
+  require("./hooks/memory-system/install-memory.js").main(process.argv.slice(3)).then((code) => {
+    if (code) process.exit(code);
+  }).catch((e) => {
+    console.error(String(e.message || e));
+    process.exit(2);
+  });
+} else if (mode === "--recall") {
+  require("./hooks/memory-system/recall.js").main(process.argv.slice(3)).then((code) => {
+    if (code) process.exit(code);
+  }).catch((e) => {
+    console.error(String(e.message || e));
+    process.exit(2);
+  });
+} else if (mode === "--recall-hook") {
+  require("./hooks/memory-system/recall-hook.js").main().then((code) => {
+    process.exit(code || 0);
+  }).catch(() => {
+    process.exit(0);
+  });
+} else if (mode === "--rebuild-on-write") {
+  require("./hooks/memory-system/rebuild-on-write.js").main().then((code) => {
+    process.exit(code || 0);
+  }).catch(() => {
+    process.exit(0);
   });
 } else {
   require("./panel.js");

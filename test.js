@@ -4855,6 +4855,7 @@ test("panel page source ships a Terminal commands reference of real entry.js fla
     "--export", "--export-jsonl",
     "--import", "--migrate", "--migrate-sqlite",
     "--dedup-existing",
+    "--install-memory-system", "--recall", "--recall-hook", "--rebuild-on-write",
   ];
   for (const f of flags) {
     assert.ok(entry.includes(JSON.stringify(f)) || entry.includes("'" + f + "'") || entry.includes(f),

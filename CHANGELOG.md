@@ -8,6 +8,8 @@ stable; sophistication grows in the substrate, not in the API.
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/SamuelJacksonGrim/resonance-memory/releases/tag/v0.3.0) - 2026-10-11
+
 ### Added
 - **Auto-recall for Claude Code** (`hooks/auto-recall.js` + [`AUTO-RECALL.md`](AUTO-RECALL.md)). A
   `UserPromptSubmit` hook that runs RM's own `recall_memory` on every user message and injects the result, so
@@ -16,6 +18,24 @@ stable; sophistication grows in the substrate, not in the API.
   custom `MEMORY_FILE_PATH`; `RM_RECALL_DEBUG=1` explains silence during setup. Measured ~0.1–0.2 s per message.
   Claude Code only (other MCP clients have no per-message hook). The guide is written so a user's own Claude
   can carry out the setup.
+- **The Resonance memory system, shipped whole** ([`MEMORY-SYSTEM.md`](MEMORY-SYSTEM.md)). The folder-and-files
+  memory system built and run daily with Claude, inside the exe. `--install-memory-system --memory-dir DIR` (dry run
+  by default, `--apply` to do it) lays down the memory folder template (index, `memory-architecture.md` rules,
+  `history/`, drawers, `cabinet.tsv`; never overwrites), merges two hooks into `~/.claude/settings.json` (keeps every
+  other hook, `.bak`, idempotent), adds the memory block to `~/.claude/CLAUDE.md` once, writes
+  `~/.resonance-memory/memory-system.json`, copies the cabinet tools, and builds the recall index.
+  New flags: `--recall` (query / rebuild / history / plan), `--recall-hook` (UserPromptSubmit: top 3 at cosine
+  >= 0.70 with each memory's drawer, fails silent), `--rebuild-on-write` (PostToolUse: incremental re-embed of only
+  the changed memories, detached). The recall engine is a Node port of the PowerShell original, verified to give
+  the same results. Not an MCP tool: still the four verbs.
+- **Memory filing cabinet** (`hooks/cabinet/` + [`CABINET.md`](CABINET.md)), part of the memory system. Files a
+  markdown memory folder: the surface at the top (relationship-shaping memories are never filed away),
+  `projects/` / `tools/` / `reference/` subject drawers, flat `history/`, a generated index card per drawer plus a
+  skills index. Python 3.9+, standard library only. Commands: `init` (drawers + starter `cabinet.tsv`, nothing
+  moves), `migrate` (refuses surface files and overwrites, byte-identical moves), `index`, `relink` (retargets
+  `MEMORY.md` links), `check`, `list`, `surface`. Every write is a dry run unless `--apply`. "Stays put" restrains
+  the scripts only, never the model's own edits. Proven on a real 85-memory folder first (recall results identical
+  before and after the move).
 
 ## [0.2.0](https://github.com/SamuelJacksonGrim/resonance-memory/releases/tag/v0.2.0) - 2026-09-10
 

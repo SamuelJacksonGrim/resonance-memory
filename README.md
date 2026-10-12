@@ -4,12 +4,13 @@
 [![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-blue)](LICENSE)
 [![dual-license](https://img.shields.io/badge/dual--license-AGPL--3.0--only%20or%20commercial-blueviolet)](LICENSING.md)
 [![release](https://img.shields.io/github/v/release/SamuelJacksonGrim/resonance-memory)](https://github.com/SamuelJacksonGrim/resonance-memory/releases/latest)
-[![status](https://img.shields.io/badge/status-released-brightgreen)](https://github.com/SamuelJacksonGrim/resonance-memory/releases/tag/v0.2.0)
+[![status](https://img.shields.io/badge/status-released-brightgreen)](https://github.com/SamuelJacksonGrim/resonance-memory/releases/tag/v0.3.0)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D22.5-339933?logo=nodedotjs&logoColor=white)](package.json)
 [![JavaScript](https://img.shields.io/badge/JavaScript-F7DF1E?logo=javascript&logoColor=black)](https://developer.mozilla.org/docs/Web/JavaScript)
 [![MCP server](https://img.shields.io/badge/MCP-server-111111)](https://modelcontextprotocol.io/)
 [![platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20Linux%20x64%20%7C%20macOS%20arm64-lightgrey)](https://github.com/SamuelJacksonGrim/resonance-memory/releases/latest)
 [![downloads](https://img.shields.io/github/downloads/SamuelJacksonGrim/resonance-memory/total)](https://github.com/SamuelJacksonGrim/resonance-memory/releases/latest)
+[![memory system](https://img.shields.io/badge/memory%20system-folders%20%2B%20auto--recall-orange)](MEMORY-SYSTEM.md)
 
 ## License
 
@@ -81,6 +82,12 @@ Done. Your AI can save and recall memories on its own. Click **Show demo graph**
 
 - **Four abilities, that's the whole interface** — save, recall, edit, delete. It never gets more complicated than that; a small model can't misuse it.
 - **Auto-recall in Claude Code.** Add one hook and RM recalls on *every* message you send, so Claude never has to remember to ask: [AUTO-RECALL.md](AUTO-RECALL.md) (hand it to Claude Code and it sets it up). Other apps don't have per-message hooks; there the recall tool itself asks the model to recall at the start of each chat.
+- **The whole memory system, in one command.** The memory system we built and run every day ships inside the exe:
+  a memory folder with an index, the surface (who you are, how you work together) at the top and everything else
+  filed in subject drawers, auto-recall on every message, a recall index that rebuilds itself after every memory
+  write, and the rules that keep memory honest over time. Plain folders and files on your computer; the AI keeps
+  them, you just talk. `--install-memory-system` sets it up for Claude Code; any other agent can be pointed at the
+  folder. Hand [MEMORY-SYSTEM.md](MEMORY-SYSTEM.md) to Claude Code and it installs it.
 - **Completely private.** Everything — memories, meaning-fingerprints, the graph — lives in a file on your machine. Default: `%USERPROFILE%\.resonance-memory\resonance-memory.db` (Windows) or `~/.resonance-memory/resonance-memory.db` (macOS/Linux). An older build that stored this under `~/.lmstudio/` copies it here on first start (the original is left in place as a backup). Export in the app is the backup; to move the store, copy that file (and `resonance-memory.config.json` beside it) or use Export / Import. No servers, no telemetry, no account.
 - **It scales.** Everything sits in a fast local database (SQLite), so recall stays quick whether you've saved a hundred things or a hundred thousand. An older text-file store upgrades itself safely on first open, keeping a backup.
 - **Take your memory anywhere.** **Export my memories** in the app (or `--export`) writes a `.zip` you own — including a plain `memories.jsonl` any other tool can read. **Import memories** brings it back on any machine (a button in the app, or `--import`). Your learned associations only travel when you explicitly ask them to. The control panel's **Terminal commands** list has the rest (`--migrate`, `--dedup-existing`, `--export-jsonl`, …) — exact command, what it does, and when.
@@ -89,11 +96,24 @@ Done. Your AI can save and recall memories on its own. Click **Show demo graph**
 - **macOS "cannot be opened because it is from an unidentified developer"?** Gatekeeper. Right-click → **Open** → **Open**, or System Settings → Privacy & Security → **Open Anyway**. The whole thing is open source — read every line.
 - **The associative field** has a switch in the app; the memory works either way.
 
-## What's coming: the Grimoire
+## The Grimoire: part built, part coming
 
-*(Not built yet — an honest signpost of where this is headed.)*
+The **Grimoire** is how Resonance keeps a lifetime of memory organized, honest about time, and navigable. Its foundation
+is already here:
 
-The next chapter is **time**. Every memory already knows when it happened; soon, while your machine sleeps, Resonance will gather the day's threads into a **page**, weeks into **chapters**, months and years above — a **Grimoire**, a navigable index of your own history. Nothing is thrown away to build it; it's a map, not a compression. *"What was that idea I had around Thursday last January?"* becomes something you can actually walk back to. This is designed and specced ([`docs/proposed/0011`](docs/proposed/0011-dream-consolidation.md)); it ships only once it's measured to genuinely help.
+- **Every memory knows when it was true.** Memories are dated, and when something changes ("I moved to Denver") the
+  old fact is retired, not deleted: it stays in the history, marked as replaced. Nothing is thrown away.
+- **The memory system** ([MEMORY-SYSTEM.md](MEMORY-SYSTEM.md)): plain folders and files on your computer. Who you
+  are and how you work together stays on the surface; everything else is filed into subject drawers, each with an
+  index card ([CABINET.md](CABINET.md)); replaced text fades into a dated history instead of being lost; recall
+  surfaces the right memories on every message. Built and tested daily with Claude over months, and it ships whole:
+  one command installs it.
+
+*Not built yet (an honest signpost):* the part that runs on its own. While your machine sleeps, Resonance will gather
+the day's threads into a **page**, weeks into **chapters**, months and years above, a navigable index of your own
+history: a map, not a compression. *"What was that idea I had around Thursday last January?"* becomes something you
+can actually walk back to. It's designed and specced ([`docs/proposed/0011`](docs/proposed/0011-dream-consolidation.md))
+and ships only once it's measured to genuinely help.
 
 ## For the curious (and developers)
 
