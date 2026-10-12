@@ -6959,7 +6959,7 @@ async function asyncTests() {
         assert.strictEqual(body.code, "source");
         assert.strictEqual(body.wrote, false);
         assert.strictEqual(body.relaunch, false);
-        assert.ok(!fs.existsSync(path.join(laid.local, "Programs")));
+        assert.ok(!fs.existsSync(require("./install-home.js").defaultInstallDir(Object.assign({ HOME: home, USERPROFILE: home }, laid.extraEnv))));
         assert.deepStrictEqual(fs.readFileSync(laid.db), before);
         assert.ok(!fs.existsSync(path.join(home, ".resonance-memory", "install-home.json")));
       } finally {
@@ -6984,7 +6984,7 @@ async function asyncTests() {
       try {
         const status = await (await fetch(panel.url + "/api/install-home")).json();
         assert.strictEqual(status.mode, "offer", JSON.stringify(status));
-        assert.strictEqual(status.defaultDir, path.join(laid.local, "Programs", "Resonance Memory"));
+        assert.strictEqual(status.defaultDir, require("./install-home.js").defaultInstallDir(Object.assign({ HOME: home, USERPROFILE: home }, laid.extraEnv)));
         assert.ok(status.defaultDir.startsWith(laid.local), "refusing to install outside the temp home: " + status.defaultDir);
         assert.ok(String(status.warning || "").indexOf("Desktop shortcut") !== -1);
         const token = await readPanelToken(panel.url);
@@ -7052,7 +7052,7 @@ async function asyncTests() {
         const body = await result.json();
         assert.strictEqual(body.code, "source", JSON.stringify(body));
         assert.strictEqual(body.wrote, false);
-        assert.ok(!fs.existsSync(path.join(laid.local, "Programs")));
+        assert.ok(!fs.existsSync(require("./install-home.js").defaultInstallDir(Object.assign({ HOME: home, USERPROFILE: home }, laid.extraEnv))));
       } finally {
         try { fs.writeFileSync(hold, "go\n"); } catch { /* */ }
         await stopPanelChild(panel.child);
@@ -10543,7 +10543,7 @@ section("install home — the program stays in one folder");
     const db = memorySentinel(t.home);
     const before = fs.readFileSync(db);
     const r = installHome.installApp({
-      env: t.env, isSea: false, sourceExe: process.execPath, version: "0.3.1", dir: path.join(t.local, "Programs", "Resonance Memory"),
+      env: t.env, isSea: false, sourceExe: process.execPath, version: "0.3.1", dir: installHome.defaultInstallDir(t.env),
     });
     assert.strictEqual(r.ok, false);
     assert.strictEqual(r.code, "source");
@@ -10595,7 +10595,7 @@ section("install home — the program stays in one folder");
       },
     }, null, 2));
     t.env.RESONANCE_MEMORY_CONFIGS_JSON = JSON.stringify([{ id: "lmstudio", name: "LM Studio", file: mcpFile }]);
-    const dir = path.join(t.local, "Programs", "Resonance Memory");
+    const dir = installHome.defaultInstallDir(t.env);
     const dest = path.join(dir, installHome.exeName());
     const status = installHome.inspect({ env: t.env, isSea: true, sourceExe: src, version: "0.3.1" });
     assert.strictEqual(status.mode, "offer");
@@ -10674,7 +10674,7 @@ section("install home — the program stays in one folder");
   test("a newer file updates in place and a different folder is refused", () => {
     const t = tempEnv("update");
     const db = memorySentinel(t.home);
-    const dir = path.join(t.local, "Programs", "Resonance Memory");
+    const dir = installHome.defaultInstallDir(t.env);
     const dest = path.join(dir, installHome.exeName());
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(dest, "old-bytes");
@@ -10722,7 +10722,7 @@ section("install home — the program stays in one folder");
 
   test("a locked rename leaves the installed file untouched", () => {
     const t = tempEnv("locked");
-    const dir = path.join(t.local, "Programs", "Resonance Memory");
+    const dir = installHome.defaultInstallDir(t.env);
     const dest = path.join(dir, installHome.exeName());
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(dest, "live");
@@ -10761,7 +10761,7 @@ section("install home — the program stays in one folder");
     fs.writeFileSync(src, "program-v1");
     const mcpFile = path.join(t.roaming, "Claude", "claude_desktop_config.json");
     fs.mkdirSync(path.dirname(mcpFile), { recursive: true });
-    const dir = path.join(t.local, "Programs", "Resonance Memory");
+    const dir = installHome.defaultInstallDir(t.env);
     const dest = path.join(dir, installHome.exeName());
     fs.writeFileSync(mcpFile, JSON.stringify({
       mcpServers: {
