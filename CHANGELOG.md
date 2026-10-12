@@ -8,38 +8,7 @@ stable; sophistication grows in the substrate, not in the API.
 
 ## [Unreleased]
 
-## [0.3.2](https://github.com/SamuelJacksonGrim/resonance-memory/releases/tag/v0.3.2) - 2026-10-12
-
-### Added
-- **It installs itself.** On first run from anywhere that isn't an installed home (e.g. Downloads), the panel asks
-  where Resonance Memory should live (default: `%LOCALAPPDATA%\Programs\Resonance Memory\` on Windows, no admin;
-  `~/Applications/Resonance Memory/` on macOS; `~/.local/bin/` on Linux), copies itself there, and offers a Desktop
-  shortcut (a `.lnk` / symlink / `.desktop` launcher, not a second copy). Connect, the memory hooks and any existing
-  configs pointing at an old location are repointed at the installed copy, so deleting the download breaks nothing.
-  The panel warns plainly that the installed file has to stay where it is; the shortcut can go anywhere.
-- **Updates in place.** A newer download notices an older install and replaces that same file, so every path stays
-  the same. On Windows a running copy (held open by an AI app as the MCP server) is renamed aside and replaced; the
-  running app picks up the new version on its next restart.
-- CLI: `--install-app [--dir X] [--no-shortcut]` and `--uninstall-app` (removes the program and the shortcut, never
-  memories). Running from source never installs.
-
-## [0.3.1](https://github.com/SamuelJacksonGrim/resonance-memory/releases/tag/v0.3.1) - 2026-10-12
-
-### Added
-- **One-click memory system setup in the app.** When Claude Code is present, the panel shows a **Memory system for
-  Claude Code** step (not set up / set up / index not built yet). **Set up** shows the installer's own dry-run plan in
-  a confirm modal, then runs the same installer in-process (loopback + origin + per-process token, like Export /
-  Import). The empty-store first-run box points at it. Still four MCP verbs.
-- **Default memory folder.** `--memory-dir` is now optional: the default is Claude Code's memory folder for the home
-  directory (`~/.claude/projects/<encoded home>/memory`); the plan prints the folder it chose. The panel also offers
-  other existing project memory folders.
-
-### Changed
-- **Setup from the panel finishes when the meaning engine is down.** The files and hooks go in, and the recall index
-  builds on the next panel open once the engine is up, right after the engine's own Set up, or on the first memory
-  write. The CLI still exits 1 in that case and says to re-run `--apply`.
-
-## [0.3.0](https://github.com/SamuelJacksonGrim/resonance-memory/releases/tag/v0.3.0) - 2026-10-11
+## [0.3.0](https://github.com/SamuelJacksonGrim/resonance-memory/releases/tag/v0.3.0) - 2026-10-12
 
 ### Added
 - **Auto-recall for Claude Code** (`hooks/auto-recall.js` + [`AUTO-RECALL.md`](AUTO-RECALL.md)). A
@@ -67,6 +36,34 @@ stable; sophistication grows in the substrate, not in the API.
   `MEMORY.md` links), `check`, `list`, `surface`. Every write is a dry run unless `--apply`. "Stays put" restrains
   the scripts only, never the model's own edits. Proven on a real 85-memory folder first (recall results identical
   before and after the move).
+- **One-click memory system setup in the app.** When Claude Code is present, the panel shows a **Memory system for
+  Claude Code** step (not set up / set up / index not built yet). **Set up** shows the installer's own dry-run plan in
+  a confirm modal, then runs the same installer in-process (loopback + origin + per-process token, like Export /
+  Import). The empty-store first-run box points at it. Still four MCP verbs.
+- **Default memory folder.** `--memory-dir` is now optional: the default is Claude Code's memory folder for the home
+  directory (`~/.claude/projects/<encoded home>/memory`); the plan prints the folder it chose. The panel also offers
+  other existing project memory folders.
+- **It installs itself.** On first run from anywhere that isn't an installed home (e.g. Downloads), the panel asks
+  where Resonance Memory should live (default: `%LOCALAPPDATA%\Programs\Resonance Memory\` on Windows, no admin;
+  `~/Applications/Resonance Memory/` on macOS; `~/.local/bin/` on Linux), copies itself there, and offers a Desktop
+  shortcut (a `.lnk` / symlink / `.desktop` launcher, not a second copy). Connect, the memory hooks and any existing
+  configs pointing at an old location are repointed at the installed copy, so deleting the download breaks nothing.
+  The panel warns plainly that the installed file has to stay where it is; the shortcut can go anywhere.
+- **Updates in place.** A newer download notices an older install and replaces that same file, so every path stays
+  the same. On Windows a running copy (held open by an AI app as the MCP server) is renamed aside and replaced; the
+  running app picks up the new version on its next restart.
+- CLI: `--install-app [--dir X] [--no-shortcut]` and `--uninstall-app` (removes the program and the shortcut, never
+  memories). Running from source never installs.
+
+### Changed
+- **Setup from the panel finishes when the meaning engine is down.** The files and hooks go in, and the recall index
+  builds on the next panel open once the engine is up, right after the engine's own Set up, or on the first memory
+  write. The CLI still exits 1 in that case and says to re-run `--apply`.
+
+### Fixed
+- **Recall: quoted descriptions.** A frontmatter description written as `"..."` with `\"` inside kept the
+  backslashes in recall notes; they are now unescaped (same change as the PowerShell original, verified
+  identical on a real 86-memory folder).
 
 ## [0.2.0](https://github.com/SamuelJacksonGrim/resonance-memory/releases/tag/v0.2.0) - 2026-09-10
 
