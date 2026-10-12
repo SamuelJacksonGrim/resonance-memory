@@ -1,0 +1,86 @@
+# itch.io page copy (source of truth for https://samueljacksongrim.itch.io/resonance-memory)
+
+itch.io doesn't update from the README the way the GitHub page does, so its text lives here. When a release changes
+what the app does, edit this file in the same PR, then paste it into the itch "Edit game" form.
+
+**Platforms to tick:** Windows, macOS, Linux. Upload one file per platform from the GitHub Release
+(`resonance-memory.exe`, `resonance-memory-macos-arm64`, `resonance-memory-linux-x64`), each tagged with its
+platform. Checksums are in the Release's `SHA256SUMS`.
+
+---
+
+## Description
+
+**Your AI takes notes. This builds the mind.**
+
+Your local model is smart, but it has amnesia. Close the chat and it forgets everything: your **name**, your
+**preferences**, the decision you explained twice yesterday. **Resonance Memory** gives it a memory that **survives
+across conversations**, stored on **your computer, tied to no account, sent to no cloud.**
+
+And it's **not a search box** you operate. It **quietly remembers** what matters and brings the right things back on its
+own, then starts noticing which of your memories belong together, the way your own brain links things that come up
+as a set. **That's the difference between a notebook and a memory.**
+
+**WHAT YOU CAN USE IT FOR**
+
+- **Remembers your rules.** Tell it once (*"I'm diabetic, keep sugar out of any recipe"*) and it still holds ten
+  conversations later.
+- **A project logbook that thinks.** The WHY behind your decisions, in your own words.
+- **Finds things by meaning.** *"What was that pet medication thing?"* finds your note about the dog's heartworm pill,
+  with no shared keywords.
+- **Keeps up when things change.** Say "I moved to Denver" and the old city is retired, not contradicted.
+- **Connects the dots you didn't.** Surfaces related memories you never thought to ask for, and strengthens the links
+  you actually use.
+
+**PRIVATE AND YOURS**
+
+Everything (your memories and the graph) lives in **one file** under your user folder. No servers, no telemetry, no
+account. **Export my memories** writes a `.zip` you own, including a plain file any other tool can read; **Import**
+brings it back on any machine. **Open source (AGPL-3.0).**
+
+**WHAT YOU NEED**
+
+An AI app that speaks **MCP**: **LM Studio** or **Claude Desktop** (one-click connect), or **Claude Code, Cursor,
+Continue, Hermes** and others (copy-paste setup from the app). For meaning-based recall, LM Studio with a small
+embedding model. **The app sets that up in one click.**
+
+**FOR CLAUDE CODE USERS**
+
+- **Auto-recall:** one hook and it recalls on every message, so Claude never has to remember to ask.
+- **A filing cabinet for Claude's own memory:** keeps who you are and how you work at the front, and files
+  everything else into subject folders. Hand Claude the guide and it sets it up.
+
+Both guides are in the repo: github.com/SamuelJacksonGrim/resonance-memory
+
+Free, and it stays free. If it earns a place in how you work, there's a Ko-fi link right in the app.
+
+Made by the *Architect of Resonance.*
+
+---
+
+## Install instructions
+
+**Windows, macOS and Linux.** One file, no installer.
+
+**Windows**
+1. Download `resonance-memory.exe` and double-click it. A page opens in your browser; no window pops up,
+   that's normal.
+2. First launch may show "Windows protected your PC" (SmartScreen, because the app isn't signed by a big company).
+   Click **More info → Run anyway.** It's open source: you can read every line.
+
+**macOS (Apple Silicon)**
+1. Download `resonance-memory-macos-arm64`. Don't double-click it (Gatekeeper blocks downloaded copies): right-click →
+   **Open** → **Open**, or System Settings → Privacy & Security → **Open Anyway**.
+2. Or in Terminal: `xattr -d com.apple.quarantine resonance-memory-macos-arm64`, then `chmod +x` and run it.
+
+**Linux (x64)**
+1. `chmod +x resonance-memory-linux-x64 && ./resonance-memory-linux-x64`. A page opens in your browser.
+
+**Then (every platform)**
+3. On that page, click **Connect** next to your app (LM Studio or Claude Desktop), then **restart that app once.**
+   Using Claude Code, Cursor or another MCP app? Copy the setup snippet from the same page.
+4. If "Meaning engine" says "not set up," click **Set up**: one click grabs a small helper model in LM Studio so recall
+   works by **meaning**, not just exact words.
+
+**Everything stays on your computer.** To remove it: click **Disconnect** in the app, then delete the file. Your
+memories stay in your user folder until you delete them yourself.
