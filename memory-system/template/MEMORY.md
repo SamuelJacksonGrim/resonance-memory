@@ -4,6 +4,10 @@ Loaded at the start of every session. One line per memory: `- [Title](path.md) �
 Before adding a line, read [Memory architecture](memory-architecture.md): **default = merge into an existing memory,
 not append.** Search everything by meaning with recall (it covers files that have no line here).
 
+**Drawers** (each has its own generated index card: every memory in it + its one-line description):
+[projects](_indexes/_index-projects.md) · [tools](_indexes/_index-tools.md) ·
+[reference](_indexes/_index-reference.md) · [skills](_indexes/_index-skills.md) · faded text: `history/`
+
 ## Surface: milestone (never decays, never merged, never pruned)
 
 - [Memory architecture](memory-architecture.md) — READ FIRST before writing or editing any memory: schema, filing, upkeep rules
