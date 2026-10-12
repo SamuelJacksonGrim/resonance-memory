@@ -10544,6 +10544,44 @@ async function asyncTests() {
       const names = result.tools.map((t) => t.name).sort();
       assert.deepStrictEqual(names, smokeExe.EXPECTED_TOOLS.slice().sort());
     });
+
+    // Pin cap (I4 amendment, 2026-10-11): AI-originated pins stop at max_pins; past it the memory is still saved,
+    // not pinned, and the reply says why. Live server over stdio, embedder unreachable (save still works).
+    await atest("pin cap: an AI pin past max_pins saves the memory unpinned and says why", async () => {
+      const dir = fs.mkdtempSync(path.join(tmpRoot, "pincap-"));
+      fs.writeFileSync(path.join(dir, "resonance-memory.config.json"), JSON.stringify({ max_pins: 1, field: false }));
+      const child = require("child_process").spawn(process.execPath, [path.join(__dirname, "server.js")], {
+        env: { ...process.env, MEMORY_FILE_PATH: path.join(dir, "resonance-memory.jsonl"), EMBED_ENDPOINT: "http://127.0.0.1:9" },
+        stdio: ["pipe", "pipe", "ignore"],
+      });
+      let buf = ""; const pending = {}; let n = 0;
+      child.stdout.on("data", (d) => {
+        buf += d; let i;
+        while ((i = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, i); buf = buf.slice(i + 1);
+          if (!line.trim()) continue;
+          const msg = JSON.parse(line);
+          if (pending[msg.id]) { pending[msg.id](msg); delete pending[msg.id]; }
+        }
+      });
+      const rpc = (method, params) => new Promise((res) => {
+        const id = ++n; pending[id] = res;
+        child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
+      });
+      const call = async (name, args) => (await rpc("tools/call", { name, arguments: args })).result.content[0].text;
+      try {
+        await rpc("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "t", version: "1" } });
+        const a = await call("save_memory", { content: "My name is Robin and I use she/her.", pinned: true });
+        const b = await call("save_memory", { content: "Talk to me plainly, no corporate tone.", pinned: true });
+        const r = await call("recall_memory", { query: "who am I" });
+        assert.ok(!/Not pinned/.test(a), a);
+        assert.ok(/Not pinned: 1 memories are already pinned/.test(b), b);
+        assert.ok(/Saved/.test(b), b);
+        const pinLines = (r.split("Pinned (always in view")[1] || "").split("\n\n")[0].split("\n")
+          .filter((l) => l.startsWith("- [id"));
+        assert.strictEqual(pinLines.length, 1, r);
+      } finally { child.kill(); }
+    });
   }
 }
 

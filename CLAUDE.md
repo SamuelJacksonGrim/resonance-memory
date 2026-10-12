@@ -330,9 +330,15 @@ load-bearing ones, enforced here:
    candidate set (the `Related:` block); it never reorders the primary cosine result.
    Primary results are byte-identical whether the field is on or off. The field is *additive*
    and is wrapped in a `try/catch` that must never let it break recall.
-4. **Embed once at save; the server owns all metadata; the model assigns none of it.** A
-   `Store` abstraction sits behind the verbs (`store.js`) so the backend can be swapped
-   without changing the MCP API.
+4. **Embed once at save; the server owns all metadata.** A `Store` abstraction sits behind
+   the verbs (`store.js`) so the backend can be swapped without changing the MCP API.
+   **Amended 2026-10-11 (Samuel's call, filing cabinet):** the model may *suggest* filing
+   through optional arguments (`drawer`, `pinned` on save/edit; `status` on edit). The
+   server validates every suggestion, files on its own when they're omitted, and never
+   pins on its own; leaving them out is always safe, so a weak model loses nothing by
+   ignoring them. Pins are personal (each user's front is different), so AI-originated
+   pins stop at `max_pins` (live-config, default 15); the user can pin anything in the
+   panel. Embeddings, timestamps, importance and supersession stay server-only.
 5. **Durable writes; no *unbounded* write on a read path (I5).** Writes are atomic and
    durable. A read path must not perform an unbounded / full-corpus rewrite. Retention
    metadata (`access_count` / `last_access`) MAY be updated on recall if that update is

@@ -358,14 +358,44 @@ const TOOLS = [
   },
 ];
 
+// Pin cap (2026-10-11, Samuel + Ember). Pins are personal: nothing is pinned by default and the server never pins on
+// its own. The user pins in the panel (no limit there); the AI may pin through the optional argument when the user
+// says who they are or how they want to be treated. A weak model pinning everything would put every memory in front
+// of every recall, so AI-originated pins stop at max_pins (live-config `max_pins`, default 15). Past the cap the memory
+// is still saved or edited normally, just not pinned, and the reply says why. Leaving `pinned` out is always safe.
+const DEFAULT_MAX_PINS = 15;
+function maxPins() {
+  const v = Number((liveConfig() || {}).max_pins);
+  return Number.isFinite(v) && v >= 0 ? Math.floor(v) : DEFAULT_MAX_PINS;
+}
+function currentPinCount(excludeId) {
+  try {
+    return store.all().filter((r) => r && r.pinned && !r.deleted && !r.valid_to &&
+      String(r.id) !== String(excludeId)).length;
+  } catch (_) { return 0; }       // counting must never break a save
+}
+
 async function callTool(name, args, requestId) {
   args = args || {};
+  const text = await callToolInner(name, args, requestId);
+  return text + (args.__pinNote || "");
+}
+
+async function callToolInner(name, args, requestId) {
   // JSON-RPC request id, extracted at this boundary (Phase 0.3). Threaded
   // into every verb; EdgeStore only *uses* it on mutating ops (save-time
   // bind, reinforceRecall). Missing/null id → no dedup (eval, panel, tests).
   const opts = { requestId };
   if (args.drawer != null && String(args.drawer).trim() !== "") opts.drawer = args.drawer;
   if (typeof args.pinned === "boolean") opts.pinned = args.pinned;
+  if (opts.pinned === true && (name === "save_memory" || name === "edit_memory")) {
+    const cap = maxPins();
+    if (currentPinCount(name === "edit_memory" ? args.id : null) >= cap) {
+      delete opts.pinned;
+      args.__pinNote = `\n(Not pinned: ${cap} memories are already pinned, which is the limit. If this one matters ` +
+        "more, ask the user which pin to retire, then unpin it with edit_memory and pin this.)";
+    }
+  }
   if (args.status != null && String(args.status).trim() !== "") opts.status = args.status;
   if (typeof args.include_shelved === "boolean") opts.includeShelved = args.include_shelved;
   if (name === "save_memory") return await core.save(args.content, opts);
