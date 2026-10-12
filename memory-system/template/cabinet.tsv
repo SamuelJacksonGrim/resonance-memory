@@ -1,0 +1,3 @@
+# Placement: one row per memory, "<name><TAB><destination>". "." = the surface (top level, stays put).
+# Otherwise projects/<subject>, tools/<subject> or reference/<subject>.
+memory-architecture	.
