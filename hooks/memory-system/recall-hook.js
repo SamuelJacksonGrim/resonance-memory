@@ -23,9 +23,11 @@
  * memories at cosine >= 0.70, skips milestones and short prompts.
  * Fails silent: exit 0 and no output on any problem.
  *
- * Env (same names as the PowerShell hook, plus RM's EMBED_* as a fallback):
- *   RECALL_CACHE, RECALL_MEMORY, RECALL_ENDPOINT, RECALL_MODEL
- *   EMBED_ENDPOINT (the model follows RECALL_MODEL only)
+ * Memory, cache, endpoint, and model: RECALL_* env, else
+ * ~/.resonance-memory/memory-system.json (the installer writes it; hook
+ * commands cannot portably set env). EMBED_ENDPOINT is a fallback for the
+ * URL only. The model follows RECALL_MODEL, then the config file, never
+ * EMBED_MODEL.
  */
 
 const fs = require("fs");
@@ -81,10 +83,11 @@ async function runHook(options) {
     }
     if (!prompt || prompt.trim().length < (opts.minChars == null ? MIN_CHARS : opts.minChars)) return 0;
 
-    const cache = env.RECALL_CACHE || recall.DEFAULT_CACHE;
-    const memoryDir = env.RECALL_MEMORY || recall.DEFAULT_MEMORY;
-    const endpoint = env.RECALL_ENDPOINT || env.EMBED_ENDPOINT || recall.DEFAULT_ENDPOINT;
-    const model = env.RECALL_MODEL || recall.DEFAULT_MODEL;
+    const runtime = recall.runtimeFrom(env);
+    const cache = runtime.cache;
+    const memoryDir = runtime.memoryDir;
+    const endpoint = runtime.endpoint;
+    const model = runtime.model;
     if (!fs.existsSync(cache)) return 0;
     if (!memoryDir || !fs.existsSync(memoryDir)) return 0;
 

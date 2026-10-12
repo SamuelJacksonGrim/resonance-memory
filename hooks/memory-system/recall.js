@@ -28,11 +28,11 @@
  *   node recall.js --query "..." [--top 5] [--history]
  *   node recall.js --plan
  *
- * The memory folder has no default: pass --memory-dir or set RECALL_MEMORY (the installer sets it).
- * Cache: --cache, else RECALL_CACHE, else ~/.resonance-memory/memory-embeddings.json.
- * Embedder: --endpoint / RECALL_ENDPOINT (else EMBED_ENDPOINT, RM's variable; a full .../v1/embeddings URL or a
- * base URL) and --model / RECALL_MODEL. The model deliberately does NOT follow RM's EMBED_MODEL: pointing RM at a
- * different embedder shouldn't silently change the vectors this cache was built with.
+ * The memory folder has no default. Resolution order for memory, cache, endpoint, and model:
+ * flag, then RECALL_* env (endpoint also accepts EMBED_ENDPOINT), then
+ * ~/.resonance-memory/memory-system.json, then the defaults below.
+ * The model deliberately does NOT follow RM's EMBED_MODEL. Cache default:
+ * ~/.resonance-memory/memory-embeddings.json. Endpoint default: http://localhost:1234.
  */
 
 const crypto = require("crypto");
@@ -68,13 +68,89 @@ function embeddingsUrl(endpoint) {
   return e + "/v1/embeddings";
 }
 
+// A partial env (unit tests pass one) must not fall through to this process's
+// real home, or a live memory-system.json would change the test.
+function homeFromEnv(env) {
+  const e = env || process.env;
+  if (process.platform === "win32") {
+    if (e.USERPROFILE) return e.USERPROFILE;
+    if (e.HOMEDRIVE && e.HOMEPATH) return e.HOMEDRIVE + e.HOMEPATH;
+    if (e.HOME) return e.HOME;
+  } else {
+    if (e.HOME) return e.HOME;
+    if (e.USERPROFILE) return e.USERPROFILE;
+  }
+  if (e !== process.env) return "";
+  try { return os.homedir() || ""; } catch { return ""; }
+}
+
+function pickString() {
+  for (let i = 0; i < arguments.length; i++) {
+    const v = arguments[i];
+    if (typeof v !== "string") continue;
+    if (v.trim() === "") continue;
+    return v;
+  }
+  return "";
+}
+
+function defaultConfigPath(env) {
+  const e = env || process.env;
+  if (Object.prototype.hasOwnProperty.call(e, "RECALL_CONFIG")) {
+    return e.RECALL_CONFIG ? e.RECALL_CONFIG : "";
+  }
+  const home = homeFromEnv(e);
+  if (!home) return "";
+  return path.join(home, ".resonance-memory", "memory-system.json");
+}
+
+function readMemorySystemConfig(env, configPath) {
+  const file = configPath != null ? (configPath || "") : defaultConfigPath(env || process.env);
+  if (!file) return { path: "", config: {}, error: null };
+  if (!fs.existsSync(file)) return { path: file, config: {}, error: null };
+  let text;
+  try { text = fs.readFileSync(file, "utf8"); }
+  catch (err) { return { path: file, config: {}, error: err }; }
+  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+  try {
+    const data = JSON.parse(text);
+    if (!data || typeof data !== "object" || Array.isArray(data)) {
+      return { path: file, config: {}, error: new Error("not a JSON object") };
+    }
+    return { path: file, config: data, error: null };
+  } catch (err) {
+    return { path: file, config: {}, error: err };
+  }
+}
+
+function runtimeFrom(env, overrides) {
+  const e = env || process.env;
+  const over = overrides || {};
+  const loaded = over.skipConfig ? { config: {}, error: null, path: "" } : readMemorySystemConfig(e, over.configPath);
+  const file = loaded.error ? {} : (loaded.config || {});
+  return {
+    memoryDir: pickString(over.memoryDir, e.RECALL_MEMORY, file.memoryDir, DEFAULT_MEMORY),
+    cache: pickString(over.cache, e.RECALL_CACHE, file.cache, DEFAULT_CACHE),
+    endpoint: pickString(over.endpoint, e.RECALL_ENDPOINT, e.EMBED_ENDPOINT, file.endpoint, DEFAULT_ENDPOINT),
+    model: pickString(over.model, e.RECALL_MODEL, file.model, DEFAULT_MODEL),
+    configPath: loaded.path || "",
+    configError: loaded.error || null,
+  };
+}
+
 function resolveConfig(opts) {
   const o = opts || {};
   const env = o.env || process.env;
-  let memoryDir = o.memoryDir || env.RECALL_MEMORY || DEFAULT_MEMORY;
-  let cache = o.cache || env.RECALL_CACHE || DEFAULT_CACHE;
-  const endpoint = o.endpoint || env.RECALL_ENDPOINT || env.EMBED_ENDPOINT || DEFAULT_ENDPOINT;
-  const model = o.model || env.RECALL_MODEL || DEFAULT_MODEL;
+  const runtime = runtimeFrom(env, {
+    memoryDir: o.memoryDir,
+    cache: o.cache,
+    endpoint: o.endpoint,
+    model: o.model,
+    skipConfig: !!o.skipConfig,
+    configPath: o.configPath,
+  });
+  let memoryDir = runtime.memoryDir;
+  let cache = runtime.cache;
   const history = !!o.history;
   if (history) {
     memoryDir = path.join(memoryDir, "history");
@@ -84,8 +160,8 @@ function resolveConfig(opts) {
   return {
     memoryDir,
     cache,
-    endpoint,
-    model,
+    endpoint: runtime.endpoint,
+    model: runtime.model,
     history,
     full: !!o.full,
     query: o.query,
@@ -94,6 +170,8 @@ function resolveConfig(opts) {
     lockTimeoutMs: o.lockTimeoutMs == null ? LOCK_WAIT_MS : o.lockTimeoutMs,
     timeoutMs: o.timeoutMs == null ? EMBED_TIMEOUT_MS : o.timeoutMs,
     embed: o.embed || null,
+    configPath: runtime.configPath,
+    configError: runtime.configError,
   };
 }
 
@@ -592,6 +670,8 @@ function parseArgs(argv) {
       case "resultpath":
       case "result":
       case "result-path": out.resultPath = need(); break;
+      case "help":
+      case "h": out.help = true; break;
       default: unknown(argv[i]);
     }
   }
@@ -610,14 +690,16 @@ async function main(argv, opts) {
     return 1;
   }
   const merged = Object.assign({}, extra, args);
+  if (args.help) {
+    ioOf(extra).out(recallUsage());
+    return 0;
+  }
   if (args.plan && (args.rebuild || args.query)) {
     ioOf(extra).host("Use -Plan on its own.");
     return 1;
   }
-  if (!fs.existsSync(path.join(__dirname, "sources.js"))) {
-    ioOf(extra).host("Missing sources.js beside recall.js. Cache not touched.");
-    return 1;
-  }
+  // sources.js is required at load. A filesystem check here fails inside the
+  // SEA bundle, where the module is inlined and there is no sibling file.
   if (args.plan) return (await plan(merged)).exitCode;
   if (args.rebuild) return (await rebuild(merged)).exitCode;
   if (!args.query) {
@@ -637,6 +719,22 @@ if (require.main === module) {
   );
 }
 
+function recallUsage() {
+  return [
+    "Usage: --recall --query \"...\" [--top 5] [--history]",
+    "       --recall --rebuild [--full] [--history]",
+    "       --recall --plan",
+    "",
+    "  --memory-dir <dir>   Memory folder (else RECALL_MEMORY, else memory-system.json)",
+    "  --cache <file>       Recall cache",
+    "  --endpoint <url>     Embedder (else RECALL_ENDPOINT, else EMBED_ENDPOINT)",
+    "  --model <name>       Embed model (else RECALL_MODEL; never EMBED_MODEL)",
+    "  --full               Rebuild every vector",
+    "  --history            Search memory/history only",
+    "  --result <file>      Write the plan or the hits as JSON",
+  ].join("\n");
+}
+
 module.exports = {
   DEFAULT_MEMORY,
   DEFAULT_CACHE,
@@ -645,7 +743,12 @@ module.exports = {
   EMBED_CHARS,
   LOCK_WAIT_MS,
   embeddingsUrl,
+  homeFromEnv,
+  defaultConfigPath,
+  readMemorySystemConfig,
+  runtimeFrom,
   resolveConfig,
+  recallUsage,
   getField,
   parseWeight,
   documentText,

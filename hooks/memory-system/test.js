@@ -38,6 +38,8 @@ const sources = require("./sources.js");
 const recall = require("./recall.js");
 const hook = require("./recall-hook.js");
 const rebuildHook = require("./rebuild-on-write.js");
+const installMem = require("./install-memory.js");
+const buildExe = require("../../build-exe.js");
 
 const PS1 = "C:\\Users\\spamw\\tools\\recall.ps1";
 const MODEL = "text-embedding-nomic-embed-text-v1.5";
@@ -940,6 +942,491 @@ test("cosine zero-vector is 0 and a normal pair matches the formula", async () =
   assert.strictEqual(recall.cosine([0, 0], [1, 0]), 0);
   assert.strictEqual(recall.cosine([1, 0], [0, 0]), 0);
   assert.ok(Math.abs(recall.cosine([1, 0], [0.6, 0.8]) - 0.6) < 1e-12);
+});
+
+section("config file and installer");
+
+function installEnv(home) {
+  return { USERPROFILE: home, HOME: home };
+}
+
+function scrubRecallEnv(base) {
+  const env = Object.assign({}, base);
+  for (const k of ["RECALL_MEMORY", "RECALL_CACHE", "RECALL_ENDPOINT", "RECALL_MODEL", "RECALL_CONFIG", "EMBED_ENDPOINT", "EMBED_MODEL"]) {
+    delete env[k];
+  }
+  return env;
+}
+
+test("config file is used only when the flag and RECALL_* env are absent", async () => {
+  const home = tmpdir();
+  try {
+    const mem = path.join(home, "mem");
+    const cache = path.join(home, "cache.json");
+    write(path.join(home, ".resonance-memory", "memory-system.json"), JSON.stringify({
+      memoryDir: mem,
+      cache: cache,
+      endpoint: "http://127.0.0.1:9",
+      model: "from-file",
+    }));
+    const env = Object.assign(installEnv(home), { EMBED_MODEL: "from-embed" });
+    const cfg = recall.resolveConfig({ env });
+    assert.strictEqual(cfg.memoryDir, mem);
+    assert.strictEqual(cfg.cache, cache);
+    assert.strictEqual(cfg.endpoint, "http://127.0.0.1:9");
+    assert.strictEqual(cfg.model, "from-file", "EMBED_MODEL must not win over the config file");
+    const fromEnv = recall.resolveConfig({
+      env: Object.assign({}, env, { RECALL_MODEL: "from-env", RECALL_MEMORY: path.join(home, "other") }),
+    });
+    assert.strictEqual(fromEnv.model, "from-env");
+    assert.strictEqual(fromEnv.memoryDir, path.join(home, "other"));
+    const flagged = recall.resolveConfig({ env, model: "from-flag", memoryDir: path.join(home, "flagged") });
+    assert.strictEqual(flagged.model, "from-flag");
+    assert.strictEqual(flagged.memoryDir, path.join(home, "flagged"));
+    assert.notStrictEqual(cfg.cache, recall.DEFAULT_CACHE);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("write hook watches the config file's memoryDir when RECALL_MEMORY is unset", async () => {
+  const home = tmpdir();
+  const mem = path.join(home, "mem");
+  fs.mkdirSync(mem);
+  write(path.join(home, ".resonance-memory", "memory-system.json"), JSON.stringify({ memoryDir: mem }));
+  let calls = 0;
+  const fire = (filePath) => rebuildHook.runRebuildHook({
+    stdin: JSON.stringify({ tool_name: "Write", tool_input: { file_path: filePath } }),
+    env: installEnv(home),
+    spawn: () => { calls++; },
+  });
+  try {
+    assert.strictEqual(await fire(path.join(mem, "a.md")), 0);
+    assert.strictEqual(calls, 1);
+    assert.strictEqual(await fire(path.join(home, "elsewhere.md")), 0);
+    assert.strictEqual(calls, 1);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("rebuild child uses entry.js when the hook was started that way", async () => {
+  const entry = path.join(__dirname, "..", "..", "entry.js");
+  const viaEntry = rebuildHook.recallRebuildLaunch(entry);
+  assert.deepStrictEqual(viaEntry.args.slice(-2), ["--recall", "--rebuild"]);
+  assert.ok(viaEntry.args[0].endsWith("entry.js"));
+  const direct = rebuildHook.recallRebuildLaunch(path.join(__dirname, "rebuild-on-write.js"));
+  assert.ok(direct.args[0].endsWith("recall.js"));
+  assert.deepStrictEqual(direct.args.slice(1), ["--rebuild"]);
+});
+
+test("hook identity matches the exe flag and the PowerShell scripts, not --recall", async () => {
+  assert.strictEqual(installMem.isRecallHook({
+    command: "powershell", args: ["-File", "C:\\tools\\recall-hook.ps1"],
+  }), true);
+  assert.strictEqual(installMem.isRecallHook({
+    command: process.execPath, args: ["C:\\repo\\entry.js", "--recall-hook"],
+  }), true);
+  assert.strictEqual(installMem.isRecallHook({
+    command: process.execPath, args: ["C:\\repo\\entry.js", "--recall", "--query", "x"],
+  }), false);
+  assert.strictEqual(installMem.isRebuildHook({
+    command: "powershell", args: ["-File", "C:\\tools\\rebuild-on-memory-write.ps1"],
+  }), true);
+  assert.strictEqual(installMem.isRebuildHook({ command: "echo", args: ["hi"] }), false);
+  const spec = installMem.hookSpec("--recall-hook", 15, "recalling memory...");
+  assert.strictEqual(spec.type, "command");
+  assert.strictEqual(spec.command, process.execPath);
+  assert.ok(spec.args.includes("--recall-hook"));
+  assert.ok(spec.args.some((a) => a.endsWith("entry.js")));
+});
+
+test("CLAUDE block placeholders are filled and paths with spaces are quoted", async () => {
+  const filled = installMem.fillClaudeBlock(installMem.loadClaudeBlock(), {
+    memoryDir: "C:\\mem ory",
+    cabinetDir: "C:\\cab inet",
+    recallPrefix: "\"C:\\Program Files\\node.exe\" \"C:\\repo\\entry.js\" --recall",
+  });
+  assert.ok(filled.includes("\"C:\\mem ory\""));
+  assert.ok(filled.includes("\"C:\\cab inet\""));
+  assert.ok(filled.includes("--recall --query"));
+  assert.ok(filled.includes("--recall --rebuild"));
+  assert.ok(filled.includes("MEMORY.md"));
+  assert.ok(!filled.includes("MEMORY_DIR"));
+  assert.ok(!filled.includes("RECALL_JS"));
+  assert.ok(!filled.includes("CABINET_DIR"));
+});
+
+test("ship assets carry the template, the memory scripts, and the cabinet package", async () => {
+  const root = path.join(__dirname, "..", "..");
+  const assets = buildExe.collectShipAssets(root);
+  assert.ok(assets.memoryTemplate.files["MEMORY.md"].includes("Memory index"));
+  assert.strictEqual(typeof assets.memoryTemplate.files["projects/.keep"], "string");
+  assert.ok(assets.memoryTemplate.files["history/README.md"].includes("faded"));
+  assert.ok(assets.memoryScripts["recall.js"].includes("runtimeFrom"));
+  assert.ok(assets.memoryScripts["install-memory.js"].includes("installMemorySystem"));
+  assert.ok(assets.memoryScripts["recall-hook.js"]);
+  assert.ok(assets.memoryScripts["rebuild-on-write.js"]);
+  assert.ok(assets.memoryScripts["sources.js"]);
+  assert.ok(!assets.memoryScripts["test.js"]);
+  assert.ok(assets.cabinetPackage.files["__main__.py"].includes("def cmd_index"));
+  assert.ok(!assets.cabinetPackage.files["tests/test_cabinet.py"]);
+  assert.ok(assets.claudeMemoryBlock.includes("RECALL_JS"));
+  assert.ok(assets.demoSeed.length > 0);
+  assert.ok(assets.systemPrompt.includes("```"));
+  const module = { exports: {} };
+  new Function("module", buildExe.renderEmbeddedAssets(root))(module);
+  assert.strictEqual(module.exports.memoryTemplate.files["MEMORY.md"], assets.memoryTemplate.files["MEMORY.md"]);
+  assert.strictEqual(typeof module.exports.demoSeed, "string");
+  assert.strictEqual(typeof module.exports.systemPrompt, "string");
+  const fromInstaller = installMem.loadTemplate();
+  assert.strictEqual(fromInstaller.files["cabinet.tsv"], assets.memoryTemplate.files["cabinet.tsv"]);
+});
+
+test("dry run writes nothing", async () => {
+  const home = tmpdir();
+  const memoryDir = path.join(home, "proj", "memory");
+  write(path.join(memoryDir, "MEMORY.md"), "USER OWNED\n");
+  const before = fs.readFileSync(path.join(memoryDir, "MEMORY.md"));
+  const mtime = fs.statSync(path.join(memoryDir, "MEMORY.md")).mtimeMs;
+  try {
+    const result = await installMem.installMemorySystem({
+      memoryDir: memoryDir,
+      env: installEnv(home),
+      embed: scriptedEmbed(),
+    });
+    assert.strictEqual(result.exitCode, 0, result.lines.join("\n"));
+    assert.strictEqual(result.wrote, false);
+    assert.strictEqual(result.lines[0], "dry run: nothing will be written");
+    assert.ok(result.lines.some((l) => l.startsWith("would write ") && l.includes("cabinet.tsv")));
+    assert.ok(result.lines.some((l) => l.includes("MEMORY.md") && l.includes("merge by hand")));
+    assert.ok(result.lines.some((l) => l.includes("would add UserPromptSubmit") && l.includes("--recall-hook") && l.includes("entry.js")));
+    assert.ok(result.lines.some((l) => l.includes("would add PostToolUse " + installMem.POST_MATCHER) && l.includes("--rebuild-on-write")));
+    assert.ok(result.lines.some((l) => l.includes("would append memory block")));
+    assert.ok(result.lines.some((l) => l.includes("would full-rebuild")));
+    assert.deepStrictEqual(fs.readFileSync(path.join(memoryDir, "MEMORY.md")), before);
+    assert.strictEqual(fs.statSync(path.join(memoryDir, "MEMORY.md")).mtimeMs, mtime);
+    assert.ok(!fs.existsSync(path.join(memoryDir, "cabinet.tsv")));
+    assert.ok(!fs.existsSync(path.join(home, ".claude", "settings.json")));
+    assert.ok(!fs.existsSync(path.join(home, ".claude", "CLAUDE.md")));
+    assert.ok(!fs.existsSync(path.join(home, ".resonance-memory", "memory-system.json")));
+    assert.ok(!fs.existsSync(path.join(home, ".resonance-memory", "memory-embeddings.json")));
+    assert.strictEqual(result.lines.filter((l) => l.startsWith("wrote ") || l.startsWith("applied")).length, 0);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("missing --memory-dir writes nothing", async () => {
+  const home = tmpdir();
+  try {
+    const result = await installMem.installMemorySystem({
+      apply: true,
+      env: installEnv(home),
+      embed: scriptedEmbed(),
+    });
+    assert.strictEqual(result.exitCode, 1);
+    assert.strictEqual(result.wrote, false);
+    assert.ok(result.lines[0].includes("refusing"));
+    assert.ok(result.lines.some((l) => l.includes("Missing --memory-dir")));
+    assert.ok(!fs.existsSync(path.join(home, ".claude")));
+    assert.ok(!fs.existsSync(path.join(home, ".resonance-memory")));
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("invalid settings.json stops the install before any write", async () => {
+  const home = tmpdir();
+  const memoryDir = path.join(home, "mem");
+  const settingsPath = path.join(home, ".claude", "settings.json");
+  write(settingsPath, "{ not json");
+  try {
+    const result = await installMem.installMemorySystem({
+      apply: true,
+      memoryDir: memoryDir,
+      env: installEnv(home),
+      embed: scriptedEmbed(),
+    });
+    assert.strictEqual(result.exitCode, 1);
+    assert.strictEqual(result.wrote, false);
+    assert.strictEqual(result.lines[0], "refusing to apply; nothing written");
+    assert.strictEqual(fs.readFileSync(settingsPath, "utf8"), "{ not json");
+    assert.ok(!fs.existsSync(settingsPath + ".bak"));
+    assert.ok(!fs.existsSync(memoryDir));
+    assert.ok(!fs.existsSync(path.join(home, ".resonance-memory", "memory-system.json")));
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("apply lays the template without overwriting, merges hooks once, and appends the block once", async () => {
+  const home = tmpdir();
+  const env = installEnv(home);
+  const memoryDir = path.join(home, "proj", "memory");
+  const ownedMemory = "USER OWNED memory index\n";
+  const ownedArch = "USER RULES stay\n";
+  write(path.join(memoryDir, "MEMORY.md"), ownedMemory);
+  write(path.join(memoryDir, "memory-architecture.md"), ownedArch);
+  const settingsPath = path.join(home, ".claude", "settings.json");
+  const originalSettings = JSON.stringify({
+    theme: "dark",
+    permissions: { defaultMode: "bypassPermissions" },
+    hooks: {
+      PreToolUse: [
+        { matcher: "Bash", hooks: [{ type: "command", command: "echo", args: ["keep-me"] }] },
+      ],
+      UserPromptSubmit: [
+        { hooks: [{ type: "command", command: "C:\\custom\\note.exe", args: ["--ping"] }] },
+      ],
+      PostToolUse: [
+        { matcher: "Bash", hooks: [{ type: "command", command: "echo", args: ["bash"] }] },
+        { matcher: "Write|Edit|MultiEdit", hooks: [{ type: "command", command: "echo", args: ["fmt"] }] },
+      ],
+    },
+  }, null, 2) + "\n";
+  write(settingsPath, originalSettings);
+  const claudePath = path.join(home, ".claude", "CLAUDE.md");
+  write(claudePath, "Hello.\n");
+  const configPath = path.join(home, ".resonance-memory", "memory-system.json");
+  write(configPath, JSON.stringify({ extra: true, memoryDir: "old", cache: "old", endpoint: "old", model: "old" }));
+  const templateRoot = path.join(__dirname, "..", "..", "memory-system", "template");
+  try {
+    const first = await installMem.installMemorySystem({
+      apply: true,
+      memoryDir: memoryDir,
+      env: env,
+      embed: scriptedEmbed([1, 0, 0, 0]),
+    });
+    assert.strictEqual(first.exitCode, 0, first.lines.join("\n"));
+    assert.strictEqual(first.wrote, true);
+    assert.strictEqual(first.lines[0], "applying");
+    assert.ok(first.lines.includes("applied"));
+    assert.strictEqual(fs.readFileSync(path.join(memoryDir, "MEMORY.md"), "utf8"), ownedMemory);
+    assert.strictEqual(fs.readFileSync(path.join(memoryDir, "memory-architecture.md"), "utf8"), ownedArch);
+    assert.ok(first.lines.some((l) => l.includes("MEMORY.md") && l.includes("merge by hand")));
+    assert.ok(first.lines.some((l) => l.includes("memory-architecture.md") && l.includes("merge by hand")));
+    assert.strictEqual(
+      fs.readFileSync(path.join(memoryDir, "cabinet.tsv"), "utf8"),
+      fs.readFileSync(path.join(templateRoot, "cabinet.tsv"), "utf8")
+    );
+    assert.strictEqual(
+      fs.readFileSync(path.join(memoryDir, "history", "README.md"), "utf8"),
+      fs.readFileSync(path.join(templateRoot, "history", "README.md"), "utf8")
+    );
+    assert.ok(fs.existsSync(path.join(memoryDir, "projects", ".keep")));
+    assert.ok(fs.existsSync(path.join(memoryDir, "reference", ".keep")));
+    assert.ok(fs.existsSync(path.join(memoryDir, "tools", ".keep")));
+
+    const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+    assert.strictEqual(settings.theme, "dark");
+    assert.strictEqual(settings.permissions.defaultMode, "bypassPermissions");
+    assert.strictEqual(settings.hooks.PreToolUse[0].hooks[0].args[0], "keep-me");
+    assert.strictEqual(settings.hooks.PostToolUse[0].matcher, "Bash");
+    assert.strictEqual(settings.hooks.PostToolUse[0].hooks[0].args[0], "bash");
+    const writeGroup = settings.hooks.PostToolUse.find((g) => g.matcher === "Write|Edit|MultiEdit");
+    assert.ok(writeGroup);
+    assert.strictEqual(writeGroup.hooks[0].args[0], "fmt");
+    assert.strictEqual(writeGroup.hooks.filter((h) => (h.args || []).includes("--rebuild-on-write")).length, 1);
+    const promptHooks = settings.hooks.UserPromptSubmit[0].hooks;
+    assert.ok(promptHooks.some((h) => (h.args || []).includes("--ping")));
+    assert.strictEqual(promptHooks.filter((h) => (h.args || []).includes("--recall-hook")).length, 1);
+    assert.ok(promptHooks.some((h) => (h.args || []).some((a) => String(a).endsWith("entry.js"))));
+    assert.strictEqual(fs.readFileSync(settingsPath + ".bak", "utf8"), originalSettings);
+
+    const claude = fs.readFileSync(claudePath, "utf8");
+    assert.ok(claude.startsWith("Hello.\n"));
+    assert.strictEqual(claude.split(installMem.BLOCK_MARKER).length, 2);
+    assert.ok(claude.includes("--recall --query"), claude);
+    assert.ok(claude.includes("--recall --rebuild"));
+    assert.ok(claude.includes(memoryDir));
+    assert.ok(!claude.includes("RECALL_JS"));
+    assert.ok(!claude.includes("MEMORY_DIR"));
+    assert.ok(!claude.includes("CABINET_DIR"));
+    assert.strictEqual(fs.readFileSync(claudePath + ".bak", "utf8"), "Hello.\n");
+
+    const cfg = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    assert.strictEqual(cfg.extra, true);
+    assert.strictEqual(cfg.memoryDir, memoryDir);
+    assert.strictEqual(cfg.model, recall.DEFAULT_MODEL);
+    assert.ok(cfg.cache.startsWith(home), cfg.cache);
+    assert.ok(fs.existsSync(cfg.cache));
+    const cached = JSON.parse(fs.readFileSync(cfg.cache, "utf8"));
+    assert.ok(cached.some((r) => r.name === "memory-architecture"));
+    const cabMain = path.join(home, ".resonance-memory", "cabinet", "cabinet", "__main__.py");
+    assert.ok(fs.readFileSync(cabMain, "utf8").includes("def cmd_index"));
+
+    const settingsBytes = fs.readFileSync(settingsPath);
+    const claudeBytes = fs.readFileSync(claudePath);
+    const configBytes = fs.readFileSync(configPath);
+    const bakMtime = fs.statSync(settingsPath + ".bak").mtimeMs;
+    const memMtime = fs.statSync(path.join(memoryDir, "MEMORY.md")).mtimeMs;
+    const cabMtime = fs.statSync(cabMain).mtimeMs;
+
+    const second = await installMem.installMemorySystem({
+      apply: true,
+      memoryDir: memoryDir,
+      env: env,
+      embed: scriptedEmbed([1, 0, 0, 0]),
+    });
+    assert.strictEqual(second.exitCode, 0, second.lines.join("\n"));
+    assert.ok(second.lines.some((l) => l.includes("not adding another")));
+    assert.ok(second.lines.some((l) => l.includes("hooks already present")));
+    assert.ok(second.lines.some((l) => l.includes("memory block already present")));
+    const again = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+    assert.strictEqual(
+      again.hooks.UserPromptSubmit[0].hooks.filter((h) => (h.args || []).includes("--recall-hook")).length,
+      1
+    );
+    const rebuilds = again.hooks.PostToolUse
+      .filter((g) => g.matcher === "Write|Edit|MultiEdit")
+      .reduce((n, g) => n + g.hooks.filter((h) => (h.args || []).includes("--rebuild-on-write")).length, 0);
+    assert.strictEqual(rebuilds, 1);
+    assert.deepStrictEqual(fs.readFileSync(settingsPath), settingsBytes);
+    assert.deepStrictEqual(fs.readFileSync(claudePath), claudeBytes);
+    assert.deepStrictEqual(fs.readFileSync(configPath), configBytes);
+    assert.strictEqual(fs.readFileSync(claudePath, "utf8").split(installMem.BLOCK_MARKER).length, 2);
+    assert.strictEqual(fs.statSync(settingsPath + ".bak").mtimeMs, bakMtime);
+    assert.strictEqual(fs.statSync(path.join(memoryDir, "MEMORY.md")).mtimeMs, memMtime);
+    assert.strictEqual(fs.readFileSync(path.join(memoryDir, "MEMORY.md"), "utf8"), ownedMemory);
+    assert.strictEqual(fs.statSync(cabMain).mtimeMs, cabMtime);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("PowerShell recall hooks are preserved and not duplicated", async () => {
+  const home = tmpdir();
+  const settingsPath = path.join(home, ".claude", "settings.json");
+  const text = [
+    "{",
+    "  \"theme\": \"dark\",",
+    "  \"hooks\": {",
+    "    \"UserPromptSubmit\": [{",
+    "      \"hooks\": [{",
+    "        \"type\": \"command\",",
+    "        \"command\": \"powershell\",",
+    "        \"args\": [\"-File\", \"C:\\\\tools\\\\recall-hook.ps1\"]",
+    "      }]",
+    "    }],",
+    "    \"PostToolUse\": [{",
+    "      \"matcher\": \"Write|Edit|MultiEdit\",",
+    "      \"hooks\": [{",
+    "        \"type\": \"command\",",
+    "        \"command\": \"powershell\",",
+    "        \"args\": [\"-File\", \"C:\\\\tools\\\\rebuild-on-memory-write.ps1\"]",
+    "      }]",
+    "    }]",
+    "  }",
+    "}",
+    "",
+  ].join("\n");
+  write(settingsPath, text);
+  try {
+    const result = await installMem.installMemorySystem({
+      apply: true,
+      memoryDir: path.join(home, "mem"),
+      env: installEnv(home),
+      embed: scriptedEmbed([1, 0, 0, 0]),
+    });
+    assert.strictEqual(result.exitCode, 0, result.lines.join("\n"));
+    assert.strictEqual(fs.readFileSync(settingsPath, "utf8"), text);
+    assert.ok(!fs.existsSync(settingsPath + ".bak"));
+    assert.ok(result.lines.some((l) => l.includes("recall-hook.ps1") && l.includes("not adding another")));
+    assert.ok(result.lines.some((l) => l.includes("rebuild-on-memory-write.ps1") && l.includes("not adding another")));
+    const parsed = JSON.parse(text);
+    assert.strictEqual(parsed.hooks.UserPromptSubmit[0].hooks.length, 1);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("entry.js flags: dry run, recall plan, and the prompt hook", async () => {
+  const entry = path.join(__dirname, "..", "..", "entry.js");
+  const home = tmpdir();
+  const env = scrubRecallEnv(Object.assign({}, process.env, installEnv(home)));
+  const mem = path.join(home, "mem");
+  write(path.join(mem, "alpha.md"), "description: alpha desc\nweight: 0.5\n");
+  write(path.join(mem, "history", "old.md"), "description: old desc\n");
+  const srv = await listen(async (req, res) => {
+    await readBody(req);
+    res.setHeader("Content-Type", "application/json");
+    res.end(JSON.stringify({ data: [{ embedding: [1, 0, 0] }] }));
+  });
+  try {
+    const dry = spawnSync(process.execPath, [
+      entry, "--install-memory-system", "--memory-dir", mem,
+    ], { encoding: "utf8", env: env });
+    assert.strictEqual(dry.status, 0, dry.stderr || dry.stdout);
+    assert.ok(dry.stdout.includes("dry run: nothing will be written"), dry.stdout);
+    assert.ok(dry.stdout.includes("would write"));
+    assert.ok(!fs.existsSync(path.join(home, ".claude", "settings.json")));
+    assert.ok(!fs.existsSync(path.join(home, ".resonance-memory", "memory-system.json")));
+    const owned = fs.readFileSync(path.join(mem, "alpha.md"), "utf8");
+
+    const planOut = path.join(home, "plan.json");
+    const planned = spawnSync(process.execPath, [
+      entry, "--recall", "--plan", "--memory-dir", mem, "--result", planOut, "--model", MODEL,
+    ], { encoding: "utf8", env: env });
+    assert.strictEqual(planned.status, 0, planned.stderr);
+    const planRows = JSON.parse(fs.readFileSync(planOut, "utf8"));
+    assert.ok(planRows.some((r) => r.name === "alpha"));
+    assert.ok(!planRows.some((r) => r.rel && r.rel.indexOf("history/") === 0));
+
+    const histOut = path.join(home, "hist.json");
+    const hist = spawnSync(process.execPath, [
+      entry, "--recall", "--history", "--plan", "--memory-dir", mem, "--result", histOut, "--model", MODEL,
+    ], { encoding: "utf8", env: env });
+    assert.strictEqual(hist.status, 0, hist.stderr);
+    const histRows = JSON.parse(fs.readFileSync(histOut, "utf8"));
+    assert.ok(histRows.some((r) => r.name === "old"));
+
+    const cache = path.join(home, "cache.json");
+    fs.writeFileSync(cache, JSON.stringify([
+      { name: "alpha", description: "alpha desc", persistence: "standing", weight: 0.5, vector: [1, 0, 0] },
+    ]));
+    write(path.join(home, ".resonance-memory", "memory-system.json"), JSON.stringify({
+      memoryDir: mem,
+      cache: cache,
+      endpoint: srv.endpoint,
+      model: "m",
+    }));
+    // spawnSync freezes this process, so the fake embedder could not answer
+    // and the hook (fail-silent) would print nothing. Wait without blocking.
+    const hooked = await new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, [entry, "--recall-hook"], { env: env });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.setEncoding("utf8");
+      child.stderr.setEncoding("utf8");
+      child.stdout.on("data", (c) => { stdout += c; });
+      child.stderr.on("data", (c) => { stderr += c; });
+      child.on("error", reject);
+      child.on("close", (status) => resolve({ status, stdout, stderr }));
+      child.stdin.end(JSON.stringify({ prompt: "hello world!" }));
+    });
+    assert.strictEqual(hooked.status, 0, hooked.stderr);
+    assert.ok(hooked.stdout.includes("[recall]"), hooked.stdout + "\n" + hooked.stderr);
+    assert.ok(hooked.stdout.includes("alpha"));
+    const quiet = spawnSync(process.execPath, [entry, "--recall-hook"], {
+      input: JSON.stringify({ prompt: "hi" }),
+      encoding: "utf8",
+      env: env,
+    });
+    assert.strictEqual(quiet.status, 0, quiet.stderr);
+    assert.strictEqual(quiet.stdout, "");
+    const ignored = spawnSync(process.execPath, [entry, "--rebuild-on-write"], {
+      input: JSON.stringify({ tool_name: "Read", tool_input: { file_path: path.join(mem, "alpha.md") } }),
+      encoding: "utf8",
+      env: env,
+    });
+    assert.strictEqual(ignored.status, 0, ignored.stderr);
+    assert.strictEqual(ignored.stdout, "");
+    assert.strictEqual(fs.readFileSync(path.join(mem, "alpha.md"), "utf8"), owned);
+  } finally {
+    await srv.close();
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 });
 
 (async () => {

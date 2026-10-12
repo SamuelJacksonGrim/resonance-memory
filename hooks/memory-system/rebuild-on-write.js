@@ -23,14 +23,17 @@
  * touches a file under the memory directory, launch `recall.js --rebuild`
  * detached. Fails silent and does not wait.
  *
- * It fires only for writes under RECALL_MEMORY (the installer sets it), so every install watches its own folder
- * and nothing personal is baked in.
- * The child inherits the environment, so RECALL_CACHE / RECALL_ENDPOINT /
- * EMBED_* reach the rebuild.
+ * It fires only for writes under the memory folder: RECALL_MEMORY, else
+ * memoryDir in ~/.resonance-memory/memory-system.json. Nothing personal is
+ * baked in. The child is this same program (`--recall --rebuild` through
+ * entry.js or the exe) and inherits the environment. The config file covers
+ * what a hook command cannot put in the environment.
  */
 
 const path = require("path");
 const { spawn } = require("child_process");
+
+const recall = require("./recall.js");
 
 
 function readStdin() {
@@ -52,14 +55,30 @@ function underDir(filePath, root) {
 }
 
 function isMemoryPath(filePath, env) {
-  const e = env || process.env;
-  if (e.RECALL_MEMORY && underDir(filePath, e.RECALL_MEMORY)) return true;
-  return false;
+  const root = recall.runtimeFrom(env || process.env).memoryDir;
+  if (!root) return false;
+  return underDir(filePath, root);
+}
+
+function isSea() {
+  try { return require("node:sea").isSea(); } catch { return false; }
+}
+
+// Packaged: the exe. From `node entry.js`: the same entry, so the child
+// reads the config file the same way. Direct `node rebuild-on-write.js`
+// (the unit test) still spawns recall.js.
+function recallRebuildLaunch(scriptPath) {
+  if (isSea()) return { command: process.execPath, args: ["--recall", "--rebuild"] };
+  const script = scriptPath != null ? String(scriptPath) : (process.argv[1] || "");
+  if (path.basename(script).toLowerCase() === "entry.js") {
+    return { command: process.execPath, args: [path.resolve(script), "--recall", "--rebuild"] };
+  }
+  return { command: process.execPath, args: [path.join(__dirname, "recall.js"), "--rebuild"] };
 }
 
 function defaultSpawn() {
-  const recall = path.join(__dirname, "recall.js");
-  const child = spawn(process.execPath, [recall, "--rebuild"], {
+  const launch = recallRebuildLaunch();
+  const child = spawn(launch.command, launch.args, {
     detached: true,
     stdio: "ignore",
     windowsHide: true,
@@ -106,6 +125,7 @@ if (require.main === module) {
 module.exports = {
   isMemoryPath,
   underDir,
+  recallRebuildLaunch,
   defaultSpawn,
   runRebuildHook,
   main,
