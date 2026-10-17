@@ -20,8 +20,10 @@
 /*
  * recall.js — semantic retrieval over a memory directory.
  * Port of tools/recall.ps1 (2026-10-11 incremental rebuild). Ranking is cosine
- * only. Milestones are listed, never ranked. Rebuild reuses a vector when the
- * SHA-256 of "model|embedded text" and the model name still match.
+ * only when the embedder answers. If it doesn't, --query falls back to the
+ * BM25 path in lexical.js (a fallback, not a hybrid ranker). Milestones are
+ * listed, never ranked. Rebuild reuses a vector when the SHA-256 of
+ * "model|embedded text" and the model name still match.
  *
  * Usage:
  *   node recall.js --rebuild [--full] [--history]
@@ -41,6 +43,7 @@ const os = require("os");
 const path = require("path");
 
 const sources = require("./sources.js");
+const lexical = require("./lexical.js");
 
 const DEFAULT_MEMORY = "";   // none: every install names its own folder (RECALL_MEMORY / --memory-dir)
 const DEFAULT_CACHE = path.join(os.homedir(), ".resonance-memory", "memory-embeddings.json");
@@ -49,6 +52,12 @@ const DEFAULT_MODEL = "text-embedding-nomic-embed-text-v1.5";
 const EMBED_CHARS = 2200;
 const LOCK_WAIT_MS = 300000;
 const EMBED_TIMEOUT_MS = 120000;
+// Hook/query probe: any HTTP response from /v1/models means the process
+// is alive. Connection-refused is fast; a hung endpoint would otherwise
+// eat the hook's 6 s embed timeout on every message. After a miss we
+// remember for FAIL_TTL_MS and skip the probe.
+const PROBE_MS = 400;
+const FAIL_TTL_MS = 30000;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -66,6 +75,64 @@ function embeddingsUrl(endpoint) {
   const e = String(endpoint || "").trim().replace(/\/+$/, "");
   if (/\/v1\/embeddings$/i.test(e)) return e;
   return e + "/v1/embeddings";
+}
+
+function modelsUrl(endpoint) {
+  const e = String(endpoint || "").trim().replace(/\/+$/, "");
+  if (/\/v1\/embeddings$/i.test(e)) return e.replace(/\/embeddings$/i, "/models");
+  if (/\/v1$/i.test(e)) return e + "/models";
+  return e + "/v1/models";
+}
+
+function embedderDownPath(cachePath) {
+  return String(cachePath || "") + ".embedder-down";
+}
+
+function embedderRecentlyDown(cachePath, now, ttlMs) {
+  if (!cachePath) return false;
+  try {
+    const raw = fs.readFileSync(embedderDownPath(cachePath), "utf8");
+    const data = JSON.parse(raw);
+    const at = Number(data && data.at);
+    const ttl = ttlMs == null ? FAIL_TTL_MS : ttlMs;
+    return Number.isFinite(at) && ((now == null ? Date.now() : now) - at) < ttl;
+  } catch {
+    return false;
+  }
+}
+
+function markEmbedderDown(cachePath, now) {
+  if (!cachePath) return;
+  try {
+    const file = embedderDownPath(cachePath);
+    const parent = path.dirname(file);
+    if (parent && !fs.existsSync(parent)) fs.mkdirSync(parent, { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ at: now == null ? Date.now() : now }), "utf8");
+  } catch { /* a missed marker just means the next message probes again */ }
+}
+
+function clearEmbedderDown(cachePath) {
+  if (!cachePath) return;
+  try { fs.rmSync(embedderDownPath(cachePath), { force: true }); } catch { /* ignore */ }
+}
+
+async function probeEmbedder(cfg) {
+  const o = cfg || {};
+  if (typeof o.probe === "function") return !!(await o.probe());
+  const url = modelsUrl(o.endpoint);
+  const ms = o.probeMs == null ? PROBE_MS : o.probeMs;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    // Any HTTP response (200, 404, 500) means the process is listening.
+    // A hang or connection-refused is the case we must not wait 6 s for.
+    await fetch(url, { method: "GET", signal: ctrl.signal });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // A partial env (unit tests pass one) must not fall through to this process's
@@ -579,6 +646,63 @@ async function rebuild(opts) {
   }
 }
 
+function printMilestones(io, milestones) {
+  io.host("");
+  io.host("ALWAYS LOADED (milestone - not ranked, not optional)");
+  for (const m of milestones) {
+    io.host("  [" + formatFixed(m.weight, 2) + "] " + m.name + "  " + (m.rel || ""));
+  }
+}
+
+function lexicalQuery(cfg, io, reason) {
+  if (!cfg.memoryDir || !fs.existsSync(cfg.memoryDir) || !fs.statSync(cfg.memoryDir).isDirectory()) {
+    io.host("No cache. Run -Rebuild first.");
+    return { exitCode: 0, cfg, hits: [], mode: "lexical" };
+  }
+  const found = lexical.search(cfg.query, {
+    memoryDir: cfg.memoryDir,
+    cache: cfg.cache,
+    history: cfg.history,
+    skipMilestones: true,
+    maxHits: cfg.top,
+  });
+  const milestones = (found.index.docs || []).filter((e) => isMilestone(e))
+    .sort((a, b) => Number(b.weight) - Number(a.weight));
+  printMilestones(io, milestones);
+  io.host("");
+  io.host("RETRIEVED for: \"" + cfg.query + "\"");
+  io.host("  (keyword match" + (reason ? " — " + reason : "") + ")");
+  // An on-purpose search lists the top ranked rows like the cosine table
+  // does, not only the ones strong enough for the per-message hook's gate
+  // (that gate exists to keep unasked-for injections quiet). "match" is the
+  // normalised BM25: about 1.0 when the file holds all of the query's
+  // keyword weight; * marks a row the hook itself would surface.
+  const top = found.ranked.slice(0, cfg.top);
+  const strong = new Set(found.hits.map((h) => String(h.name).toLowerCase()));
+  if (!top.length) {
+    io.host("  (no memory shares a keyword with this query)");
+  } else {
+    io.host("  " + pad("match", 8) + " memory");
+    for (const row of top) {
+      const mark = strong.has(String(row.name).toLowerCase()) ? "*" : " ";
+      io.host("  " + pad(formatFixed(row.norm, 2) + mark, 8) + " " + row.name + "  " + (row.rel || ""));
+    }
+  }
+  io.host("");
+  const hits = top.map((row) => ({
+    name: row.name,
+    rel: row.rel,
+    mode: "lexical",
+    norm: row.norm,
+    strong: strong.has(String(row.name).toLowerCase()),
+    weight: row.weight,
+  }));
+  if (cfg.resultPath) {
+    writeUtf8(cfg.resultPath, JSON.stringify({ query: cfg.query, hits, mode: "lexical" }));
+  }
+  return { exitCode: 0, cfg, hits, milestones, mode: "lexical" };
+}
+
 async function search(opts) {
   const cfg = resolveConfig(opts);
   const io = ioOf(opts);
@@ -586,26 +710,35 @@ async function search(opts) {
     io.host("Need -Query, -Rebuild, or -Plan.");
     return { exitCode: 0, cfg };
   }
-  if (!fs.existsSync(cfg.cache)) {
-    io.host("No cache. Run -Rebuild first.");
-    return { exitCode: 0, cfg };
+  const cacheOk = cfg.cache && fs.existsSync(cfg.cache);
+  const injected = typeof cfg.embed === "function";
+  const skipEmbed = !cacheOk
+    || (!injected && embedderRecentlyDown(cfg.cache, opts && opts.now, opts && opts.failTtlMs));
+  if (skipEmbed) {
+    const reason = cacheOk ? "embedder unreachable" : "no vector cache";
+    return lexicalQuery(cfg, io, reason);
+  }
+  if (!injected) {
+    let up = true;
+    try { up = await probeEmbedder(Object.assign({}, cfg, { probe: opts && opts.probe, probeMs: opts && opts.probeMs })); }
+    catch { up = false; }
+    if (!up) {
+      markEmbedderDown(cfg.cache, opts && opts.now);
+      return lexicalQuery(cfg, io, "embedder unreachable");
+    }
   }
   const mem = readCacheEntries(cfg.cache);
   let qv;
   try {
     qv = await embedText("search_query: " + cfg.query, cfg);
   } catch (err) {
-    io.host("Cannot search: " + err.message);
-    io.host("Load the embedding model '" + cfg.model + "' in LM Studio, then retry.");
-    return { exitCode: 0, cfg };
+    markEmbedderDown(cfg.cache, opts && opts.now);
+    return lexicalQuery(cfg, io, "embedder unreachable");
   }
+  clearEmbedderDown(cfg.cache);
   const milestones = mem.filter((e) => isMilestone(e))
     .sort((a, b) => Number(b.weight) - Number(a.weight));
-  io.host("");
-  io.host("ALWAYS LOADED (milestone - not ranked, not optional)");
-  for (const m of milestones) {
-    io.host("  [" + formatFixed(m.weight, 2) + "] " + m.name + "  " + (m.rel || ""));
-  }
+  printMilestones(io, milestones);
   io.host("");
   io.host("RETRIEVED for: \"" + cfg.query + "\"");
   io.host("  " + pad("score", 8) + " " + pad("cosine", 8) + " " + pad("weight", 8) + " memory");
@@ -635,7 +768,7 @@ async function search(opts) {
   if (cfg.resultPath) {
     writeUtf8(cfg.resultPath, JSON.stringify({ query: cfg.query, hits }));
   }
-  return { exitCode: 0, cfg, hits, milestones };
+  return { exitCode: 0, cfg, hits, milestones, mode: "cosine" };
 }
 
 function parseArgs(argv) {
@@ -729,6 +862,8 @@ function recallUsage() {
     "       --recall --rebuild [--full] [--history]",
     "       --recall --plan",
     "",
+    "  --query uses cosine when the embedder answers, keyword match otherwise.",
+    "",
     "  --memory-dir <dir>   Memory folder (else RECALL_MEMORY, else memory-system.json)",
     "  --cache <file>       Recall cache",
     "  --endpoint <url>     Embedder (else RECALL_ENDPOINT, else EMBED_ENDPOINT)",
@@ -747,6 +882,14 @@ module.exports = {
   EMBED_CHARS,
   LOCK_WAIT_MS,
   embeddingsUrl,
+  modelsUrl,
+  PROBE_MS,
+  FAIL_TTL_MS,
+  embedderDownPath,
+  embedderRecentlyDown,
+  markEmbedderDown,
+  clearEmbedderDown,
+  probeEmbedder,
   homeFromEnv,
   defaultConfigPath,
   readMemorySystemConfig,
