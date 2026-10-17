@@ -58,6 +58,17 @@ That's the honest hard part of memory, and it's built in. (Some distinctions sti
 
 ## Get started (about 60 seconds)
 
+**Using Claude Code? One command, nothing to download.** The memory system (self-filing markdown memory, auto-recall
+on every message, re-index after every edit) installs as a plugin:
+
+```
+/plugin install resonance-memory --marketplace SamuelJacksonGrim/resonance-memory
+```
+
+It needs Node 18+, works by keyword out of the box, and by meaning once LM Studio or Ollama is running
+`nomic-embed-text`. Details: [plugin/README.md](plugin/README.md). The rest of this section is the standalone memory
+server for local models (LM Studio, Claude Desktop and other MCP apps).
+
 **Download the binary for your OS** from [Releases](https://github.com/SamuelJacksonGrim/resonance-memory/releases): `resonance-memory.exe` (Windows x64), `resonance-memory-linux-x64` (Linux), `resonance-memory-macos-arm64` (Apple Silicon). Node is baked in; you do not install Node. Checksums are in `SHA256SUMS`. (Prefer to build it yourself? `node build-exe.js`, Node ≥ 22.5.)
 
 **The binary is unsigned** (code-signing certs cost money). The OS will warn. That is expected, not a virus.

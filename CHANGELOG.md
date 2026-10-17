@@ -8,6 +8,21 @@ stable; sophistication grows in the substrate, not in the API.
 
 ## [Unreleased]
 
+### Added
+- **Claude Code plugin** ([`plugin/`](plugin/README.md)): the memory system as a one-command install,
+  `/plugin install resonance-memory --marketplace SamuelJacksonGrim/resonance-memory`. Uses the project's own Claude
+  Code memory folder (or one pinned folder), lays the system down additively, re-injects the rules at every session
+  start (including after compaction), and runs RM's own recall and rebuild hooks. Detects LM Studio or Ollama;
+  keyword mode without either. This repo is its marketplace (`.claude-plugin/marketplace.json`).
+  `plugin/scripts/lib` carries byte-identical copies of `hooks/memory-system`; `plugin/test.js` fails on drift and
+  runs in CI.
+
+### Fixed
+- **Recall crashed on exit on Windows** after two requests to the same embedder (`recall.js --rebuild`, and any
+  query that probed first): Node 24 aborts with a libuv `UV_HANDLE_CLOSING` assertion when `process.exit()` runs
+  then. Results were already written, but the exit code was 127, and a hook that crashed would lose its output.
+  Entry points now set `process.exitCode` and let the process end.
+
 ## [0.3.0](https://github.com/SamuelJacksonGrim/resonance-memory/releases/tag/v0.3.0) - 2026-10-12
 
 ### Added

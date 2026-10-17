@@ -62,6 +62,23 @@ Without one, recall still works by keyword. Start an embedder any time; the next
   cache; deleting it only means the next session re-indexes. Uninstalling the plugin removes it and leaves your
   memories alone.
 
+## Everything it runs, reads, writes and contacts
+
+No telemetry, no accounts, and no network access beyond your own machine unless you set an embedder endpoint
+elsewhere yourself.
+
+- **Runs:** `node` on the plugin's own scripts, from three hooks: session start, each message you send, and each
+  Write/Edit/MultiEdit. The re-index after a memory edit, and the one at session start, run as a background `node`
+  process (`scripts/lib/recall.js --rebuild`) that exits when done.
+- **Reads:** the markdown files in your memory folder (top level, `projects/`, `tools/`, `reference/`; `history/` only
+  when you or Claude search it on purpose), and the text of each message you send, to match it against them.
+- **Writes:** in the memory folder, only the starter files it adds on first run when they don't already exist
+  (`MEMORY.md`, `memory-architecture.md`, `history/README.md`, three empty subject folders); it never edits or deletes
+  your files. In the plugin data folder: the recall index (one JSON file per memory folder) and a note of which
+  embedder was found.
+- **Contacts:** only `127.0.0.1` (your own machine): port 1234 (LM Studio) and port 11434 (Ollama), or the endpoint you
+  set, to list models and turn text into vectors. If nothing answers, it uses keyword matching and contacts nothing.
+
 ## The full system
 
 This plugin is the Claude Code side of [Resonance Memory](https://github.com/SamuelJacksonGrim/resonance-memory),

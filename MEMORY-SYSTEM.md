@@ -39,6 +39,18 @@ The structure, the index tiers, the recall, the rules and the cabinet are this s
   the embedder is down, auto-recall stays silent and never blocks a message.
 - **Python 3.9+** for the cabinet tools (standard library only). Recall and the hooks don't need it.
 
+## Install in Claude Code: the plugin (easiest)
+
+```
+/plugin install resonance-memory --marketplace SamuelJacksonGrim/resonance-memory
+```
+
+No exe and no settings to edit. It uses each project's own Claude Code memory folder (or one folder you pick for all
+projects), lays the system down there without touching existing files, gives Claude the rules at every session start,
+and runs the same recall and rebuild hooks as the installs below. It finds LM Studio or Ollama on its own and uses
+keyword matching when neither is running. The cabinet tools aren't part of it; the rules work without them. See
+[plugin/README.md](plugin/README.md).
+
 ## Install in Claude Code: one click
 
 Run Resonance Memory. When Claude Code is on the machine, the page that opens has a **Memory system for Claude Code**
