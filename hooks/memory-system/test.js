@@ -36,6 +36,7 @@ const { spawn, spawnSync } = require("child_process");
 
 const sources = require("./sources.js");
 const recall = require("./recall.js");
+const lexical = require("./lexical.js");
 const hook = require("./recall-hook.js");
 const rebuildHook = require("./rebuild-on-write.js");
 const installMem = require("./install-memory.js");
@@ -797,6 +798,323 @@ test("hook prints the top 3 at >= 0.70 and stays silent otherwise", async () => 
       write: (s) => { out += s; },
     });
     assert.strictEqual(out, "");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+section("lexical fallback");
+
+test("tokenize keeps identifiers, strips YAML, and BM25 ranks a distinctive file", async () => {
+  assert.deepStrictEqual(lexical.tokenize("Elden Ring SoulReward"), ["elden", "ring", "soul", "reward", "soulreward"]);
+  assert.ok(lexical.STOP.has("the"));
+  assert.ok(!lexical.STOP.has("samuel"));
+  const stripped = lexical.stripFrontmatter("---\nname: x\ndescription: y\n---\nbody only\n");
+  assert.strictEqual(stripped, "body only\n");
+  assert.ok(!lexical.stripFrontmatter("no fence\n").startsWith("---"));
+
+  const root = tmpdir();
+  const mem = path.join(root, "mem");
+  write(path.join(mem, "zebra-pipeline.md"), [
+    "---",
+    "description: Zebra pipeline setup",
+    "persistence: standing",
+    "weight: 0.5",
+    "---",
+    "The zebra pipeline uses hay bales and a distinctive claxon.",
+    "",
+  ].join("\n"));
+  write(path.join(mem, "alpha.md"), [
+    "---",
+    "description: Alpha person notes",
+    "persistence: standing",
+    "weight: 0.5",
+    "---",
+    "Ordinary notes about a person named Alpha. Nothing about pipelines.",
+    "",
+  ].join("\n"));
+  write(path.join(mem, "mile.md"), [
+    "---",
+    "description: Always loaded milestone",
+    "persistence: milestone",
+    "weight: 0.9",
+    "---",
+    "zebra pipeline hay claxon mentioned in a milestone must not rank.",
+    "",
+  ].join("\n"));
+  try {
+    const found = lexical.search("zebra pipeline hay claxon", {
+      memoryDir: mem,
+      cache: path.join(root, "cache.json"),
+      skipMilestones: true,
+    });
+    assert.ok(found.hits.length >= 1, "distinctive query must fire");
+    assert.strictEqual(found.hits[0].name, "zebra-pipeline");
+    assert.ok(found.hits[0].norm >= lexical.NORM_MIN, found.hits[0].norm);
+    assert.ok(!found.hits.some((h) => h.name === "mile"));
+
+    const quiet = lexical.search("How's the process going?", {
+      memoryDir: mem,
+      cache: path.join(root, "cache.json"),
+      skipMilestones: true,
+    });
+    assert.strictEqual(quiet.hits.length, 0, "one common term must stay silent");
+
+    const chitchat = lexical.search("hello there friend", {
+      memoryDir: mem,
+      cache: path.join(root, "cache.json"),
+      skipMilestones: true,
+    });
+    assert.strictEqual(chitchat.hits.length, 0);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("relative gate keeps a dominant hit and drops a weak cousin", async () => {
+  const ranked = [
+    { name: "best", score: 20, norm: 1.8, matched: 4, qTerms: 4, coverage: 1, titleMatched: 3, queryMinDf: 1 },
+    { name: "cousin", score: 8, norm: 0.7, matched: 3, qTerms: 4, coverage: 0.75, titleMatched: 1, queryMinDf: 1 },
+    { name: "weak", score: 2, norm: 0.55, matched: 2, qTerms: 4, coverage: 0.5, titleMatched: 0, queryMinDf: 1 },
+  ];
+  const kept = lexical.gated(ranked);
+  assert.deepStrictEqual(kept.map((h) => h.name), ["best"]);
+  const close = [
+    { name: "a", score: 10, norm: 1.1, matched: 3, qTerms: 3, coverage: 1, titleMatched: 2, queryMinDf: 1 },
+    { name: "b", score: 9, norm: 1.0, matched: 3, qTerms: 3, coverage: 1, titleMatched: 2, queryMinDf: 1 },
+  ];
+  assert.deepStrictEqual(lexical.gated(close).map((h) => h.name), ["a", "b"]);
+});
+
+test("hook falls back to (keyword match) when embed throws, stays cosine when it works", async () => {
+  const root = tmpdir();
+  const mem = path.join(root, "mem");
+  const cache = path.join(root, "cache.json");
+  write(path.join(mem, "zebra-pipeline.md"), [
+    "---",
+    "description: Zebra pipeline setup",
+    "persistence: standing",
+    "weight: 0.5",
+    "---",
+    "The zebra pipeline uses hay bales and a distinctive claxon.",
+    "",
+  ].join("\n"));
+  write(path.join(mem, "alpha.md"), "description: alpha desc\n");
+  fs.writeFileSync(cache, JSON.stringify([
+    { name: "zebra-pipeline", description: "Zebra pipeline setup", persistence: "standing", weight: 0.5, vector: [1, 0, 0] },
+    { name: "alpha", description: "alpha desc", persistence: "standing", weight: 0.5, vector: [0, 1, 0] },
+  ]));
+  const env = { RECALL_MEMORY: mem, RECALL_CACHE: cache, RECALL_MODEL: "m" };
+  try {
+    let written = "";
+    const code = await hook.runHook({
+      stdin: JSON.stringify({ prompt: "zebra pipeline hay claxon please" }),
+      env,
+      embed: async () => { throw new Error("down"); },
+      write: (s) => { written += s; },
+    });
+    assert.strictEqual(code, 0);
+    assert.ok(written.includes("[recall]"), written);
+    assert.ok(written.includes("zebra-pipeline"), written);
+    assert.ok(written.includes("(keyword match)"), written);
+    assert.ok(!/\(0\.\d\d\)/.test(written), "must not print a fake cosine: " + written);
+
+    written = "";
+    await hook.runHook({
+      stdin: JSON.stringify({ prompt: "zebra pipeline hay claxon please" }),
+      env,
+      embed: async () => [1, 0, 0],
+      write: (s) => { written += s; },
+    });
+    assert.ok(written.includes("zebra-pipeline (1.00)"), written);
+    assert.ok(!written.includes("keyword match"), written);
+
+    written = "";
+    await hook.runHook({
+      stdin: JSON.stringify({ prompt: "hello there friend!!" }),
+      env,
+      embed: async () => { throw new Error("down"); },
+      write: (s) => { written += s; },
+    });
+    assert.strictEqual(written, "", "weak lexical must stay silent, same as a miss");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("hook still works with no vector cache, and a down marker skips the embedder", async () => {
+  const root = tmpdir();
+  const mem = path.join(root, "mem");
+  const cache = path.join(root, "missing-cache.json");
+  write(path.join(mem, "zebra-pipeline.md"), [
+    "---",
+    "description: Zebra pipeline setup",
+    "persistence: standing",
+    "weight: 0.5",
+    "---",
+    "The zebra pipeline uses hay bales and a distinctive claxon.",
+    "",
+  ].join("\n"));
+  const env = { RECALL_MEMORY: mem, RECALL_CACHE: cache, RECALL_MODEL: "m" };
+  try {
+    let written = "";
+    let embedCalls = 0;
+    const code = await hook.runHook({
+      stdin: JSON.stringify({ prompt: "zebra pipeline hay claxon please" }),
+      env,
+      embed: async () => { embedCalls++; throw new Error("should not embed without a cache"); },
+      write: (s) => { written += s; },
+    });
+    assert.strictEqual(code, 0);
+    assert.strictEqual(embedCalls, 0);
+    assert.ok(written.includes("(keyword match)"), written);
+    assert.ok(written.includes("zebra-pipeline"), written);
+
+    const present = path.join(root, "cache.json");
+    fs.writeFileSync(present, JSON.stringify([
+      { name: "zebra-pipeline", description: "Zebra pipeline setup", persistence: "standing", weight: 0.5, vector: [1, 0, 0] },
+    ]));
+    const env2 = { RECALL_MEMORY: mem, RECALL_CACHE: present, RECALL_MODEL: "m" };
+    recall.markEmbedderDown(present, Date.now());
+    let probes = 0;
+    written = "";
+    await hook.runHook({
+      stdin: JSON.stringify({ prompt: "zebra pipeline hay claxon please" }),
+      env: env2,
+      probe: async () => { probes++; return true; },
+      write: (s) => { written += s; },
+    });
+    assert.strictEqual(probes, 0, "recent failure must skip the probe");
+    assert.ok(written.includes("(keyword match)"), written);
+    recall.clearEmbedderDown(present);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a hung embedder fails the probe quickly and is remembered", async () => {
+  const root = tmpdir();
+  const mem = path.join(root, "mem");
+  const cache = path.join(root, "cache.json");
+  write(path.join(mem, "zebra-pipeline.md"), [
+    "---",
+    "description: Zebra pipeline setup",
+    "persistence: standing",
+    "weight: 0.5",
+    "---",
+    "The zebra pipeline uses hay bales and a distinctive claxon.",
+    "",
+  ].join("\n"));
+  fs.writeFileSync(cache, JSON.stringify([
+    { name: "zebra-pipeline", description: "Zebra pipeline setup", persistence: "standing", weight: 0.5, vector: [1, 0, 0] },
+  ]));
+  const srv = await listen(async () => { await new Promise(() => {}); });
+  const env = {
+    RECALL_MEMORY: mem,
+    RECALL_CACHE: cache,
+    RECALL_ENDPOINT: srv.endpoint,
+    RECALL_MODEL: "m",
+  };
+  try {
+    let written = "";
+    const t0 = Date.now();
+    const code = await hook.runHook({
+      stdin: JSON.stringify({ prompt: "zebra pipeline hay claxon please" }),
+      env,
+      probeMs: 150,
+      timeoutMs: 5000,
+      write: (s) => { written += s; },
+    });
+    const elapsed = Date.now() - t0;
+    assert.strictEqual(code, 0);
+    assert.ok(elapsed < 800, "probe hang waited too long (" + elapsed + "ms)");
+    assert.ok(written.includes("(keyword match)"), written);
+    assert.ok(recall.embedderRecentlyDown(cache));
+
+    written = "";
+    const t1 = Date.now();
+    await hook.runHook({
+      stdin: JSON.stringify({ prompt: "zebra pipeline hay claxon please" }),
+      env,
+      probeMs: 150,
+      timeoutMs: 5000,
+      write: (s) => { written += s; },
+    });
+    const elapsed2 = Date.now() - t1;
+    assert.ok(elapsed2 < 400, "second message still probed (" + elapsed2 + "ms)");
+    assert.ok(written.includes("(keyword match)"), written);
+  } finally {
+    await srv.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("recall.js --query falls back to keyword match without a cosine column", async () => {
+  const root = tmpdir();
+  const mem = path.join(root, "mem");
+  write(path.join(mem, "zebra-pipeline.md"), [
+    "---",
+    "description: Zebra pipeline setup",
+    "persistence: standing",
+    "weight: 0.5",
+    "---",
+    "The zebra pipeline uses hay bales and a distinctive claxon.",
+    "",
+  ].join("\n"));
+  write(path.join(mem, "mile.md"), "description: mile\npersistence: milestone\nweight: 0.9\n");
+  const io = capture();
+  try {
+    const found = await recall.search({
+      query: "zebra pipeline hay claxon",
+      memoryDir: mem,
+      cache: path.join(root, "nope.json"),
+      host: io.host,
+      out: io.out,
+      embed: async () => { throw new Error("should not embed"); },
+    });
+    assert.strictEqual(found.exitCode, 0);
+    assert.strictEqual(found.mode, "lexical");
+    assert.deepStrictEqual(found.hits.map((h) => h.name), ["zebra-pipeline"]);
+    assert.ok(io.hostLines.some((l) => l.includes("keyword match")));
+    assert.ok(io.hostLines.some((l) => l.includes("ALWAYS LOADED")));
+    assert.ok(io.hostLines.some((l) => l.includes("mile")));
+    assert.ok(!io.hostLines.some((l) => /\bcosine\b/.test(l)));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("lexical index cache is reused until a file's mtime/size changes", async () => {
+  const root = tmpdir();
+  const mem = path.join(root, "mem");
+  const cache = path.join(root, "cache.json");
+  write(path.join(mem, "zebra-pipeline.md"), [
+    "---",
+    "description: Zebra pipeline setup",
+    "persistence: standing",
+    "weight: 0.5",
+    "---",
+    "The zebra pipeline uses hay bales and a distinctive claxon.",
+    "",
+  ].join("\n"));
+  try {
+    const first = lexical.loadIndex({ memoryDir: mem, cache });
+    assert.strictEqual(first.fromCache, false);
+    const idxFile = lexical.indexPathFor(cache);
+    assert.ok(fs.existsSync(idxFile));
+    const second = lexical.loadIndex({ memoryDir: mem, cache });
+    assert.strictEqual(second.fromCache, true);
+    write(path.join(mem, "zebra-pipeline.md"), [
+      "---",
+      "description: Zebra pipeline setup changed",
+      "persistence: standing",
+      "weight: 0.5",
+      "---",
+      "The zebra pipeline now mentions a trombone instead of a claxon.",
+      "",
+    ].join("\n"));
+    const third = lexical.loadIndex({ memoryDir: mem, cache });
+    assert.strictEqual(third.fromCache, false);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

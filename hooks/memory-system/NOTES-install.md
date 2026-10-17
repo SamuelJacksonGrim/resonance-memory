@@ -126,7 +126,8 @@ node entry.js --recall --history --query "..."
 ```
 
 Hook stdin is the Claude Code JSON. `--recall-hook` prints the top 3 at
-cosine >= 0.70, or nothing, and always exits 0. `--rebuild-on-write` only
+cosine >= 0.70, or a gated keyword match labelled `(keyword match)` if
+the embedder is down, or nothing, and always exits 0. `--rebuild-on-write` only
 fires for Write, Edit, and MultiEdit under the configured memory folder,
 then returns without waiting.
 
