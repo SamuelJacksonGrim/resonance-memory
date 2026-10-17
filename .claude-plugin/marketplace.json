@@ -1,0 +1,15 @@
+{
+  "name": "resonance-memory",
+  "description": "Resonance Memory, by Samuel Jackson Grim: a local, self-filing memory for Claude Code.",
+  "owner": {
+    "name": "Samuel Jackson Grim",
+    "email": "samgrim97@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "resonance-memory",
+      "source": "./plugin",
+      "description": "Claude keeps what it learns about you in markdown files on your machine, files and consolidates them, and surfaces the right one on its own. Local, offline, AGPL-3.0."
+    }
+  ]
+}
