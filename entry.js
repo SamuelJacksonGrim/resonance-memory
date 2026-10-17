@@ -96,17 +96,18 @@ if (mode === "--mcp") {
     process.exit(2);
   });
 } else if (mode === "--recall") {
+  // exitCode, not exit(): see the note in hooks/memory-system/recall.js.
   require("./hooks/memory-system/recall.js").main(process.argv.slice(3)).then((code) => {
-    if (code) process.exit(code);
+    if (code) process.exitCode = code;
   }).catch((e) => {
     console.error(String(e.message || e));
-    process.exit(2);
+    process.exitCode = 2;
   });
 } else if (mode === "--recall-hook") {
   require("./hooks/memory-system/recall-hook.js").main().then((code) => {
-    process.exit(code || 0);
+    process.exitCode = code || 0;
   }).catch(() => {
-    process.exit(0);
+    process.exitCode = 0;
   });
 } else if (mode === "--rebuild-on-write") {
   require("./hooks/memory-system/rebuild-on-write.js").main().then((code) => {

@@ -116,9 +116,13 @@ async function main() {
 }
 
 if (require.main === module) {
+  // exitCode, not exit(): on Windows, Node 24 aborts with a libuv assertion
+  // (UV_HANDLE_CLOSING, async.c:94) when process.exit() runs right after two
+  // fetches to the same server (measured 2026-10-17: exit() 15/15 crashes,
+  // exitCode 0/15). A crashed hook exits 127 and its output is dropped.
   main().then(
-    (code) => process.exit(code || 0),
-    () => process.exit(0)
+    (code) => { process.exitCode = code || 0; },
+    () => { process.exitCode = 0; }
   );
 }
 
