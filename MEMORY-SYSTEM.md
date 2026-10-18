@@ -15,7 +15,9 @@ The AI files, corrects and recalls its own memories by the rules that come with 
   filed in subject drawers (`projects/`, `tools/`, `reference/`), each with its own generated index card in
   `_indexes/`. `history/` holds faded text word for word, so nothing replaced is ever lost.
 - **Auto-recall on every message.** A hook embeds each message you send and surfaces the memories that match it
-  (cosine >= 0.70, top 3), with the drawer each one lives in. The AI doesn't have to remember to look.
+  (cosine >= 0.70, top 3), with the drawer each one lives in. If no embedder is running, the same hook falls
+  back to a keyword match (BM25, a measured gate so weak hits stay silent) and labels those `(keyword match)`
+  instead of a cosine. The AI doesn't have to remember to look.
 - **Self-updating recall.** Every time the AI writes or edits a memory, the recall index rebuilds itself in the
   background. Only the changed memories are re-embedded, so it stays fast at any size.
 - **The rules, in the folder.** `memory-architecture.md` is how the AI keeps memory honest over time: merge before
@@ -34,19 +36,33 @@ The structure, the index tiers, the recall, the rules and the cabinet are this s
 
 - **Resonance Memory** (the exe from the [release page](https://github.com/samueljacksongrim/resonance-memory/releases),
   or this repo with Node 20+). The exe carries everything the installer needs; nothing else is downloaded.
-- **A local embedder** at an OpenAI-compatible `/v1/embeddings` endpoint. The default is LM Studio on
-  `http://localhost:1234` with `text-embedding-nomic-embed-text-v1.5` loaded. Free, offline, about 2 s per search. If
-  the embedder is down, auto-recall stays silent and never blocks a message.
+- **A local embedder** at an OpenAI-compatible `/v1/embeddings` endpoint, for semantic recall. The default is
+  LM Studio on `http://localhost:1234` with `text-embedding-nomic-embed-text-v1.5` loaded. Free, offline, about
+  2 s per search. Auto-recall does **not** require it: if the embedder is down, the hook falls back to keyword
+  match on the memory files themselves and never blocks a message. Semantic recall (cosine >= 0.70) takes over
+  again as soon as the embedder answers.
 - **Python 3.9+** for the cabinet tools (standard library only). Recall and the hooks don't need it.
+
+## Install in Claude Code: the plugin (easiest)
+
+```
+/plugin install resonance-memory --marketplace SamuelJacksonGrim/resonance-memory
+```
+
+No exe and no settings to edit. It uses each project's own Claude Code memory folder (or one folder you pick for all
+projects), lays the system down there without touching existing files, gives Claude the rules at every session start,
+and runs the same recall and rebuild hooks as the installs below. It finds LM Studio or Ollama on its own and uses
+keyword matching when neither is running. The cabinet tools aren't part of it; the rules work without them. See
+[plugin/README.md](plugin/README.md).
 
 ## Install in Claude Code: one click
 
 Run Resonance Memory. When Claude Code is on the machine, the page that opens has a **Memory system for Claude Code**
 step next to Connect and the meaning engine. Press **Set up**: it shows exactly what it will do, then does it. The
 memory folder is chosen for you (Claude Code's memory folder for your home directory; other existing project folders
-are offered as choices). If the meaning engine isn't running yet, setup still finishes and the recall index builds
-itself once it is. If your memory folder already has an index or rules, the page tells you the one sentence to say to
-Claude to merge them.
+are offered as choices). If the meaning engine isn't running yet, setup still finishes; auto-recall uses
+keyword match until the index can be built. If your memory folder already has an index or rules, the page
+tells you the one sentence to say to Claude to merge them.
 
 ## Install in Claude Code: by hand (hand this file to Claude)
 
@@ -72,8 +88,9 @@ These are the steps Claude carries out:
 4. **If `MEMORY.md` or `memory-architecture.md` already existed,** merge by hand: bring the template's rules and
    index header into the existing files rather than keeping two versions. If there are existing memories, file them
    with the cabinet ([CABINET.md](CABINET.md)): when unsure, a memory stays on the surface.
-5. **Check it works:** `resonance-memory --recall --query "who is the user"` returns results, and the next message
-   in a new session shows a `[recall]` block when something matches.
+5. **Check it works:** `resonance-memory --recall --query "who is the user"` returns results even with the
+   embedder down (keyword match). The next message in a new session shows a `[recall]` block when something
+   matches.
 
 Optional flags on install: `--endpoint`, `--model`, `--cache`. `resonance-memory --install-memory-system --help` lists them.
 

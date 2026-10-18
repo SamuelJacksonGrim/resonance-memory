@@ -21,7 +21,10 @@
  * recall-hook.js — Claude Code UserPromptSubmit hook.
  * Port of tools/recall-hook.ps1. Embeds the prompt, keeps the top 3 live
  * memories at cosine >= 0.70, skips milestones and short prompts.
- * Fails silent: exit 0 and no output on any problem.
+ * If the embedder is down (or there is no vector cache yet), falls back
+ * to lexical.js BM25 with the measured gate — same [recall] block, labelled
+ * (keyword match) instead of a cosine. Fails silent: exit 0 and no output
+ * on any problem.
  *
  * Memory, cache, endpoint, and model: RECALL_* env, else
  * ~/.resonance-memory/memory-system.json (the installer writes it; hook
@@ -35,6 +38,7 @@ const path = require("path");
 
 const sources = require("./sources.js");
 const recall = require("./recall.js");
+const lexical = require("./lexical.js");
 
 const THRESHOLD = 0.70;
 const MAX_HITS = 3;
@@ -88,7 +92,6 @@ async function runHook(options) {
     const memoryDir = runtime.memoryDir;
     const endpoint = runtime.endpoint;
     const model = runtime.model;
-    if (!fs.existsSync(cache)) return 0;
     if (!memoryDir || !fs.existsSync(memoryDir)) return 0;
 
     const index = ciCount();
@@ -97,55 +100,112 @@ async function runHook(options) {
     catch { return 0; }
     for (const f of files) index.add(f.baseName, f.rel);
 
-    const embedFn = opts.embed || ((text) => recall.embedText(text, {
-      endpoint,
-      model,
-      timeoutMs: opts.timeoutMs == null ? TIMEOUT_MS : opts.timeoutMs,
-    }));
-    let qv;
-    try { qv = await embedFn("search_query: " + prompt); }
-    catch { return 0; }
-    if (!qv || !qv.length) return 0;
-    let qn = 0;
-    for (let i = 0; i < qv.length; i++) qn += qv[i] * qv[i];
-    qn = Math.sqrt(qn);
-    if (qn === 0) return 0;
+    const cacheOk = !!(cache && fs.existsSync(cache));
+    const injected = typeof opts.embed === "function";
+    const skipEmbed = !cacheOk
+      || (!injected && recall.embedderRecentlyDown(cache, opts.now, opts.failTtlMs));
 
-    let mem;
-    try { mem = recall.readCacheEntries(cache); }
-    catch { return 0; }
-
-    const hits = [];
-    for (const e of mem) {
-      if (String(e && e.persistence || "").toLowerCase() === "milestone") continue;
-      if (index.count(e.name) !== 1) continue;
-      const v = e.vector;
-      if (!Array.isArray(v) || v.length === 0) continue;
-      let dot = 0;
-      let vn = 0;
-      for (let i = 0; i < v.length; i++) {
-        const q = i < qv.length ? Number(qv[i]) : 0;
-        const x = Number(v[i]);
-        dot += q * x;
-        vn += x * x;
+    async function cosineHits(qv) {
+      if (!qv || !qv.length) return null;
+      let qn = 0;
+      for (let i = 0; i < qv.length; i++) qn += qv[i] * qv[i];
+      qn = Math.sqrt(qn);
+      if (qn === 0) return null;
+      let mem;
+      try { mem = recall.readCacheEntries(cache); }
+      catch { return null; }
+      const hits = [];
+      for (const e of mem) {
+        if (String(e && e.persistence || "").toLowerCase() === "milestone") continue;
+        if (index.count(e.name) !== 1) continue;
+        const v = e.vector;
+        if (!Array.isArray(v) || v.length === 0) continue;
+        let dot = 0;
+        let vn = 0;
+        for (let i = 0; i < v.length; i++) {
+          const q = i < qv.length ? Number(qv[i]) : 0;
+          const x = Number(v[i]);
+          dot += q * x;
+          vn += x * x;
+        }
+        const cos = vn === 0 ? 0 : dot / (qn * Math.sqrt(vn));
+        if (!(cos >= (opts.threshold == null ? THRESHOLD : opts.threshold))) continue;
+        hits.push({
+          name: e.name,
+          desc: e.description == null ? "" : String(e.description),
+          cos,
+          rel: index.rel(e.name) || "",
+        });
       }
-      const cos = vn === 0 ? 0 : dot / (qn * Math.sqrt(vn));
-      if (!(cos >= (opts.threshold == null ? THRESHOLD : opts.threshold))) continue;
-      hits.push({
-        name: e.name,
-        desc: e.description == null ? "" : String(e.description),
-        cos,
-        rel: index.rel(e.name) || "",
+      hits.sort((a, b) => b.cos - a.cos);
+      return hits.slice(0, opts.maxHits == null ? MAX_HITS : opts.maxHits);
+    }
+
+    function writeCosine(top) {
+      const lines = ["[recall] Auto-surfaced memories that may bear on this message (read the file if relevant):"];
+      for (const h of top) {
+        lines.push("  - " + h.name + " (" + recall.formatFixed(h.cos, 2) + ") -- " + h.desc + "  [" + h.rel + "]");
+      }
+      write(lines.join("\n") + "\n");
+    }
+
+    function writeLexical() {
+      const found = lexical.search(prompt, {
+        memoryDir,
+        cache,
+        skipMilestones: true,
+        maxHits: opts.maxHits == null ? MAX_HITS : opts.maxHits,
       });
+      const kept = [];
+      for (let i = 0; i < found.hits.length; i++) {
+        const h = found.hits[i];
+        if (index.count(h.name) !== 1) continue;
+        kept.push(h);
+      }
+      const block = lexical.formatHookBlock(kept);
+      if (block) write(block);
     }
-    hits.sort((a, b) => b.cos - a.cos);
-    const top = hits.slice(0, opts.maxHits == null ? MAX_HITS : opts.maxHits);
-    if (!top.length) return 0;
-    const lines = ["[recall] Auto-surfaced memories that may bear on this message (read the file if relevant):"];
-    for (const h of top) {
-      lines.push("  - " + h.name + " (" + recall.formatFixed(h.cos, 2) + ") -- " + h.desc + "  [" + h.rel + "]");
+
+    if (!skipEmbed) {
+      if (!injected) {
+        let up = false;
+        try {
+          up = await recall.probeEmbedder({
+            endpoint,
+            probe: opts.probe,
+            probeMs: opts.probeMs == null ? recall.PROBE_MS : opts.probeMs,
+          });
+        } catch { up = false; }
+        if (!up) {
+          recall.markEmbedderDown(cache, opts.now);
+          writeLexical();
+          return 0;
+        }
+      }
+      const embedFn = opts.embed || ((text) => recall.embedText(text, {
+        endpoint,
+        model,
+        timeoutMs: opts.timeoutMs == null ? TIMEOUT_MS : opts.timeoutMs,
+      }));
+      let qv;
+      try { qv = await embedFn("search_query: " + prompt); }
+      catch {
+        if (!injected) recall.markEmbedderDown(cache, opts.now);
+        writeLexical();
+        return 0;
+      }
+      if (!injected) recall.clearEmbedderDown(cache);
+      const top = await cosineHits(qv);
+      if (top && top.length) {
+        writeCosine(top);
+        return 0;
+      }
+      if (top) return 0;
+      writeLexical();
+      return 0;
     }
-    write(lines.join("\n") + "\n");
+
+    writeLexical();
     return 0;
   } catch {
     return 0;
@@ -157,9 +217,13 @@ async function main() {
 }
 
 if (require.main === module) {
+  // exitCode, not exit(): on Windows, Node 24 aborts with a libuv assertion
+  // (UV_HANDLE_CLOSING, async.c:94) when process.exit() runs right after two
+  // fetches to the same server (measured 2026-10-17: exit() 15/15 crashes,
+  // exitCode 0/15). A crashed hook exits 127 and its output is dropped.
   main().then(
-    (code) => process.exit(code || 0),
-    () => process.exit(0)
+    (code) => { process.exitCode = code || 0; },
+    () => { process.exitCode = 0; }
   );
 }
 

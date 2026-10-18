@@ -318,6 +318,7 @@ const MEMORY_SCRIPT_NAMES = [
   "sources.js",
   "recall-hook.js",
   "rebuild-on-write.js",
+  "lexical.js",
   "install-memory.js",
 ];
 const SHIP_SKIP_DIRS = new Set([".git", "__pycache__", "node_modules"]);

@@ -15,7 +15,7 @@ went to scratch caches under `%TEMP%\recall-equiv\`, never to
 |---|---|---|
 | `tools\recall.ps1` | `recall.js` | Plan, incremental rebuild, cosine query, history mode |
 | `tools\recall-sources.ps1` | `sources.js` | Which files are live |
-| `tools\recall-hook.ps1` | `recall-hook.js` | UserPromptSubmit: top 3 at cosine >= 0.70 |
+| `tools\recall-hook.ps1` | `recall-hook.js` | UserPromptSubmit: top 3 at cosine >= 0.70; BM25 fallback in `lexical.js` when the embedder is down |
 | `tools\rebuild-on-memory-write.ps1` | `rebuild-on-write.js` | PostToolUse: detached rebuild |
 
 CommonJS, Node 18+ (global `fetch`, no `AbortSignal.timeout`), zero
@@ -84,8 +84,13 @@ with `--history` double-suffixes. Don't do both.
 The prompt hook skips prompts whose trimmed length is under 12 characters.
 The embedded text is the prompt as given, not trimmed. It skips milestones,
 names that are not in the live set, and names whose live basename count is
-not 1. Embed timeout is 6 seconds. Any failure is exit 0 and no output.
-The line is `[recall] Auto-surfaced...` then
+not 1. Embed timeout is 6 seconds. A 400 ms GET `/v1/models` probe runs
+first; a hang or connection-refused falls through to `lexical.js` instead
+of waiting the full 6 s, and a `*.embedder-down` marker skips the probe
+for 30 s. No vector cache also takes the lexical path (so recall works
+before the first rebuild). Lexical hits are labelled `(keyword match)`,
+never a BM25 number in the cosine slot. Gate: NOTES-lexical.md.
+The cosine line is still `[recall] Auto-surfaced...` then
 `  - {name} ({N2}) -- {description}  [{rel}]`.
 
 The write hook fires for Write, Edit, and MultiEdit only, and only

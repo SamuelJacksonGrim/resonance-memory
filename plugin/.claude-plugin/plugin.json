@@ -1,0 +1,35 @@
+{
+  "name": "resonance-memory",
+  "displayName": "Resonance Memory",
+  "version": "0.4.0",
+  "description": "A memory that works like one. Claude keeps what it learns about you and your work in plain markdown files on your machine, files and consolidates them instead of piling them up, and surfaces the right one on its own when you mention something from weeks ago. Recall by meaning with a free local embedder (LM Studio or Ollama), by keyword without one. Nothing leaves your machine.",
+  "author": {
+    "name": "Samuel Jackson Grim",
+    "email": "samgrim97@gmail.com",
+    "url": "https://github.com/SamuelJacksonGrim"
+  },
+  "homepage": "https://github.com/SamuelJacksonGrim/resonance-memory",
+  "repository": "https://github.com/SamuelJacksonGrim/resonance-memory",
+  "license": "AGPL-3.0-only",
+  "privacyPolicyUrl": "https://github.com/SamuelJacksonGrim/resonance-memory/blob/main/plugin/PRIVACY.md",
+  "supportUrl": "https://github.com/SamuelJacksonGrim/resonance-memory/issues",
+  "documentationUrl": "https://github.com/SamuelJacksonGrim/resonance-memory/blob/main/plugin/README.md",
+  "keywords": ["memory", "recall", "local", "offline", "embeddings", "auto-memory"],
+  "userConfig": {
+    "memory_dir": {
+      "type": "directory",
+      "title": "Memory folder (optional)",
+      "description": "Leave empty to use each project's own Claude Code memory folder. Set a folder to share one memory across every project."
+    },
+    "embed_endpoint": {
+      "type": "string",
+      "title": "Embedder endpoint (optional)",
+      "description": "An OpenAI-compatible server with /v1/embeddings. Leave empty to find LM Studio (port 1234) or Ollama (port 11434) automatically."
+    },
+    "embed_model": {
+      "type": "string",
+      "title": "Embedding model (optional)",
+      "description": "Leave empty to use nomic-embed-text from whichever server is found."
+    }
+  }
+}

@@ -4,7 +4,7 @@
 [![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-blue)](LICENSE)
 [![dual-license](https://img.shields.io/badge/dual--license-AGPL--3.0--only%20or%20commercial-blueviolet)](LICENSING.md)
 [![release](https://img.shields.io/github/v/release/SamuelJacksonGrim/resonance-memory)](https://github.com/SamuelJacksonGrim/resonance-memory/releases/latest)
-[![status](https://img.shields.io/badge/status-released-brightgreen)](https://github.com/SamuelJacksonGrim/resonance-memory/releases/tag/v0.3.0)
+[![status](https://img.shields.io/badge/status-released-brightgreen)](https://github.com/SamuelJacksonGrim/resonance-memory/releases/tag/v0.4.0)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D22.5-339933?logo=nodedotjs&logoColor=white)](package.json)
 [![JavaScript](https://img.shields.io/badge/JavaScript-F7DF1E?logo=javascript&logoColor=black)](https://developer.mozilla.org/docs/Web/JavaScript)
 [![MCP server](https://img.shields.io/badge/MCP-server-111111)](https://modelcontextprotocol.io/)
@@ -57,6 +57,17 @@ And it knows the difference between things that merely *sound* alike:
 That's the honest hard part of memory, and it's built in. (Some distinctions still need more than this — two different people with the *same name and same job*, or arbitrary opposites — and the docs say so plainly. No overclaiming.)
 
 ## Get started (about 60 seconds)
+
+**Using Claude Code? One command, nothing to download.** The memory system (self-filing markdown memory, auto-recall
+on every message, re-index after every edit) installs as a plugin:
+
+```
+/plugin install resonance-memory --marketplace SamuelJacksonGrim/resonance-memory
+```
+
+It needs Node 18+, works by keyword out of the box, and by meaning once LM Studio or Ollama is running
+`nomic-embed-text`. Details: [plugin/README.md](plugin/README.md). The rest of this section is the standalone memory
+server for local models (LM Studio, Claude Desktop and other MCP apps).
 
 **Download the binary for your OS** from [Releases](https://github.com/SamuelJacksonGrim/resonance-memory/releases): `resonance-memory.exe` (Windows x64), `resonance-memory-linux-x64` (Linux), `resonance-memory-macos-arm64` (Apple Silicon). Node is baked in; you do not install Node. Checksums are in `SHA256SUMS`. (Prefer to build it yourself? `node build-exe.js`, Node ≥ 22.5.)
 

@@ -69,3 +69,8 @@ jobs:
 
       - name: RM-00 golden (sqlite default)
         run: node eval/run.js
+
+      # Offline like the rest: probes only 127.0.0.1:9, which refuses at once.
+      # Its first test fails if plugin/scripts/lib drifts from hooks/memory-system.
+      - name: Claude Code plugin
+        run: node plugin/test.js
