@@ -8,6 +8,8 @@ stable; sophistication grows in the substrate, not in the API.
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/SamuelJacksonGrim/resonance-memory/releases/tag/v0.4.0) - 2026-10-18
+
 ### Added
 - **Claude Code plugin** ([`plugin/`](plugin/README.md)): the memory system as a one-command install,
   `/plugin install resonance-memory --marketplace SamuelJacksonGrim/resonance-memory`. Uses the project's own Claude
@@ -16,6 +18,9 @@ stable; sophistication grows in the substrate, not in the API.
   keyword mode without either. This repo is its marketplace (`.claude-plugin/marketplace.json`).
   `plugin/scripts/lib` carries byte-identical copies of `hooks/memory-system`; `plugin/test.js` fails on drift and
   runs in CI.
+- **Keyword recall when no embedder answers** (`hooks/memory-system/lexical.js`): the per-message hook and
+  `--recall --query` fall back to gated BM25, labelled `(keyword match)`, instead of going silent. Measured against
+  the semantic hook on real prompts (`NOTES-lexical.md`); cosine ranking is unchanged whenever an embedder answers.
 
 ### Fixed
 - **Recall crashed on exit on Windows** after two requests to the same embedder (`recall.js --rebuild`, and any

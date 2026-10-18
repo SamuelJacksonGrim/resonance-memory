@@ -11,6 +11,9 @@
   "homepage": "https://github.com/SamuelJacksonGrim/resonance-memory",
   "repository": "https://github.com/SamuelJacksonGrim/resonance-memory",
   "license": "AGPL-3.0-only",
+  "privacyPolicyUrl": "https://github.com/SamuelJacksonGrim/resonance-memory/blob/main/plugin/PRIVACY.md",
+  "supportUrl": "https://github.com/SamuelJacksonGrim/resonance-memory/issues",
+  "documentationUrl": "https://github.com/SamuelJacksonGrim/resonance-memory/blob/main/plugin/README.md",
   "keywords": ["memory", "recall", "local", "offline", "embeddings", "auto-memory"],
   "userConfig": {
     "memory_dir": {

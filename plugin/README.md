@@ -65,7 +65,7 @@ Without one, recall still works by keyword. Start an embedder any time; the next
 ## Everything it runs, reads, writes and contacts
 
 No telemetry, no accounts, and no network access beyond your own machine unless you set an embedder endpoint
-elsewhere yourself.
+elsewhere yourself. Full privacy note: [PRIVACY.md](PRIVACY.md).
 
 - **Runs:** `node` on the plugin's own scripts, from three hooks: session start, each message you send, and each
   Write/Edit/MultiEdit. The re-index after a memory edit, and the one at session start, run as a background `node`
