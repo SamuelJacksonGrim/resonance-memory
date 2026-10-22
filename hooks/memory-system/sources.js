@@ -26,6 +26,7 @@
  *   <root>/projects/any-depth/<name>.md
  *   <root>/tools/any-depth/<name>.md
  *   <root>/reference/any-depth/<name>.md
+ *   <root>/people/any-depth/<name>.md
  * Excluded:
  *   MEMORY.md, names starting with _index
  *   frontmatter generated: true or cabinet-index: true
@@ -38,7 +39,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const DRAWERS = ["projects", "tools", "reference"];
+const DRAWERS = ["people", "projects", "tools", "reference"];
 const GENERATED_RE = /^(generated|cabinet-index):\s*(true|yes|1)\s*$/i;
 
 function decodeUtf8(buf) {
@@ -67,7 +68,7 @@ function excludedByRel(rel) {
   if (parts.length < 2) return false;
   const top = parts[0].toLowerCase();
   if (top === "history" || top === "_session-archive" || top === "_indexes") return true;
-  if (top !== "projects" && top !== "tools" && top !== "reference") return true;
+  if (!DRAWERS.includes(top)) return true;
   for (let i = 0; i < parts.length - 1; i++) {
     const seg = parts[i].toLowerCase();
     if (seg === "_indexes" || seg === "_session-archive") return true;
