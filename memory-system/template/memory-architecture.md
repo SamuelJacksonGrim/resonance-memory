@@ -80,9 +80,13 @@ then delete the copy: history is the record, the copy is only a safety net durin
 ## Retrieval
 
 Recall searches every live memory by meaning (a local embedding model; no API cost) and the per-message hook surfaces
-the top matches (cosine >= 0.70, top 3) with their folder path. A hook rebuilds the index after every Write/Edit to
-this folder; edits made by script or shell skip it, so run recall's rebuild by hand after those. The rebuild is
-incremental (unchanged files reuse their vector) and locked (one at a time).
+the top matches (cosine >= 0.70, top 3) with their folder path. Each file is split into ~1800-character chunks
+(frontmatter stripped; a `surfaces-when:` line is prefixed on the first chunk only) and the file scores by its
+best chunk, so a match past the opening paragraphs can still win. Milestones rank like every other file: their
+`MEMORY.md` line loads every session, which is what keeps a constraint in view; the file itself surfaces when it
+ranks. A hook rebuilds the index after every Write/Edit to this folder; edits made by script or shell skip it, so
+run recall's rebuild by hand after those. The rebuild is incremental (unchanged chunks reuse their vector) and
+locked (one at a time).
 
 **Weight doesn't rank.** Persistence and weight decide what stays (decay, pruning, milestone exemption); relevance
 alone decides what surfaces. Multiplying them inverts correct rankings: measured, a better match (cosine 0.6254) lost

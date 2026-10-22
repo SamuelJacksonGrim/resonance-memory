@@ -62,29 +62,41 @@ Those paths are not portable. The installer has to set `RECALL_MEMORY` and
 I kept the defaults so an unset environment on this box matches
 `recall.ps1`. See push-back below.
 
-Embedded text is unchanged: `search_document: {basename}. {description}. `
-plus the first 2200 UTF-16 code units of the file (a split surrogate is
-kept, same as .NET `Substring`). Queries use `search_query: `. The hash is
-SHA-256 hex of the UTF-8 bytes of `{model}|{document text}`. A vector is
+Embedded text (2026-10-22): frontmatter is stripped and the body is split
+at paragraph breaks into ~1800-character chunks. Each chunk is
+`search_document: {basename}. {description}.` plus, on chunk 0 only when
+the frontmatter has `surfaces-when:`, ` Comes up when: {value}.`, then a
+newline and the chunk. A paragraph longer than a chunk is cut at the last
+space before the limit, or hard at the limit if that space sits in the
+first half. Queries use `search_query: `. The hash is SHA-256 hex of the
+UTF-8 bytes of `{model}|{document text}`. One cache row per chunk:
+`name` is the basename, `key` is `name#i`, `chunk` is i. A vector is
 reused when that hash matches, the model name matches, and the stored
-vector is non-empty. `--full` ignores the old cache.
+vector is non-empty; lookup is by `key`, falling back to `name` for an
+old cache (which therefore re-embeds once). `--full` ignores the old
+cache. Rebuild summary: `Cached N chunks from M memories`.
 
-Ranking is cosine only. Milestones (`persistence` milestone,
-case-insensitive) are listed by weight and never ranked. Query report goes
-to stderr, same as PowerShell `Write-Host`. The plan JSON, the rebuild
-summary line, and the error lines PowerShell wrote to output also go to
-stdout. Numbers are en-US `N2` / `N4`.
+Ranking is cosine only. A file scores by its best chunk. Milestones
+(`persistence` milestone, case-insensitive) rank like every other file;
+the printed list only names them:
+`MILESTONES (never fade; index line loaded each session, file only when it ranks)`.
+Query report goes to stderr, same as PowerShell `Write-Host`. The plan
+JSON, the rebuild summary line, and the error lines PowerShell wrote to
+output also go to stdout. Numbers are en-US `N2` / `N4`.
 
 `--history` searches `memory\history` flat (not recursive, not the live
 filters, skips `MEMORY.md` only) and rewrites the cache path from
-`cache.json` to `cache-history.json`. Rel paths are `history/<file>` from
-the parent. Passing a cache that is already named `*-history.json` together
-with `--history` double-suffixes. Don't do both.
+`cache.json` to `cache-history.json`. One vector per faded block (a
+Moved/Restored banner or a `##` section, or the whole file as `#whole`),
+head-truncated at 6000 characters; the cite is `history/<file>.md#<anchor>`.
+Passing a cache that is already named `*-history.json` together with
+`--history` double-suffixes. Don't do both.
 
-The prompt hook skips prompts whose trimmed length is under 12 characters.
-The embedded text is the prompt as given, not trimmed. It skips milestones,
-names that are not in the live set, and names whose live basename count is
-not 1. Embed timeout is 6 seconds. A 400 ms GET `/v1/models` probe runs
+The prompt hook skips prompts whose trimmed length is under 12 characters,
+and any prompt containing `<task-notification>` (background-task notices).
+The embedded text is the prompt as given, not trimmed. Milestones rank.
+It skips names that are not in the live set, and names whose live basename
+count is not 1; a file scores by its best chunk. Embed timeout is 6 seconds. A 400 ms GET `/v1/models` probe runs
 first; a hang or connection-refused falls through to `lexical.js` instead
 of waiting the full 6 s, and a `*.embedder-down` marker skips the probe
 for 30 s. No vector cache also takes the lexical path (so recall works

@@ -30,8 +30,10 @@ Needs **Node.js 18 or newer** on your PATH (the hooks are small Node scripts wit
   folders, and a `history/` folder for faded text. Files you already have are never touched.
 - **Gives Claude the rules every session**, including after compaction: merge before adding, correct by replacement,
   date every fact, fade old text to history instead of deleting it.
-- **Auto-recall on every message.** A hook compares your message with every memory and, when one clearly matches, shows
-  Claude its name, one-line description and path. Weak matches stay silent, so it doesn't add noise.
+- **Auto-recall on every message.** A hook compares your message with every memory (each file scored by its
+  best ~1800-character chunk; milestones included) and, when one clearly matches, shows Claude its name,
+  one-line description and path. Weak matches stay silent, so it doesn't add noise. Background-task
+  completion notices are ignored.
 - **Re-indexes after every edit** to a memory, in the background, only the file that changed.
 - **A recall command Claude can run** to search on purpose (the exact command is in Claude's session-start note).
 

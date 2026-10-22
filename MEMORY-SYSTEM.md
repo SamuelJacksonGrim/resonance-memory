@@ -15,11 +15,14 @@ The AI files, corrects and recalls its own memories by the rules that come with 
   filed in subject drawers (`projects/`, `tools/`, `reference/`), each with its own generated index card in
   `_indexes/`. `history/` holds faded text word for word, so nothing replaced is ever lost.
 - **Auto-recall on every message.** A hook embeds each message you send and surfaces the memories that match it
-  (cosine >= 0.70, top 3), with the drawer each one lives in. If no embedder is running, the same hook falls
-  back to a keyword match (BM25, a measured gate so weak hits stay silent) and labels those `(keyword match)`
-  instead of a cosine. The AI doesn't have to remember to look.
+  (cosine >= 0.70, top 3), with the drawer each one lives in. Each live file is embedded in ~1800-character
+  chunks (frontmatter stripped, so the body is what ranks); a file scores by its best chunk. Milestones rank
+  like any other file — their one-line `MEMORY.md` entry is what loads every session; the file itself surfaces
+  when it ranks. Background-task completion notices (`<task-notification>`) are ignored. If no embedder is
+  running, the same hook falls back to a keyword match (BM25, a measured gate so weak hits stay silent) and
+  labels those `(keyword match)` instead of a cosine. The AI doesn't have to remember to look.
 - **Self-updating recall.** Every time the AI writes or edits a memory, the recall index rebuilds itself in the
-  background. Only the changed memories are re-embedded, so it stays fast at any size.
+  background. Only the changed chunks are re-embedded, so it stays fast at any size.
 - **The rules, in the folder.** `memory-architecture.md` is how the AI keeps memory honest over time: merge before
   adding; correct by replacing, never by appending "UPDATE:" notes; date every fact, let newer facts win only when
   better supported, and move replaced text to `history/` with the date and the reason. When a memory surfaces, the AI

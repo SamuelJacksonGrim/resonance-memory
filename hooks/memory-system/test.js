@@ -115,6 +115,18 @@ function asArray(data) {
   return [];
 }
 
+function uniqueRels(rows) {
+  const out = [];
+  const seen = new Set();
+  for (let i = 0; i < rows.length; i++) {
+    const rel = rows[i].rel;
+    if (seen.has(rel)) continue;
+    seen.add(rel);
+    out.push(rel);
+  }
+  return out;
+}
+
 function buildFixture(root) {
   write(path.join(root, "alpha.md"), [
     "---",
@@ -254,21 +266,96 @@ test("live set is the drawers plus top level, sorted by full path", async () => 
 
 section("embed text");
 
-test("document prefix, 2200 UTF-16 cut, and model|doc hash", async () => {
-  const raw = "n".repeat(2199) + "🙂AFTER";
-  const desc = "café";
-  const doc = recall.documentText("gamma", raw, desc);
-  assert.ok(doc.startsWith("search_document: gamma. café. "));
-  assert.strictEqual(doc.length, "search_document: gamma. café. ".length + 2200);
-  // The cut lands on the high surrogate of 🙂. .NET Substring does that too.
-  assert.strictEqual(doc.charCodeAt(doc.length - 1), 0xd83d);
-  const hash = recall.contentHash(MODEL, doc);
-  assert.strictEqual(hash, crypto.createHash("sha256").update(MODEL + "|" + doc, "utf8").digest("hex"));
+test("chunk split: paragraphs, a long paragraph cut, and an empty body", async () => {
+  assert.deepStrictEqual(recall.splitMemoryChunks("one\n\ntwo", 1800), ["one\n\ntwo"]);
+  assert.deepStrictEqual(recall.splitMemoryChunks("one\n\ntwo", 5), ["one", "two"]);
+  assert.deepStrictEqual(recall.splitMemoryChunks("one\r\n\r\ntwo", 5), ["one", "two"]);
+  assert.deepStrictEqual(recall.splitMemoryChunks("one\n  \n two", 5), ["one", "two"]);
+  assert.deepStrictEqual(recall.splitMemoryChunks("  \n\n  ", 1800), [""]);
+  assert.deepStrictEqual(recall.splitMemoryChunks("", 1800), [""]);
+
+  const a = "a".repeat(1000);
+  const b = "b".repeat(1000);
+  assert.deepStrictEqual(recall.splitMemoryChunks(a + "\n\n" + b, 1800), [a, b]);
+
+  const packed = "x".repeat(1700) + " " + "y".repeat(200);
+  assert.ok(packed.length > 1800);
+  const cutAtSpace = recall.splitMemoryChunks(packed, 1800);
+  assert.strictEqual(cutAtSpace.length, 2);
+  assert.strictEqual(cutAtSpace[0], "x".repeat(1700));
+  assert.strictEqual(cutAtSpace[1], "y".repeat(200));
+
+  const earlySpace = "aa " + "c".repeat(2000);
+  const hard = recall.splitMemoryChunks(earlySpace, 1800);
+  assert.ok(hard.length >= 2);
+  assert.strictEqual(hard[0].length, 1800, "space in the first half must hard-cut at the limit");
+  assert.ok(hard[0].startsWith("aa " + "c"));
+
+  const hash = recall.contentHash(MODEL, "search_document: x.\n");
+  assert.strictEqual(hash, crypto.createHash("sha256").update(MODEL + "|" + "search_document: x.\n", "utf8").digest("hex"));
   assert.strictEqual(hash, hash.toLowerCase());
   assert.strictEqual(recall.getField("Description: Capital Key\nWeight: 0.7\n", "description", "x"), "Capital Key");
   assert.strictEqual(recall.getField("description: \"quoted desc\"\n", "description", "x"), "quoted desc");
   assert.strictEqual(recall.parseWeight("0.55"), 0.55);
   assert.strictEqual(recall.parseWeight(recall.getField("nope", "weight", "0.5")), 0.5);
+});
+
+test("frontmatter is not embedded; surfaces-when prefixes chunk 0 only", async () => {
+  const root = tmpdir();
+  const mem = path.join(root, "mem");
+  write(path.join(mem, "surf.md"), [
+    "---",
+    "description: Visible desc",
+    "surfaces-when: the secret token SECRETTOKEN appears",
+    "persistence: standing",
+    "weight: 0.5",
+    "---",
+    "Body mentions UNIQUBODYWORD and nothing from the yaml keys.",
+    "",
+    "Second paragraph also UNIQUBODYWORD.",
+    "",
+  ].join("\n"));
+  write(path.join(mem, "long.md"), [
+    "---",
+    "description: Long file",
+    "weight: 0.4",
+    "---",
+    "PARAONE " + "x".repeat(1790),
+    "",
+    "PARATWO " + "y".repeat(1790),
+    "",
+    "PARATHREE late unique LATEUNIQUEWORD sits here.",
+    "",
+  ].join("\n"));
+  try {
+    const planned = await recall.plan({ memoryDir: mem, model: MODEL, host: () => {}, out: () => {} });
+    const surfRows = planned.rows.filter((r) => r.name === "surf");
+    assert.strictEqual(surfRows.length, 1);
+    const surfDocs = recall.rowsFromFile(
+      { fullPath: path.join(mem, "surf.md"), baseName: "surf", rel: "surf.md" },
+      MODEL,
+      false
+    );
+    assert.ok(surfDocs[0].doc.includes("Comes up when: the secret token SECRETTOKEN appears."));
+    assert.ok(surfDocs[0].doc.includes("UNIQUBODYWORD"));
+    assert.ok(!surfDocs[0].doc.includes("persistence:"), "frontmatter keys must not be in the embedded text");
+    assert.ok(!surfDocs[0].doc.includes("weight: 0.5"));
+
+    const longDocs = recall.rowsFromFile(
+      { fullPath: path.join(mem, "long.md"), baseName: "long", rel: "long.md" },
+      MODEL,
+      false
+    );
+    assert.ok(longDocs.length >= 3, "a long file must produce several chunks, got " + longDocs.length);
+    assert.ok(longDocs[0].doc.startsWith("search_document: long. Long file.\n"));
+    assert.ok(!longDocs[1].doc.includes("Comes up when:"));
+    assert.strictEqual(longDocs[0].extra.chunk, 0);
+    assert.strictEqual(longDocs[1].extra.key, "long#1");
+    assert.ok(longDocs.some((r) => r.doc.includes("LATEUNIQUEWORD")));
+    assert.ok(longDocs.every((r) => r.name === "long"));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("endpoint accepts a base URL or RM's full /v1/embeddings URL", async () => {
@@ -307,7 +394,9 @@ test("plan lists live rows; history is flat and has its own cache name", async (
       memoryDir: root, model: MODEL, host: io.host, out: io.out,
     });
     assert.strictEqual(live.exitCode, 0);
-    assert.deepStrictEqual(live.rows.map((r) => r.rel), EXPECTED_LIVE);
+    assert.deepStrictEqual(uniqueRels(live.rows), EXPECTED_LIVE);
+    const gammaRows = live.rows.filter((r) => r.name === "gamma");
+    assert.ok(gammaRows.length > 1, "the long gamma fixture must chunk");
     const alpha = live.rows.find((r) => r.name === "alpha");
     assert.strictEqual(alpha.description, "Alpha person");
     assert.strictEqual(alpha.persistence, "standing");
@@ -329,7 +418,7 @@ test("plan lists live rows; history is flat and has its own cache name", async (
     });
     assert.strictEqual(hist.exitCode, 0);
     const histRels = hist.rows.map((r) => r.rel).sort();
-    assert.deepStrictEqual(histRels, ["history/_index.md", "history/old.md"]);
+    assert.deepStrictEqual(histRels, ["history/_index.md#whole", "history/old.md#whole"]);
     assert.strictEqual(hist.cfg.cache.endsWith("-history.json"), true);
 
     const dupRoot = tmpdir();
@@ -416,6 +505,8 @@ test("incremental reuse, full, delete, corrupt cache, failed embed leaves the ca
     assert.strictEqual(first.embedded, 2);
     assert.strictEqual(first.reused, 0);
     assert.strictEqual(first.dropped, 0);
+    assert.ok(first.summary.includes("Cached 2 chunks from 2 memories"));
+    assert.ok(first.summary.includes("embedded 2, reused 0, dropped 0"));
     assert.strictEqual(embed.calls.filter((t) => t === "search_query: healthcheck").length, 1);
     assert.strictEqual(embed.calls.filter((t) => t.startsWith("search_document:")).length, 2);
     assert.ok(!fs.existsSync(cache + ".tmp"));
@@ -426,6 +517,8 @@ test("incremental reuse, full, delete, corrupt cache, failed embed leaves the ca
     const entries1 = JSON.parse(raw1.toString("utf8"));
     assert.strictEqual(entries1.length, 2);
     assert.ok(entries1[0].vector.length, 4);
+    assert.strictEqual(entries1[0].key, entries1[0].name + "#0");
+    assert.strictEqual(entries1[0].chunk, 0);
     const callsAfterFirst = embed.calls.length;
 
     const second = await recall.rebuild({
@@ -526,6 +619,8 @@ test("a one-element PowerShell cache (bare object, not an array) is reused", asy
     const row = planned.rows[0];
     fs.writeFileSync(cache, JSON.stringify({
       name: row.name,
+      key: row.name + "#0",
+      chunk: 0,
       description: row.description,
       persistence: row.persistence,
       weight: row.weight,
@@ -543,6 +638,26 @@ test("a one-element PowerShell cache (bare object, not an array) is reused", asy
     const written = JSON.parse(fs.readFileSync(cache, "utf8"));
     assert.ok(Array.isArray(written));
     assert.deepStrictEqual(written[0].vector, [9, 8, 7]);
+
+    const oldStyle = path.join(root, "old.json");
+    fs.writeFileSync(oldStyle, JSON.stringify({
+      name: row.name,
+      description: row.description,
+      persistence: row.persistence,
+      weight: row.weight,
+      rel: row.rel,
+      model: MODEL,
+      hash: row.hash,
+      vector: [9, 8, 7],
+    }));
+    const migrated = await recall.rebuild({
+      memoryDir: mem, cache: oldStyle, model: MODEL, embed, host: () => {}, out: () => {},
+    });
+    assert.strictEqual(migrated.exitCode, 0);
+    assert.strictEqual(migrated.reused, 0, "an old name-keyed cache must re-embed once");
+    assert.ok(migrated.embedded >= 1);
+    const after = JSON.parse(fs.readFileSync(oldStyle, "utf8"));
+    assert.strictEqual(after[0].key, "solo#0");
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -661,16 +776,17 @@ test("embed request body is UTF-8, including non-ASCII and an emoji", async () =
 
 section("query");
 
-test("milestones are listed and not ranked; result file matches the rows", async () => {
+test("milestones are named and ranked; a file scores by its best chunk", async () => {
   const root = tmpdir();
   const cache = path.join(root, "cache.json");
   const result = path.join(root, "out", "hits.json");
   fs.writeFileSync(cache, JSON.stringify([
-    { name: "mile-low", persistence: "milestone", weight: 0.2, rel: "mile-low.md", vector: [1, 0, 0], description: "m" },
-    { name: "mile-high", persistence: "Milestone", weight: 0.9, rel: "mile-high.md", vector: [0, 1, 0], description: "m" },
-    { name: "best", persistence: "standing", weight: 0.55, rel: "best.md", vector: [1, 0, 0], description: "b" },
-    { name: "mid", persistence: "standing", weight: 0.4, rel: "projects/mid.md", vector: [0.8, 0.6, 0], description: "m" },
-    { name: "low", persistence: "standing", weight: 0.4, rel: "low.md", vector: [0, 1, 0], description: "l" },
+    { name: "mile-low", persistence: "milestone", weight: 0.2, rel: "mile-low.md", vector: [1, 0, 0], description: "m", key: "mile-low#0", chunk: 0 },
+    { name: "mile-high", persistence: "Milestone", weight: 0.9, rel: "mile-high.md", vector: [0, 1, 0], description: "m", key: "mile-high#0", chunk: 0 },
+    { name: "best", persistence: "standing", weight: 0.55, rel: "best.md", vector: [0.5, 0.5, 0], description: "b", key: "best#0", chunk: 0 },
+    { name: "best", persistence: "standing", weight: 0.55, rel: "best.md", vector: [1, 0, 0], description: "b", key: "best#1", chunk: 1 },
+    { name: "mid", persistence: "standing", weight: 0.4, rel: "projects/mid.md", vector: [0.8, 0.6, 0], description: "m", key: "mid#0", chunk: 0 },
+    { name: "low", persistence: "standing", weight: 0.4, rel: "low.md", vector: [0, 1, 0], description: "l", key: "low#0", chunk: 0 },
   ]));
   const io = capture();
   try {
@@ -678,7 +794,7 @@ test("milestones are listed and not ranked; result file matches the rows", async
       query: "find the thing",
       cache,
       model: MODEL,
-      top: 2,
+      top: 3,
       resultPath: result,
       embed: async (text) => {
         assert.strictEqual(text, "search_query: find the thing");
@@ -688,24 +804,25 @@ test("milestones are listed and not ranked; result file matches the rows", async
       out: io.out,
     });
     assert.strictEqual(found.exitCode, 0);
-    assert.deepStrictEqual(found.hits.map((h) => h.name), ["best", "mid"]);
+    assert.deepStrictEqual(found.hits.map((h) => h.name), ["mile-low", "best", "mid"]);
     assert.ok(Math.abs(found.hits[0].score - 1) < 1e-12);
-    assert.ok(Math.abs(found.hits[1].score - 0.8) < 1e-12);
+    assert.ok(Math.abs(found.hits[1].score - 1) < 1e-12, "best-chunk of 'best' must beat its weaker chunk");
+    assert.ok(Math.abs(found.hits[2].score - 0.8) < 1e-12);
     assert.deepStrictEqual(io.hostLines, [
       "",
-      "ALWAYS LOADED (milestone - not ranked, not optional)",
-      "  [0.90] mile-high  mile-high.md",
-      "  [0.20] mile-low  mile-low.md",
+      "MILESTONES (never fade; index line loaded each session, file only when it ranks)",
+      "  mile-low, mile-high",
       "",
       "RETRIEVED for: \"find the thing\"",
       "  score    cosine   weight   memory",
+      "  1.0000   1.0000   0.20     mile-low  mile-low.md",
       "  1.0000   1.0000   0.55     best  best.md",
       "  0.8000   0.8000   0.40     mid  projects/mid.md",
       "",
     ]);
     const payload = JSON.parse(fs.readFileSync(result, "utf8"));
     assert.strictEqual(payload.query, "find the thing");
-    assert.deepStrictEqual(payload.hits.map((h) => h.name), ["best", "mid"]);
+    assert.deepStrictEqual(payload.hits.map((h) => h.name), ["mile-low", "best", "mid"]);
     const none = await recall.search({
       query: "",
       cache,
@@ -770,8 +887,8 @@ test("hook prints the top 3 at >= 0.70 and stays silent otherwise", async () => 
     assert.strictEqual(written, [
       "[recall] Auto-surfaced memories that may bear on this message (read the file if relevant):",
       "  - alpha (1.00) -- alpha desc  [alpha.md]",
+      "  - mile (1.00) -- mile desc  [mile.md]",
       "  - beta (0.80) -- beta desc  [projects/beta.md]",
-      "  - gamma (0.75) -- gamma desc  [projects/gamma.md]",
       "",
     ].join("\n"));
 
@@ -798,6 +915,48 @@ test("hook prints the top 3 at >= 0.70 and stays silent otherwise", async () => 
       write: (s) => { out += s; },
     });
     assert.strictEqual(out, "");
+
+    let skipped = "";
+    let skipEmbeds = 0;
+    const skipCode = await hook.runHook({
+      stdin: JSON.stringify({
+        prompt: "Background complete <task-notification> the subagent finished its work now",
+      }),
+      env, embed: async () => { skipEmbeds++; return [1, 0, 0]; },
+      write: (s) => { skipped += s; },
+    });
+    assert.strictEqual(skipCode, 0);
+    assert.strictEqual(skipEmbeds, 0, "a task-notification prompt must not embed");
+    assert.strictEqual(skipped, "");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("hook scores a file by its best chunk and can surface a milestone", async () => {
+  const root = tmpdir();
+  const mem = path.join(root, "mem");
+  const cache = path.join(root, "cache.json");
+  write(path.join(mem, "late.md"), "description: late desc\n");
+  write(path.join(mem, "hold-lines.md"), "description: hold lines\npersistence: milestone\n");
+  fs.writeFileSync(cache, JSON.stringify([
+    { name: "late", description: "late desc", persistence: "standing", weight: 0.5, vector: [0.2, 0.98, 0], key: "late#0", chunk: 0 },
+    { name: "late", description: "late desc", persistence: "standing", weight: 0.5, vector: [1, 0, 0], key: "late#1", chunk: 1 },
+    { name: "hold-lines", description: "hold lines", persistence: "milestone", weight: 1, vector: [0.95, Math.sqrt(1 - 0.95 * 0.95), 0], key: "hold-lines#0", chunk: 0 },
+  ]));
+  const env = { RECALL_MEMORY: mem, RECALL_CACHE: cache, RECALL_MODEL: "m" };
+  try {
+    let written = "";
+    const code = await hook.runHook({
+      stdin: JSON.stringify({ prompt: "please recall the late unique section" }),
+      env,
+      embed: async () => [1, 0, 0],
+      write: (s) => { written += s; },
+    });
+    assert.strictEqual(code, 0);
+    assert.ok(written.includes("late (1.00)"), written);
+    assert.ok(written.includes("hold-lines (0.95)"), written);
+    assert.ok(!written.includes("late (0.20)"), "weaker chunk must not appear as its own hit");
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -866,6 +1025,14 @@ test("tokenize keeps identifiers, strips YAML, and BM25 ranks a distinctive file
       skipMilestones: true,
     });
     assert.strictEqual(chitchat.hits.length, 0);
+
+    const withMile = lexical.search("zebra pipeline hay claxon", {
+      memoryDir: mem,
+      cache: path.join(root, "cache.json"),
+    });
+    assert.ok(withMile.ranked.some((h) => h.name === "mile"), "milestones rank in lexical too unless skipMilestones");
+    const names = withMile.hits.map((h) => h.name);
+    assert.strictEqual(new Set(names).size, names.length, "chunked cache must not duplicate names in lexical hits");
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -1076,7 +1243,7 @@ test("recall.js --query falls back to keyword match without a cosine column", as
     assert.strictEqual(found.mode, "lexical");
     assert.deepStrictEqual(found.hits.map((h) => h.name), ["zebra-pipeline"]);
     assert.ok(io.hostLines.some((l) => l.includes("keyword match")));
-    assert.ok(io.hostLines.some((l) => l.includes("ALWAYS LOADED")));
+    assert.ok(io.hostLines.some((l) => l.includes("MILESTONES (never fade; index line loaded each session, file only when it ranks)")));
     assert.ok(io.hostLines.some((l) => l.includes("mile")));
     assert.ok(!io.hostLines.some((l) => /\bcosine\b/.test(l)));
   } finally {
