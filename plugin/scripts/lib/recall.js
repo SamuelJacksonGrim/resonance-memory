@@ -19,11 +19,13 @@
 
 /*
  * recall.js — semantic retrieval over a memory directory.
- * Port of tools/recall.ps1 (2026-10-11 incremental rebuild). Ranking is cosine
- * only when the embedder answers. If it doesn't, --query falls back to the
- * BM25 path in lexical.js (a fallback, not a hybrid ranker). Milestones are
- * listed, never ranked. Rebuild reuses a vector when the SHA-256 of
- * "model|embedded text" and the model name still match.
+ * Port of tools/recall.ps1 (2026-10-11 incremental rebuild; chunked 2026-10-22).
+ * Ranking is cosine only when the embedder answers. If it doesn't, --query
+ * falls back to the BM25 path in lexical.js (a fallback, not a hybrid ranker).
+ * Live files are split into ~1800-character chunks (frontmatter stripped);
+ * a file scores by its best chunk. Milestones rank like any other file; the
+ * printed list only names them. Rebuild reuses a vector when the SHA-256 of
+ * "model|embedded text" and the model name still match (keyed by name#chunk).
  *
  * Usage:
  *   node recall.js --rebuild [--full] [--history]
@@ -49,7 +51,8 @@ const DEFAULT_MEMORY = "";   // none: every install names its own folder (RECALL
 const DEFAULT_CACHE = path.join(os.homedir(), ".resonance-memory", "memory-embeddings.json");
 const DEFAULT_ENDPOINT = "http://localhost:1234";
 const DEFAULT_MODEL = "text-embedding-nomic-embed-text-v1.5";
-const EMBED_CHARS = 2200;
+const CHUNK_CHARS = 1800;
+const MAX_BLOCK_CHARS = 6000;
 const LOCK_WAIT_MS = 300000;
 const EMBED_TIMEOUT_MS = 120000;
 // Hook/query probe: any HTTP response from /v1/models means the process
@@ -255,10 +258,229 @@ function parseWeight(raw) {
   return n;
 }
 
-function documentText(baseName, raw, desc) {
-  const description = desc == null ? getField(raw, "description", baseName) : desc;
-  const window = raw.length <= EMBED_CHARS ? raw : raw.slice(0, EMBED_CHARS);
-  return "search_document: " + baseName + ". " + description + ". " + window;
+// PowerShell Get-FrontmatterBlock: (?s)^---\s*\r?\n(.*?)\r?\n---
+function getFrontmatterBlock(raw) {
+  const text = raw == null ? "" : String(raw);
+  const m = /^---\s*\r?\n(.*?)\r?\n---/s.exec(text);
+  return m ? m[1] : "";
+}
+
+// PowerShell body strip: (?s)^---\s*\r?\n.*?\r?\n---[ \t]*(\r?\n|$)
+function stripFrontmatterBody(raw) {
+  const text = raw == null ? "" : String(raw);
+  return text.replace(/^---\s*\r?\n.*?\r?\n---[ \t]*(?:\r?\n|$)/s, "");
+}
+
+// Port of Split-MemoryChunks. Paragraph split, ~Max chars, a longer
+// paragraph is cut at the last space before the limit (or hard at the
+// limit if that space sits in the first half). Spec is PowerShell
+// -split '\r?\n[ \t]*\r?\n', .Trim(), and LastIndexOf(' ', $Max).
+function splitMemoryChunks(body, max) {
+  const limit = max == null ? CHUNK_CHARS : max;
+  const chunks = [];
+  let cur = "";
+  const parts = String(body == null ? "" : body).split(/\r?\n[ \t]*\r?\n/);
+  for (let i = 0; i < parts.length; i++) {
+    let p = parts[i].trim();
+    if (!p) continue;
+    while (p.length > limit) {
+      let cut = p.lastIndexOf(" ", limit);
+      if (cut < limit / 2) cut = limit;
+      if (cur) {
+        chunks.push(cur);
+        cur = "";
+      }
+      chunks.push(p.substring(0, cut).trim());
+      p = p.substring(cut).trim();
+    }
+    if (cur && (cur.length + p.length + 2) > limit) {
+      chunks.push(cur);
+      cur = "";
+    }
+    cur = cur ? cur + "\n\n" + p : p;
+  }
+  if (cur) chunks.push(cur);
+  if (chunks.length === 0) chunks.push("");
+  return chunks;
+}
+
+function chunkDocument(baseName, desc, surf, chunk, index) {
+  const lead = (index === 0 && surf)
+    ? desc + ". Comes up when: " + surf + "."
+    : desc + ".";
+  return "search_document: " + baseName + ". " + lead + "\n" + chunk;
+}
+
+function parseWeightLenient(raw) {
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  const n = Number(String(raw == null ? "" : raw).trim());
+  return Number.isFinite(n) ? n : 0.5;
+}
+
+function splitHistoryLines(raw) {
+  if (raw == null || raw === "") return [];
+  return String(raw).split(/\r\n|\n|\r/);
+}
+
+function convertToAnchorSlug(text) {
+  if (!text) return "";
+  let t = String(text);
+  let prev = null;
+  while (t !== prev) {
+    prev = t;
+    t = t.replace(/\([^)]*\)/g, " ");
+  }
+  t = t.split(/\s+(?:\u2014|\u2013|--)\s+/)[0];
+  t = t.replace(/^[^\p{L}\p{N}]+/u, "");
+  t = t.toLowerCase();
+  t = t.replace(/[^a-z0-9]+/g, "-");
+  t = t.replace(/-{2,}/g, "-");
+  t = t.replace(/^-+|-+$/g, "");
+  if (t.length > 56) t = t.substring(0, 56).replace(/-+$/, "");
+  return t;
+}
+
+function getExplicitAnchorId(line) {
+  const m = /^\s*<a\s+id="([A-Za-z0-9][A-Za-z0-9-]*)"\s*>\s*<\/a>\s*$/i.exec(line);
+  return m ? m[1].toLowerCase() : null;
+}
+
+function getAnchorSpec(line) {
+  let m = /^\s*>\s*(Moved|Restored)(?:\s+whole)?\s+(\d{4}-\d{2}-\d{2})\b/i.exec(line);
+  if (m) {
+    const kind = m[1].toLowerCase();
+    return { kind: kind, base: kind + "-" + m[2], title: String(line).trim() };
+  }
+  m = /^\s*##\s+(.+)$/i.exec(line);
+  if (m) {
+    const title = m[1].trim();
+    let base = convertToAnchorSlug(title);
+    if (!base) base = "section";
+    return { kind: "section", base: base, title: title };
+  }
+  return null;
+}
+
+function uniqueSlug(used, base) {
+  const b = base || "block";
+  let slug = b;
+  let i = 2;
+  while (used.has(String(slug).toLowerCase())) {
+    slug = b + "-" + i;
+    i++;
+  }
+  used.add(String(slug).toLowerCase());
+  return slug;
+}
+
+function splitHistoryBlocks(raw, baseName) {
+  const lines = splitHistoryLines(raw);
+  const blocks = [];
+  const used = new Set();
+  let pending = null;
+  let current = null;
+  const lead = [];
+  let isFirst = true;
+  let wholeId = null;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = String(lines[i]);
+    const explicitId = getExplicitAnchorId(line);
+    if (explicitId) {
+      pending = explicitId;
+      if (current == null && lead.length === 0) wholeId = explicitId;
+      continue;
+    }
+    const spec = getAnchorSpec(line);
+    if (spec) {
+      if (current != null) blocks.push(current);
+      let requested = spec.base;
+      let explicit = false;
+      if (pending) {
+        requested = pending;
+        explicit = true;
+        pending = null;
+      }
+      const anchor = uniqueSlug(used, requested);
+      let blockLead = null;
+      if (isFirst && lead.length > 0) {
+        blockLead = lead.slice();
+        isFirst = false;
+      } else {
+        isFirst = false;
+      }
+      current = {
+        anchor: anchor,
+        kind: spec.kind,
+        title: spec.title,
+        line: i + 1,
+        explicit: explicit,
+        lead: blockLead,
+        lines: [line],
+        cite: "history/" + baseName + ".md#" + anchor,
+      };
+    } else {
+      if (line.trim().length > 0) pending = null;
+      if (current != null) current.lines.push(line);
+      else lead.push(line);
+    }
+  }
+  if (current != null) blocks.push(current);
+
+  if (blocks.length === 0) {
+    const text = lines.join("\n").trim();
+    if (text) {
+      const explicitWhole = !!wholeId;
+      const anchor = uniqueSlug(used, explicitWhole ? wholeId : "whole");
+      const lineList = [];
+      for (let i = 0; i < lines.length; i++) {
+        if (!getExplicitAnchorId(lines[i])) lineList.push(lines[i]);
+      }
+      let first = "";
+      for (let i = 0; i < lines.length; i++) {
+        if (String(lines[i]).trim()) {
+          first = String(lines[i]).trim();
+          break;
+        }
+      }
+      blocks.push({
+        anchor: anchor,
+        kind: "whole",
+        title: first,
+        line: 1,
+        explicit: explicitWhole,
+        lead: null,
+        lines: lineList,
+        cite: "history/" + baseName + ".md#" + anchor,
+      });
+    }
+  }
+
+  const out = [];
+  for (let i = 0; i < blocks.length; i++) {
+    const b = blocks[i];
+    const parts = [];
+    if (b.lead) {
+      for (let j = 0; j < b.lead.length; j++) parts.push(String(b.lead[j]));
+    }
+    for (let j = 0; j < b.lines.length; j++) parts.push(String(b.lines[j]));
+    out.push({
+      anchor: String(b.anchor),
+      kind: String(b.kind),
+      title: String(b.title),
+      line: b.line,
+      explicit: !!b.explicit,
+      bodyText: parts.join("\n").trim(),
+      cite: String(b.cite),
+    });
+  }
+  return out;
+}
+
+function cacheKeyOf(entry, history) {
+  if (history) return entry && entry.cite ? entry.cite : (entry && entry.name);
+  if (entry && entry.key) return entry.key;
+  return entry && entry.name;
 }
 
 function contentHash(model, doc) {
@@ -428,19 +650,102 @@ function duplicateMessage(files) {
   return null;
 }
 
-function rowFromFile(f, model) {
+function rowsFromFile(f, model, history) {
   const raw = sources.readText(f.fullPath);
-  const description = getField(raw, "description", f.baseName);
-  const doc = documentText(f.baseName, raw, description);
-  return {
-    name: f.baseName,
-    description,
-    rel: f.rel,
-    persistence: getField(raw, "persistence", "standing"),
-    weight: parseWeight(getField(raw, "weight", "0.5")),
-    doc,
-    hash: contentHash(model, doc),
-  };
+  if (history) {
+    const fm = getFrontmatterBlock(raw);
+    const w = parseWeightLenient(getField(fm, "weight", ""));
+    const srcPer = getField(fm, "persistence", "unset");
+    const rows = [];
+    const blocks = splitHistoryBlocks(raw, f.baseName);
+    for (let i = 0; i < blocks.length; i++) {
+      const b = blocks[i];
+      let body = String(b.bodyText);
+      if (body.length > MAX_BLOCK_CHARS) body = body.substring(0, MAX_BLOCK_CHARS);
+      let heading = String(b.title);
+      if (heading.length > 300) heading = heading.substring(0, 300);
+      const doc = "search_document: " + heading + "\n" + body;
+      rows.push({
+        key: b.cite,
+        name: f.baseName,
+        description: heading,
+        rel: b.cite,
+        persistence: "history",
+        weight: w,
+        doc,
+        hash: contentHash(model, doc),
+        extra: {
+          anchor: b.anchor,
+          cite: b.cite,
+          heading: heading,
+          kind: b.kind,
+          source_persistence: srcPer,
+        },
+      });
+    }
+    return rows;
+  }
+  let fm = getFrontmatterBlock(raw);
+  if (!fm) fm = raw;
+  const desc = getField(fm, "description", f.baseName);
+  const surf = getField(fm, "surfaces-when", "");
+  const per = getField(fm, "persistence", "standing");
+  const w = parseWeight(getField(fm, "weight", "0.5"));
+  const body = stripFrontmatterBody(raw);
+  const parts = splitMemoryChunks(body, CHUNK_CHARS);
+  const rows = [];
+  for (let i = 0; i < parts.length; i++) {
+    const doc = chunkDocument(f.baseName, desc, surf, parts[i], i);
+    const key = f.baseName + "#" + i;
+    rows.push({
+      key,
+      name: f.baseName,
+      description: desc,
+      rel: f.rel,
+      persistence: per,
+      weight: w,
+      doc,
+      hash: contentHash(model, doc),
+      extra: { key, chunk: i },
+    });
+  }
+  return rows;
+}
+
+function recallRows(files, model, history) {
+  const rows = [];
+  for (let i = 0; i < files.length; i++) {
+    const got = rowsFromFile(files[i], model, history);
+    for (let j = 0; j < got.length; j++) rows.push(got[j]);
+  }
+  return rows;
+}
+
+function bestByName(rows, nameKey, scoreKey) {
+  const nk = nameKey || "n";
+  const sk = scoreKey || "cos";
+  const best = new Map();
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const k = String(row[nk]).toLowerCase();
+    const prev = best.get(k);
+    if (!prev || row[sk] > prev[sk]) best.set(k, row);
+  }
+  return Array.from(best.values());
+}
+
+function milestoneNames(entries) {
+  const seen = new Set();
+  const names = [];
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i];
+    if (!isMilestone(e)) continue;
+    const k = String(e.name).toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    names.push(e.name);
+  }
+  return names;
 }
 
 async function embedText(text, cfg) {
@@ -522,17 +827,14 @@ async function plan(opts) {
     io.out(dup);
     return { exitCode: 1, cfg };
   }
-  const rows = listed.files.map((f) => {
-    const row = rowFromFile(f, cfg.model);
-    return {
-      name: row.name,
-      rel: row.rel,
-      hash: row.hash,
-      description: row.description,
-      persistence: row.persistence,
-      weight: row.weight,
-    };
-  });
+  const rows = recallRows(listed.files, cfg.model, cfg.history).map((row) => ({
+    name: row.name,
+    rel: row.rel,
+    hash: row.hash,
+    description: row.description,
+    persistence: row.persistence,
+    weight: row.weight,
+  }));
   const json = JSON.stringify(rows);
   if (cfg.resultPath) writeUtf8(cfg.resultPath, json);
   else io.out(json);
@@ -562,7 +864,8 @@ async function rebuild(opts) {
     if (!cfg.full && fs.existsSync(cfg.cache)) {
       try {
         for (const e of readCacheEntries(cfg.cache)) {
-          if (e && e.name) old.set(e.name, e);
+          const k = cacheKeyOf(e, cfg.history);
+          if (k) old.set(k, e);
         }
       } catch { /* unreadable cache: embed everything */ }
     }
@@ -577,9 +880,8 @@ async function rebuild(opts) {
       io.out(dup);
       return { exitCode: 1, cfg, reason: "duplicate" };
     }
-    const rows = listed.files.map((f) => {
-      const row = rowFromFile(f, cfg.model);
-      const prev = old.get(f.baseName);
+    const rows = recallRows(listed.files, cfg.model, cfg.history).map((row) => {
+      const prev = old.get(row.key);
       const reuse = !!(prev && eqCi(prev.hash, row.hash) && eqCi(prev.model, cfg.model) && usableVector(prev.vector));
       row.reuse = reuse;
       row.prev = prev || null;
@@ -602,19 +904,19 @@ async function rebuild(opts) {
       let vec;
       if (p.reuse) vec = p.prev.vector;
       else {
-        io.host("  embedding " + p.name + " ...");
+        io.host("  embedding " + p.key + " ...");
         try {
           vec = await embedText(p.doc, cfg);
           embedded++;
         } catch (err) {
-          io.host("  FAILED on " + p.name + ": " + err.message);
+          io.host("  FAILED on " + p.key + ": " + err.message);
           const msg = "Rebuild aborted after a failed embedding. Cache NOT modified.";
           io.host(msg);
           io.out(msg);
           return { exitCode: 1, cfg, reason: "embedder" };
         }
       }
-      outRows.push({
+      const entry = {
         name: p.name,
         description: p.description,
         persistence: p.persistence,
@@ -622,8 +924,13 @@ async function rebuild(opts) {
         rel: p.rel,
         model: cfg.model,
         hash: p.hash,
-        vector: vec,
-      });
+      };
+      if (p.extra) {
+        const keys = Object.keys(p.extra);
+        for (let i = 0; i < keys.length; i++) entry[keys[i]] = p.extra[keys[i]];
+      }
+      entry.vector = vec;
+      outRows.push(entry);
     }
     if (outRows.length === 0) {
       const msg = "No memory files found; cache NOT modified.";
@@ -633,10 +940,13 @@ async function rebuild(opts) {
     }
     writeCacheAtomic(cfg.cache, JSON.stringify(outRows));
     const names = ciMap();
-    for (const p of rows) names.set(p.name, true);
+    for (const p of rows) names.set(p.key, true);
     let dropped = 0;
     for (const k of old.keys()) if (!names.has(k)) dropped++;
-    const summary = "Cached " + outRows.length + " memories -> " + cfg.cache
+    const what = cfg.history
+      ? "history blocks from " + listed.files.length + " files"
+      : "chunks from " + listed.files.length + " memories";
+    const summary = "Cached " + outRows.length + " " + what + " -> " + cfg.cache
       + "  (embedded " + embedded + ", reused " + (outRows.length - embedded) + ", dropped " + dropped + ")";
     io.host(summary);
     io.out(summary);
@@ -646,12 +956,10 @@ async function rebuild(opts) {
   }
 }
 
-function printMilestones(io, milestones) {
+function printMilestones(io, names) {
   io.host("");
-  io.host("ALWAYS LOADED (milestone - not ranked, not optional)");
-  for (const m of milestones) {
-    io.host("  [" + formatFixed(m.weight, 2) + "] " + m.name + "  " + (m.rel || ""));
-  }
+  io.host("MILESTONES (never fade; index line loaded each session, file only when it ranks)");
+  io.host("  " + (names || []).join(", "));
 }
 
 function lexicalQuery(cfg, io, reason) {
@@ -663,11 +971,9 @@ function lexicalQuery(cfg, io, reason) {
     memoryDir: cfg.memoryDir,
     cache: cfg.cache,
     history: cfg.history,
-    skipMilestones: true,
     maxHits: cfg.top,
   });
-  const milestones = (found.index.docs || []).filter((e) => isMilestone(e))
-    .sort((a, b) => Number(b.weight) - Number(a.weight));
+  const milestones = milestoneNames(found.index.docs || []);
   printMilestones(io, milestones);
   io.host("");
   io.host("RETRIEVED for: \"" + cfg.query + "\"");
@@ -736,16 +1042,16 @@ async function search(opts) {
     return lexicalQuery(cfg, io, "embedder unreachable");
   }
   clearEmbedderDown(cfg.cache);
-  const milestones = mem.filter((e) => isMilestone(e))
-    .sort((a, b) => Number(b.weight) - Number(a.weight));
+  const milestones = milestoneNames(mem);
   printMilestones(io, milestones);
   io.host("");
   io.host("RETRIEVED for: \"" + cfg.query + "\"");
   io.host("  " + pad("score", 8) + " " + pad("cosine", 8) + " " + pad("weight", 8) + " memory");
-  const ranked = mem.filter((e) => !isMilestone(e)).map((e) => {
+  const scored = mem.map((e) => {
     const c = cosine(qv, e.vector);
     return { n: e.name, cos: c, w: e.weight, score: c, rel: e.rel || "" };
-  }).sort((a, b) => {
+  });
+  const ranked = bestByName(scored, "n", "cos").sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score;
     return 0;
   }).slice(0, cfg.top);
@@ -879,7 +1185,8 @@ module.exports = {
   DEFAULT_CACHE,
   DEFAULT_ENDPOINT,
   DEFAULT_MODEL,
-  EMBED_CHARS,
+  CHUNK_CHARS,
+  MAX_BLOCK_CHARS,
   LOCK_WAIT_MS,
   embeddingsUrl,
   modelsUrl,
@@ -898,7 +1205,14 @@ module.exports = {
   recallUsage,
   getField,
   parseWeight,
-  documentText,
+  getFrontmatterBlock,
+  stripFrontmatterBody,
+  splitMemoryChunks,
+  splitHistoryBlocks,
+  chunkDocument,
+  rowsFromFile,
+  recallRows,
+  bestByName,
   contentHash,
   cosine,
   formatFixed,

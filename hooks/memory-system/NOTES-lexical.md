@@ -35,8 +35,13 @@ tests, not a magnitude cutoff:
 
 YAML frontmatter is stripped from the body (keys like `name` /
 `description` / `modified` otherwise sit in every file and collapse IDF).
-The description still goes through the title field. CamelCase identifiers
-keep both forms (`SoulReward` → `soul`, `reward`, `soulreward`).
+The description still goes through the title field. The body is the whole
+file after that strip (not a 2200-character window): cosine now embeds
+every chunk, and lexical should still see a term that lives past the
+opening paragraphs. One BM25 document per file, not per chunk, so a
+result list never repeats a name. CamelCase identifiers keep both forms
+(`SoulReward` → `soul`, `reward`, `soulreward`). Milestones rank unless
+the caller passes `skipMilestones`.
 
 ## Numbers
 
@@ -124,8 +129,9 @@ file rebuilds from the markdown. Not written into the memory folder.
 
 ## What I did not change
 
-- Cosine ranking, the 0.70 threshold, milestone skipping, unique
-  basename, fail-silent exit 0.
+- Cosine ranking, the 0.70 threshold, unique basename, fail-silent
+  exit 0. Milestones now rank in the hook (2026-10-22); `skipMilestones`
+  remains an option for measurement.
 - `build-exe.js` `MEMORY_SCRIPT_NAMES`. Hooks run through `entry.js` /
   the exe, which esbuild-bundles `require("./lexical.js")`. The
   installer does not copy these scripts to disk. If a later slice

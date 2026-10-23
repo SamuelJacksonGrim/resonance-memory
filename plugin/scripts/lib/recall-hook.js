@@ -20,11 +20,12 @@
 /*
  * recall-hook.js — Claude Code UserPromptSubmit hook.
  * Port of tools/recall-hook.ps1. Embeds the prompt, keeps the top 3 live
- * memories at cosine >= 0.70, skips milestones and short prompts.
- * If the embedder is down (or there is no vector cache yet), falls back
- * to lexical.js BM25 with the measured gate — same [recall] block, labelled
- * (keyword match) instead of a cosine. Fails silent: exit 0 and no output
- * on any problem.
+ * memories at cosine >= 0.70 (a file scores by its best chunk; milestones
+ * rank like any other file). Skips short prompts and background-task
+ * notifications (`<task-notification>`). If the embedder is down (or there
+ * is no vector cache yet), falls back to lexical.js BM25 with the measured
+ * gate — same [recall] block, labelled (keyword match) instead of a cosine.
+ * Fails silent: exit 0 and no output on any problem.
  *
  * Memory, cache, endpoint, and model: RECALL_* env, else
  * ~/.resonance-memory/memory-system.json (the installer writes it; hook
@@ -86,6 +87,9 @@ async function runHook(options) {
       return 0;
     }
     if (!prompt || prompt.trim().length < (opts.minChars == null ? MIN_CHARS : opts.minChars)) return 0;
+    // Background-task notifications arrive as prompts too; they're not the
+    // user's words, so no recall (2026-10-22). PowerShell -match is case-insensitive.
+    if (/<task-notification>/i.test(prompt)) return 0;
 
     const runtime = recall.runtimeFrom(env);
     const cache = runtime.cache;
@@ -114,9 +118,8 @@ async function runHook(options) {
       let mem;
       try { mem = recall.readCacheEntries(cache); }
       catch { return null; }
-      const hits = [];
+      const scored = [];
       for (const e of mem) {
-        if (String(e && e.persistence || "").toLowerCase() === "milestone") continue;
         if (index.count(e.name) !== 1) continue;
         const v = e.vector;
         if (!Array.isArray(v) || v.length === 0) continue;
@@ -129,14 +132,15 @@ async function runHook(options) {
           vn += x * x;
         }
         const cos = vn === 0 ? 0 : dot / (qn * Math.sqrt(vn));
-        if (!(cos >= (opts.threshold == null ? THRESHOLD : opts.threshold))) continue;
-        hits.push({
+        scored.push({
           name: e.name,
           desc: e.description == null ? "" : String(e.description),
           cos,
           rel: index.rel(e.name) || "",
         });
       }
+      const hits = recall.bestByName(scored, "name", "cos")
+        .filter((h) => h.cos >= (opts.threshold == null ? THRESHOLD : opts.threshold));
       hits.sort((a, b) => b.cos - a.cos);
       return hits.slice(0, opts.maxHits == null ? MAX_HITS : opts.maxHits);
     }
@@ -153,7 +157,6 @@ async function runHook(options) {
       const found = lexical.search(prompt, {
         memoryDir,
         cache,
-        skipMilestones: true,
         maxHits: opts.maxHits == null ? MAX_HITS : opts.maxHits,
       });
       const kept = [];

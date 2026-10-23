@@ -8,6 +8,22 @@ stable; sophistication grows in the substrate, not in the API.
 
 ## [Unreleased]
 
+### Changed
+- **Chunked folder recall** (`hooks/memory-system/recall.js`, port of the same change in `tools/recall.ps1`).
+  Live files are no longer embedded as the first 2200 characters of the raw file (frontmatter included). The
+  body is split at paragraph breaks into ~1800-character chunks, each prefixed with the name and description
+  (`surfaces-when:` on chunk 0 only). One cache row per chunk (`key` = `name#i`); a query scores a file by its
+  best chunk. Incremental reuse matches on `key` and falls back to `name` for an old cache, which re-embeds
+  once. Rebuild summary: `Cached N chunks from M memories`. Measured on a 36-query set against the live
+  memory: MRR 0.764 → 0.894, hit@5 29/36 → 36/36. The BM25 fallback still indexes one document per file (the
+  whole body, not a 2200-char window) so result lists don't repeat a name.
+- **Milestones rank** in folder recall and the per-message hook. They used to print as an unranked
+  "ALWAYS LOADED" list and were excluded from results (the hook skipped them entirely). Only their one-line
+  `MEMORY.md` entry loads each session; the file itself now surfaces when it ranks. The list above the
+  results names them under `MILESTONES (never fade; index line loaded each session, file only when it ranks)`.
+- **Recall hook ignores background-task notifications.** A prompt containing `<task-notification>` exits
+  silent before embedding, so a subagent-completion notice doesn't fire recall.
+
 ## [0.4.0](https://github.com/SamuelJacksonGrim/resonance-memory/releases/tag/v0.4.0) - 2026-10-18
 
 ### Added

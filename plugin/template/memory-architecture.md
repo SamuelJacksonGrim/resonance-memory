@@ -77,11 +77,14 @@ then delete the copy: history is the record, the copy is only a safety net durin
 ## Retrieval
 
 Recall searches every live memory, by meaning when a local embedding model is running (LM Studio or Ollama with
-nomic-embed-text; no API cost) and by keyword when none is. The per-message hook surfaces only strong matches (top 3)
-with their folder path, and stays silent otherwise. A hook rebuilds the index after every Write/Edit to this folder;
-edits made by script or shell skip it, so run recall's rebuild by hand after those. The rebuild is incremental
-(unchanged files reuse their vector) and locked (one at a time). The exact recall command is in the note the plugin
-gives you at session start.
+nomic-embed-text; no API cost) and by keyword when none is. Each file is split into ~1800-character chunks
+(frontmatter stripped; a `surfaces-when:` line is prefixed on the first chunk only) and the file scores by its
+best chunk. Milestones rank like every other file: their `MEMORY.md` line loads every session; the file itself
+surfaces when it ranks. The per-message hook surfaces only strong matches (top 3) with their folder path, and
+stays silent otherwise (including on background-task notifications). A hook rebuilds the index after every
+Write/Edit to this folder; edits made by script or shell skip it, so run recall's rebuild by hand after those.
+The rebuild is incremental (unchanged chunks reuse their vector) and locked (one at a time). The exact recall
+command is in the note the plugin gives you at session start.
 
 **Weight doesn't rank.** Persistence and weight decide what stays (decay, pruning, milestone exemption); relevance
 alone decides what surfaces. Multiplying them inverts correct rankings: measured, a better match (cosine 0.6254) lost

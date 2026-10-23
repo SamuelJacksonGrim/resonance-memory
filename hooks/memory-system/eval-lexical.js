@@ -190,22 +190,22 @@ function semanticHits(queryVec, cacheEntries, live) {
   for (let i = 0; i < qv.length; i++) qn += qv[i] * qv[i];
   qn = Math.sqrt(qn);
   if (qn === 0) return [];
-  const hits = [];
+  const scored = [];
   for (let i = 0; i < cacheEntries.length; i++) {
     const e = cacheEntries[i];
-    if (String(e && e.persistence || "").toLowerCase() === "milestone") continue;
     if (live.counts.get(String(e.name).toLowerCase()) !== 1) continue;
     const v = e.vector;
     if (!Array.isArray(v) || !v.length) continue;
     const cos = recall.cosine(qv, v);
-    if (!(cos >= COSINE_GATE)) continue;
-    hits.push({
+    scored.push({
       name: e.name,
       desc: e.description == null ? "" : String(e.description),
       cos,
       rel: live.rels.get(String(e.name).toLowerCase()) || e.rel || "",
     });
   }
+  const hits = recall.bestByName(scored, "name", "cos")
+    .filter((h) => h.cos >= COSINE_GATE);
   hits.sort((a, b) => b.cos - a.cos);
   return hits.slice(0, MAX_HITS);
 }
@@ -277,7 +277,6 @@ async function main(argv) {
     memoryDir: args.memoryDir,
     cache: path.join(scratch, "unused.json"),
     persist: false,
-    skipMilestones: true,
   });
 
   const all = collectPrompts(args.transcripts);
@@ -304,7 +303,7 @@ async function main(argv) {
   const rows = [];
   for (let i = 0; i < prompts.length; i++) {
     const sem = semanticHits(vectors[i], cacheEntries, live);
-    const ranked = lexical.rank(loaded.index, prompts[i].text, { skipMilestones: true });
+    const ranked = lexical.rank(loaded.index, prompts[i].text);
     rows.push({ prompt: prompts[i], sem, ranked });
   }
 

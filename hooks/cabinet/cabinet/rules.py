@@ -17,6 +17,7 @@ Included:
   <root>/projects/**/<name>.md
   <root>/tools/**/<name>.md
   <root>/reference/**/<name>.md
+  <root>/people/**/<name>.md   (one file per person, relation as the name tag: brother--brian.md)
 
 Excluded even when the path would otherwise match:
   MEMORY.md (any depth)
@@ -41,7 +42,7 @@ from pathlib import Path
 
 from cabinet.frontmatter import is_generated_text, prefix_text
 
-DRAWERS = ("projects", "tools", "reference")
+DRAWERS = ("people", "projects", "tools", "reference")
 EXCLUDED_TOP = ("history", "_session-archive", "_indexes")
 EXCLUDED_ANYWHERE = ("_indexes", "_session-archive")
 

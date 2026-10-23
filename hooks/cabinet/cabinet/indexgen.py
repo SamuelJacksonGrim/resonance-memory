@@ -25,6 +25,7 @@ from cabinet.ops import rewrite_file
 from cabinet.rules import DRAWERS, live_files, rel_of
 
 TITLES = {
+    "people": "People",
     "projects": "Projects",
     "tools": "Tools and machine",
     "reference": "Reference",

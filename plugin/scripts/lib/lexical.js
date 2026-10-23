@@ -43,8 +43,6 @@ const path = require("path");
 const sources = require("./sources.js");
 
 const K1 = 1.2;
-// Same 2200-unit window as recall.documentText. Lexical should see the
-// same slice cosine saw; a longer body would just pad BM25 dl.
 const B = 0.75;
 // Title (basename + description) is repeated this many times into the
 // bag. Filenames in this corpus are the labels humans actually query
@@ -162,8 +160,6 @@ function parseWeight(raw) {
   return Number.isFinite(n) ? n : 0.5;
 }
 
-const EMBED_CHARS = 2200;
-
 function stripFrontmatter(raw) {
   let t = String(raw || "");
   if (t.charCodeAt(0) === 0xfeff) t = t.slice(1);
@@ -178,10 +174,13 @@ function stripFrontmatter(raw) {
 function bodyTokens(raw) {
   // YAML keys (name, description, metadata, modified, ...) sit in every
   // file. Tokenising them collapses IDF and makes "process" / "type"
-  // look rare. Description is already in the title field.
+  // look rare. Description is already in the title field. Cosine now
+  // embeds every chunk of the body; lexical reads the same whole body
+  // as one document so a term past the old 2200-char window is still
+  // findable, without emitting one BM25 row per chunk (that would
+  // duplicate names in the result list).
   const body = stripFrontmatter(raw);
-  const window = body.length <= EMBED_CHARS ? body : body.slice(0, EMBED_CHARS);
-  return tokenize(window);
+  return tokenize(body);
 }
 
 function bagFor(baseName, description, raw, titleRepeats) {
@@ -435,7 +434,7 @@ function cacheStillValid(cached, files, memoryDir, history) {
   if (!!cached.history !== !!history) return false;
   if (String(cached.memoryDir || "").toLowerCase() !== String(memoryDir || "").toLowerCase()) return false;
   if (cached.titleRepeats !== TITLE_REPEATS) return false;
-  if (cached.v !== 2) return false;
+  if (cached.v !== 3) return false;
   if (!Array.isArray(cached.files) || cached.files.length !== files.length) return false;
   const byRel = new Map();
   for (let i = 0; i < cached.files.length; i++) {
@@ -522,7 +521,7 @@ function loadIndex(opts) {
   if (o.persist !== false && cacheFile) {
     try {
       writeIndexCache(cacheFile, {
-        v: 2,
+        v: 3,
         memoryDir,
         history: !!o.history,
         titleRepeats: TITLE_REPEATS,
@@ -556,7 +555,6 @@ function formatHookBlock(hits) {
 }
 
 module.exports = {
-  EMBED_CHARS,
   K1,
   B,
   TITLE_REPEATS,
