@@ -1,7 +1,7 @@
 {
   "name": "resonance-memory",
   "displayName": "Resonance Memory",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "A memory that works like one. Claude keeps what it learns about you and your work in plain markdown files on your machine, files and consolidates them instead of piling them up, and surfaces the right one on its own when you mention something from weeks ago. Recall by meaning with a free local embedder (LM Studio or Ollama), by keyword without one. Nothing leaves your machine.",
   "author": {
     "name": "Samuel Jackson Grim",
