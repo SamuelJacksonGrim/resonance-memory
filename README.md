@@ -98,7 +98,7 @@ Done. Your AI can save and recall memories on its own. Click **Show demo graph**
 ## Good to know
 
 - **Four abilities, that's the whole interface** — save, recall, edit, delete. It never gets more complicated than that; a small model can't misuse it.
-- **Auto-recall in Claude Code.** Add one hook and RM recalls on *every* message you send, so Claude never has to remember to ask: [AUTO-RECALL.md](AUTO-RECALL.md) (hand it to Claude Code and it sets it up). Other apps don't have per-message hooks; there the recall tool itself asks the model to recall at the start of each chat.
+- **Auto-recall, so the model never has to remember to look.** On *every* message you send, RM recalls what it knows and hands it to the model before it answers. **Local models:** run `resonance-memory --proxy` and point your app (Hermes, Open WebUI, SillyTavern, Continue, anything with an OpenAI base URL) at `http://127.0.0.1:1240/v1`; it works in front of LM Studio, llama.cpp or Ollama. **Claude Code:** one hook (hand it [AUTO-RECALL.md](AUTO-RECALL.md) and it sets it up). Both are in [AUTO-RECALL.md](AUTO-RECALL.md).
 - **The whole memory system, in one command.** The memory system we built and run every day ships inside the exe:
   a memory folder with an index, the surface (who you are, how you work together) at the top and everything else
   filed in subject drawers, auto-recall on every message, a recall index that rebuilds itself after every memory

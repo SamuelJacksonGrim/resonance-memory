@@ -28,6 +28,7 @@
 //   memory --recall                     -> recall rebuild / query / history / plan
 //   memory --recall-hook                -> Claude Code UserPromptSubmit hook
 //   memory --rebuild-on-write           -> Claude Code PostToolUse hook
+//   memory --proxy [--port] [--upstream] -> auto-recall for local models (OpenAI-compatible proxy)
 //   memory --install-app [--dir] [--no-shortcut] -> copy this exe to a fixed folder
 //   memory --uninstall-app              -> disconnect, shortcut, installed file; not memories
 // These are CLI and hooks, not MCP tools.
@@ -108,6 +109,11 @@ if (mode === "--mcp") {
     process.exitCode = code || 0;
   }).catch(() => {
     process.exitCode = 0;
+  });
+} else if (mode === "--proxy") {
+  require("./proxy.js").main(process.argv.slice(3)).catch((e) => {
+    console.error(String(e.message || e));
+    process.exit(2);
   });
 } else if (mode === "--rebuild-on-write") {
   require("./hooks/memory-system/rebuild-on-write.js").main().then((code) => {
