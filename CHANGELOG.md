@@ -8,6 +8,20 @@ stable; sophistication grows in the substrate, not in the API.
 
 ## [Unreleased]
 
+### Added
+- **Auto-recall for local models** (`proxy.js`, `resonance-memory --proxy`). An OpenAI-compatible proxy on
+  `127.0.0.1:1240` in front of LM Studio, llama.cpp or Ollama. On each chat request whose last message is the
+  user's, it runs the same two recalls the Claude Code hooks give (the store's own `recall_memory` through one
+  long-lived `--mcp` child, and the memory-system folder's name + summary preview when one is set up) and
+  prepends the block to that message. The model no longer has to decide to recall: a model can't ask for what
+  it can't see. Models list, completions, embeddings and the streamed reply pass through untouched; a slow,
+  broken or empty recall forwards the request byte-identical (fail open). The block goes on the last user
+  message, not a system message, because many chat templates reject a system message that isn't first and the
+  cached prompt prefix stays intact. Works for any app that takes an OpenAI base URL (Hermes, Open WebUI,
+  SillyTavern, Continue, Cline). Live check on `gpt-oss-20b`: "What's my dog's name?" straight to LM Studio:
+  "I'm not sure"; through the proxy: "Your dog's name is Biscuit." Panel: listed under Terminal commands.
+  Not a fifth verb.
+
 ### Changed
 - **Chunked folder recall** (`hooks/memory-system/recall.js`, port of the same change in `tools/recall.ps1`).
   Live files are no longer embedded as the first 2200 characters of the raw file (frontmatter included). The

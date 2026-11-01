@@ -599,6 +599,14 @@ const PAGE = `<!doctype html>
       </div>
 
       <div class="cli-cmd">
+        <div class="cname">Auto-recall for local models <code>--proxy</code> <span class="pill on">read-only</span></div>
+        <pre class="mcp"><span class="cli-prefix"></span> --proxy</pre>
+        <div class="copyrow"><button type="button" data-cli-copy="--proxy">Copy</button><span class="hint cli-copy-msg"></span></div>
+        <div class="hint">Runs a small proxy at <code>http://127.0.0.1:1240/v1</code> in front of your model server (LM Studio by default). Point your app&rsquo;s OpenAI base URL at it instead of the model server: on every message you send, your memories are recalled and handed to the model before it answers, so it never has to remember to look. Everything else passes straight through; if recall fails, the message goes through unchanged. Leave the window open while you chat. Not an MCP tool.</div>
+        <div class="hint cli-flags">--port &lt;n&gt; &nbsp; --upstream &lt;url&gt; (llama.cpp: http://127.0.0.1:8080, Ollama: http://127.0.0.1:11434) &nbsp; --memory-dir &lt;dir&gt; &nbsp; --no-store</div>
+      </div>
+
+      <div class="cli-cmd">
         <div class="cname">Install the memory system <code>--install-memory-system</code> <span class="pill warn">writes with --apply</span></div>
         <pre class="mcp"><span class="cli-prefix"></span> --install-memory-system --memory-dir &lt;dir&gt;</pre>
         <div class="copyrow"><button type="button" data-cli-copy="--install-memory-system --memory-dir &lt;dir&gt;">Copy</button><span class="hint cli-copy-msg"></span></div>

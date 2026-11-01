@@ -10869,8 +10869,156 @@ section("install home — the program stays in one folder");
   });
 }
 
+// Awaited after asyncTests(): the proxy tests start real HTTP servers and an MCP child.
+async function proxyTests() {
+  // ------------------------------------------------- auto-recall proxy (--proxy)
+  section("auto-recall proxy for local models (--proxy)");
+  {
+    const http = require("http");
+    const proxy = require("./proxy.js");
+
+    test("lastUserPrompt: the user's last words; nothing when the last turn isn't the user's", () => {
+      assert.strictEqual(proxy.lastUserPrompt({ messages: [{ role: "system", content: "s" }, { role: "user", content: "what did I name the dog" }] }), "what did I name the dog");
+      assert.strictEqual(proxy.lastUserPrompt({ messages: [{ role: "user", content: "q" }, { role: "assistant", content: "a" }] }), "");
+      assert.strictEqual(proxy.lastUserPrompt({ messages: [{ role: "user", content: "q" }, { role: "tool", content: "result" }] }), "");
+      assert.strictEqual(proxy.lastUserPrompt({ messages: [{ role: "user", content: [{ type: "text", text: "part one" }, { type: "image_url", image_url: { url: "x" } }] }] }), "part one");
+      assert.strictEqual(proxy.lastUserPrompt({ messages: [{ role: "user", content: "<task-notification>done</task-notification>" }] }), "");
+      assert.strictEqual(proxy.lastUserPrompt({ prompt: "raw completion" }), "");
+    });
+
+    test("injectBlock: block goes in front of the last user message only; input untouched", () => {
+      const body = { model: "m", messages: [{ role: "system", content: "sys" }, { role: "user", content: "old" }, { role: "assistant", content: "a" }, { role: "user", content: "now" }] };
+      const before = JSON.stringify(body);
+      const out = proxy.injectBlock(body, "BLOCK");
+      assert.strictEqual(JSON.stringify(body), before);
+      assert.strictEqual(out.messages[3].content, "BLOCK\n\nnow");
+      assert.strictEqual(out.messages[0].content, "sys");
+      assert.strictEqual(out.messages[1].content, "old");
+      assert.strictEqual(out.model, "m");
+      const parts = proxy.injectBlock({ messages: [{ role: "user", content: [{ type: "text", text: "hi there" }] }] }, "B");
+      assert.deepStrictEqual(parts.messages[0].content, [{ type: "text", text: "B\n" }, { type: "text", text: "hi there" }]);
+    });
+
+    // A stand-in model server: echoes what it received, or streams SSE.
+    const seen = [];
+    const upstream = http.createServer((req, res) => {
+      const chunks = [];
+      req.on("data", (c) => chunks.push(c));
+      req.on("end", () => {
+        const raw = Buffer.concat(chunks).toString("utf8");
+        seen.push({ method: req.method, url: req.url, raw, auth: req.headers.authorization });
+        if (req.url === "/v1/models") { res.writeHead(200, { "content-type": "application/json" }); return res.end('{"data":[{"id":"m"}]}'); }
+        if (raw.includes('"stream":true')) {
+          res.writeHead(200, { "content-type": "text/event-stream" });
+          res.write('data: {"choices":[{"delta":{"content":"he"}}]}\n\n');
+          setTimeout(() => { res.write('data: {"choices":[{"delta":{"content":"llo"}}]}\n\ndata: [DONE]\n\n'); res.end(); }, 20);
+          return;
+        }
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ echoed: raw }));
+      });
+    });
+    const listen = (srv) => new Promise((r) => srv.listen(0, "127.0.0.1", () => r(srv.address().port)));
+    const request = (port, method, url, body, headers) => new Promise((resolve, reject) => {
+      const data = body == null ? null : Buffer.from(typeof body === "string" ? body : JSON.stringify(body));
+      const req = http.request({ host: "127.0.0.1", port, method, path: url, headers: Object.assign(data ? { "content-type": "application/json", "content-length": data.length } : {}, headers || {}) }, (res) => {
+        const c = [];
+        res.on("data", (x) => c.push(x));
+        res.on("end", () => resolve({ status: res.statusCode, headers: res.headers, text: Buffer.concat(c).toString("utf8") }));
+      });
+      req.on("error", reject);
+      if (data) req.write(data);
+      req.end();
+    });
+
+    let recallImpl = async () => "[resonance-memory] Auto-recalled\n1. [id 1] the dog is named Biscuit";
+    const calls = [];
+    const upPort = await listen(upstream);
+    const px = proxy.createProxy({ upstream: "http://127.0.0.1:" + upPort, recall: async (p) => { calls.push(p); return recallImpl(p); } });
+    const pxPort = await listen(px);
+    const chat = { model: "m", messages: [{ role: "system", content: "sys" }, { role: "user", content: "what did I name my dog again?" }] };
+
+    await atest("chat request: recall runs on the user's words and the block reaches the model", async () => {
+      const r = await request(pxPort, "POST", "/v1/chat/completions", chat, { authorization: "Bearer lm-studio" });
+      assert.strictEqual(r.status, 200);
+      const got = JSON.parse(JSON.parse(r.text).echoed);
+      assert.strictEqual(calls[calls.length - 1], "what did I name my dog again?");
+      assert.ok(got.messages[1].content.startsWith("[resonance-memory] Auto-recalled"), got.messages[1].content);
+      assert.ok(got.messages[1].content.endsWith("\n\nwhat did I name my dog again?"));
+      assert.strictEqual(got.messages[0].content, "sys");
+      assert.strictEqual(seen[seen.length - 1].auth, "Bearer lm-studio");
+    });
+
+    await atest("Ollama's /api/chat gets the same recall", async () => {
+      const r = await request(pxPort, "POST", "/api/chat", chat);
+      assert.ok(JSON.parse(JSON.parse(r.text).echoed).messages[1].content.startsWith("[resonance-memory]"));
+    });
+
+    await atest("no recall when the last turn is a tool result, or the message is too short", async () => {
+      const n = calls.length;
+      const tool = { model: "m", messages: [{ role: "user", content: "what did I name my dog again?" }, { role: "tool", content: "x" }] };
+      let r = await request(pxPort, "POST", "/v1/chat/completions", tool);
+      assert.strictEqual(JSON.parse(r.text).echoed, JSON.stringify(tool));
+      r = await request(pxPort, "POST", "/v1/chat/completions", { messages: [{ role: "user", content: "hi" }] });
+      assert.strictEqual(calls.length, n);
+    });
+
+    await atest("fail open: recall empty, throwing, or a body that isn't JSON forwards the request byte-identical", async () => {
+      const exact = JSON.stringify(chat);
+      recallImpl = async () => null;
+      let r = await request(pxPort, "POST", "/v1/chat/completions", exact);
+      assert.strictEqual(JSON.parse(r.text).echoed, exact);
+      recallImpl = async () => { throw new Error("boom"); };
+      r = await request(pxPort, "POST", "/v1/chat/completions", exact);
+      assert.strictEqual(r.status, 200);
+      assert.strictEqual(JSON.parse(r.text).echoed, exact);
+      r = await request(pxPort, "POST", "/v1/chat/completions", "not json{");
+      assert.strictEqual(JSON.parse(r.text).echoed, "not json{");
+      recallImpl = async () => "[resonance-memory] Auto-recalled\n1. [id 1] the dog is named Biscuit";
+    });
+
+    await atest("everything else passes through: models list, and a streamed reply arrives intact", async () => {
+      let r = await request(pxPort, "GET", "/v1/models");
+      assert.strictEqual(JSON.parse(r.text).data[0].id, "m");
+      r = await request(pxPort, "POST", "/v1/chat/completions", Object.assign({ stream: true }, chat));
+      assert.strictEqual(r.headers["content-type"], "text/event-stream");
+      assert.ok(r.text.includes('"content":"he"') && r.text.includes('"content":"llo"') && r.text.includes("[DONE]"), r.text);
+      assert.ok(seen[seen.length - 1].raw.includes("[resonance-memory]"));
+    });
+
+    await atest("model server down: the app gets a clear 502, not a hang", async () => {
+      const dead = proxy.createProxy({ upstream: "http://127.0.0.1:9", recall: async () => null });
+      const deadPort = await listen(dead);
+      const r = await request(deadPort, "POST", "/v1/chat/completions", chat);
+      assert.strictEqual(r.status, 502);
+      assert.ok(/model server unreachable/.test(JSON.parse(r.text).error.message));
+      dead.close();
+    });
+
+    px.close();
+    upstream.close();
+
+    // The real store recall: a long-lived `--mcp` child from source, keyword fallback (no embedder).
+    let hasSqlite = true;
+    try { require("node:sqlite"); } catch { hasSqlite = false; }
+    await atest("StoreRecall: one MCP session answers recall with RM's own result; empty store injects nothing", async () => {
+      if (!hasSqlite) return;
+      const store = tmp("proxy-store.jsonl");
+      const env = Object.assign({}, process.env, { MEMORY_FILE_PATH: store, EMBED_ENDPOINT: "http://127.0.0.1:9/v1", RESONANCE_MEMORY_CONFIG: tmp("proxy-config.json") });
+      const sr = new proxy.StoreRecall({ env, timeoutMs: 15000 });
+      try {
+        assert.strictEqual(await sr.recall("what is the dog called"), null);
+        const saved = await sr._call("tools/call", { name: "save_memory", arguments: { content: "The family dog is named Biscuit and he is a beagle." } });
+        assert.ok(saved && !saved.isError, JSON.stringify(saved));
+        const text = await sr.recall("what is the dog named");
+        assert.ok(text && /Biscuit/.test(text), String(text));
+      } finally { sr.close(); }
+    });
+  }
+}
+
 // ------------------------------------------------------------------- report
-asyncTests().then(() => {
+asyncTests().then(proxyTests).then(() => {
   console.log(`\n${passed} passed, ${failed} failed`);
   try { fs.rmSync(tmpRoot, { recursive: true, force: true }); } catch { }
   process.exit(failed ? 1 : 0);

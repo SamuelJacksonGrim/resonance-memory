@@ -1,3 +1,60 @@
+# Auto-recall
+
+Two ways, same result: your memories reach the model on every message, without the model having to decide to
+look. **Local models** (LM Studio, llama.cpp, Ollama, and apps on top of them): the proxy, next section.
+**Claude Code**: the hook, further down.
+
+## Local models: the proxy
+
+**What it does:** a small proxy sits between your app and your model server. Every time you send a message,
+it asks Resonance Memory what it knows about that message and puts the answer in front of it before the model
+sees it. The model never has to call `recall_memory` first; a model can't ask for what it can't see.
+
+**Start it:**
+
+```
+resonance-memory --proxy
+```
+
+(from source: `node --experimental-sqlite entry.js --proxy`). It listens on `http://127.0.0.1:1240/v1` and
+forwards to LM Studio at `http://127.0.0.1:1234`. Leave the window open while you chat.
+
+**Point your app at it:** wherever the app asks for an OpenAI-compatible base URL, use
+`http://127.0.0.1:1240/v1` instead of the model server's address. The model name, API key and everything else
+stay the same.
+
+| Model server | Start the proxy with |
+|---|---|
+| LM Studio (default) | `resonance-memory --proxy` |
+| llama.cpp `llama-server` | `resonance-memory --proxy --upstream http://127.0.0.1:8080` |
+| Ollama | `resonance-memory --proxy --upstream http://127.0.0.1:11434` |
+
+Works with anything that takes a base URL: Hermes, Open WebUI, SillyTavern, Continue, Cline, your own scripts.
+LM Studio's own chat window talks to the model directly, not over HTTP, so it can't go through a proxy; use
+an app pointed at LM Studio's server instead.
+
+**What the model sees:** the same block Claude Code's hook gives, above your message:
+`[resonance-memory] Auto-recalled for this message (use what is relevant, ignore the rest):` followed by the
+matching memories, and, if you've set up the [memory system](MEMORY-SYSTEM.md), the folder's preview lines
+(name, one-line summary, score) so the model can open the file that looks relevant. Nothing found = nothing
+added.
+
+**Details:**
+- Only chat requests whose last message is yours get recall. A tool result handed back in an agent loop
+  doesn't trigger it again. Model lists, embeddings, plain completions and the streamed reply pass through
+  untouched.
+- Fail open: if recall is slow (over 8 s), broken or empty, your message goes through unchanged.
+- The block goes on your last message, not a system message: many chat templates reject a system message that
+  isn't first, and the cached start of the prompt stays the same turn to turn. Your app keeps its own history
+  without the block, so blocks don't pile up.
+- Options: `--port <n>` (default 1240), `--upstream <url>`, `--memory-dir <dir>` (a memory-system folder other
+  than the configured one), `--no-store` (folder previews only). Env: `RM_PROXY_PORT`, `RM_PROXY_UPSTREAM`,
+  `RM_PROXY_TIMEOUT_MS` (8000), `RM_PROXY_MAX_CHARS` (3000), `RM_PROXY_MIN_CHARS` (12). The store is the same
+  one the MCP server uses (`MEMORY_FILE_PATH`).
+- Nothing is stored or changed by the proxy. It only listens on 127.0.0.1.
+
+---
+
 # Auto-recall for Claude Code
 
 **What it does:** every time you send Claude Code a message, Resonance Memory is asked what it already knows
@@ -5,10 +62,10 @@ about it, and the answer is handed to Claude before it replies. Claude no longer
 `recall_memory`; recall happens on every turn, using RM's own tuned recall (the same ranking, gates and
 associative field as the `recall_memory` tool).
 
-**Where it works:** Claude Code only. It uses Claude Code's `UserPromptSubmit` hook, which runs a command on
-every message. Claude Desktop, LM Studio and other MCP clients don't have per-message hooks; there, RM's
-`recall_memory` tool already tells the model to recall at the start of a conversation and whenever you refer
-to earlier context, and weaker models can be given [`system-prompt.md`](system-prompt.md).
+**Where it works:** Claude Code. It uses Claude Code's `UserPromptSubmit` hook, which runs a command on
+every message. For local models, use the proxy above. Claude Desktop has neither a per-message hook nor a
+base URL to point at; there, RM's `recall_memory` tool tells the model to recall at the start of a
+conversation and whenever you refer to earlier context.
 
 > **Easiest setup:** open Claude Code and say *"Read AUTO-RECALL.md from the resonance-memory repo and set up
 > auto-recall for me."* The steps below are written so Claude can follow them.
