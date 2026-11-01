@@ -8,6 +8,8 @@ stable; sophistication grows in the substrate, not in the API.
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/SamuelJacksonGrim/resonance-memory/releases/tag/v0.5.0) - 2026-11-01
+
 ### Added
 - **Auto-recall for local models** (`proxy.js`, `resonance-memory --proxy`). An OpenAI-compatible proxy on
   `127.0.0.1:1240` in front of LM Studio, llama.cpp or Ollama. On each chat request whose last message is the
