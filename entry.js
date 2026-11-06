@@ -26,7 +26,7 @@
 //   memory --import <zip-or-jsonl>      -> RM-17 sovereignty restore (dry-run default)
 //   memory --install-memory-system     -> Claude Code memory folder + hooks (dry-run default)
 //   memory --recall                     -> recall rebuild / query / history / plan
-//   memory --recall-hook                -> Claude Code UserPromptSubmit hook
+//   memory --recall-hook [--codex]      -> UserPromptSubmit hook (Claude Code; --codex = Codex's JSON shape)
 //   memory --rebuild-on-write           -> Claude Code PostToolUse hook
 //   memory --proxy [--port] [--upstream] -> auto-recall for local models (OpenAI-compatible proxy)
 //   memory --install-app [--dir] [--no-shortcut] -> copy this exe to a fixed folder

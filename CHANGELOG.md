@@ -8,6 +8,18 @@ stable; sophistication grows in the substrate, not in the API.
 
 ## [Unreleased]
 
+### Added
+- **Codex auto-recall** (`--recall-hook --codex`): the same `[recall]` block, wrapped as
+  `hookSpecificOutput.additionalContext`. Codex CLI fails a UserPromptSubmit hook's plain output that starts with
+  `[`; this is the shape it accepts (tested with Codex CLI 0.166 on 2026-11-05).
+
+### Changed
+- **The memory rules shipped to new folders** (`memory-system/CLAUDE-memory-block.md`, both
+  `template/memory-architecture.md` copies, the plugin's session-start note) match the rules RM's own folder runs on:
+  the `weight` key is gone (nothing read it); the frontmatter gains `reviewed`, `subject`, `contains`, `sensitivity`
+  and `surfaces-when`; the `people/` drawer is documented (recall and the cabinet already searched it); corrections
+  are never annotated; a git commit replaces the folder copy as the net before a big rewrite.
+
 ## [0.5.0](https://github.com/SamuelJacksonGrim/resonance-memory/releases/tag/v0.5.0) - 2026-11-01
 
 ### Added

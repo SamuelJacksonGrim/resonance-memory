@@ -112,7 +112,7 @@ function contextText(memoryDir, embedder, added, data) {
       + "something belongs in before adding a file; correct by replacement, never an \"UPDATE:\" note; date every "
       + "fact; newer wins only when better supported; replaced text moves verbatim to `history/<same-name>.md`, "
       + "nothing is lost. Who the user is and how they want to work stays at the top level with a line in "
-      + "`MEMORY.md`; everything else goes in `projects/`, `tools/` or `reference/` subject folders.",
+      + "`MEMORY.md`; everything else goes in `people/`, `projects/`, `tools/` or `reference/` subject folders.",
     "- The recall index rebuilds itself after each Write/Edit in that folder. After edits made by a script or the "
       + "shell, run the same command with `--rebuild` instead of `--query`.",
   ];

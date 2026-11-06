@@ -4,7 +4,6 @@ description: "READ BEFORE WRITING ANY MEMORY. This folder is weighted, filed and
 metadata:
   type: feedback
   persistence: milestone
-  weight: 1.0
 ---
 
 This memory folder is **weighted, filed and consolidated**. Don't add a flat file and walk away.
@@ -18,7 +17,11 @@ description: "<one line>"          # what recall shows; make it specific
 metadata:
   type: user | feedback | project | reference
   persistence: milestone | standing | episodic
-  weight: 0.0-1.0
+  reviewed: YYYY-MM-DD               # last time it was read and found to hold
+  subject: <a few words>
+  contains: [the people, projects and things it names]
+  sensitivity: normal | personal | sensitive
+  surfaces-when: "what the user or you would say when this matters"   # embedded with the first chunk
 ```
 
 | persistence | Decays? | Meaning |
@@ -36,9 +39,10 @@ since a milestone that points at a faded memory is broken.
   standing rules and safety lines. These are never filed away into a subject folder, and each has its one line in
   `MEMORY.md`, which is loaded at the start of every session. Filing them away would quietly change how you work
   with the user.
-- **Subject folders for everything else:** `projects/<subject>/`, `tools/<subject>/`, `reference/<subject>/` (other
-  people, places, findings). Folders follow subject, not a count; make a new subject folder when nothing fits.
-  `people`-type notes are about *other* people, never the user.
+- **Subject folders for everything else:** `people/` (one file per other person, never the user, relation first:
+  `sister--naima.md`), `projects/<subject>/`, `tools/<subject>/`, `reference/<subject>/` (places, findings, maps).
+  Folders follow subject, not a count; make a new subject folder when nothing fits. Name files in plain words a
+  fresh instance would understand from the name alone.
 - **`history/`** (flat, same filename as the live memory) holds faded text. See below.
 - **`_indexes/`** holds generated drawer indexes. Don't edit them by hand; they're never embedded.
 - Record every memory's place in `cabinet.tsv` (`<name><TAB>.` for the surface, `<name><TAB><folder>` otherwise).
@@ -74,8 +78,12 @@ again, move it back as current text.
 4. **Recall drives upkeep:** when a memory surfaces and gets read, check it against what's known now: leave it if it
    holds, correct it (replace and fade), or fade it. Dates mark modifications; reading never touches them.
 
-Before a big rewrite, copy the folder (`memory.bak-YYYY-MM-DD`), check every moved text landed verbatim in history,
-then delete the copy: history is the record, the copy is only a safety net during the move.
+Before a big rewrite, commit the folder if it's a git repository (or copy it), and check every moved text landed
+verbatim in history: history is the record, the commit is only a safety net during the move.
+
+**Don't annotate a correction.** No "UPDATE", "CORRECTED", "no longer", "was X, now Y", and don't write a wrong idea
+down just to deny it ("X is not Y"): that keeps it alive in the file. Write the current fact in plain present tense.
+When a memory surfaces and holds up, set `reviewed` to today and change nothing else.
 
 ## Retrieval
 
@@ -88,7 +96,7 @@ ranks. A hook rebuilds the index after every Write/Edit to this folder; edits ma
 run recall's rebuild by hand after those. The rebuild is incremental (unchanged chunks reuse their vector) and
 locked (one at a time).
 
-**Weight doesn't rank.** Persistence and weight decide what stays (decay, pruning, milestone exemption); relevance
+**Persistence doesn't rank.** Persistence decides what stays (decay, pruning, milestone exemption); relevance
 alone decides what surfaces. Multiplying them inverts correct rankings: measured, a better match (cosine 0.6254) lost
 to a worse one (0.5749) purely on a durability tag.
 

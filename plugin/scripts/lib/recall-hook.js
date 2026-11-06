@@ -215,8 +215,26 @@ async function runHook(options) {
   }
 }
 
-async function main() {
-  return runHook();
+// Codex reads a UserPromptSubmit hook's plain stdout as JSON and fails on the
+// leading "[" of the [recall] block, so --codex wraps the same block in the
+// JSON shape it accepts (hookSpecificOutput.additionalContext). Measured
+// 2026-11-05 with Codex CLI 0.166. Nothing to say stays nothing.
+function codexEnvelope(text) {
+  const block = String(text || "").trim();
+  if (!block) return "";
+  return JSON.stringify({
+    hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: block },
+  });
+}
+
+async function main(argv) {
+  const args = argv || process.argv;
+  if (!args.includes("--codex")) return runHook();
+  let out = "";
+  const code = await runHook({ write: (s) => { out += s; } });
+  const json = codexEnvelope(out);
+  if (json) process.stdout.write(json);
+  return code;
 }
 
 if (require.main === module) {
@@ -236,5 +254,6 @@ module.exports = {
   MIN_CHARS,
   TIMEOUT_MS,
   runHook,
+  codexEnvelope,
   main,
 };

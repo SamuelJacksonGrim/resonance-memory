@@ -217,6 +217,15 @@ function runPs(args) {
 
 section("source rules");
 
+test("--codex wraps the recall block as additionalContext; silence stays silent", async () => {
+  const block = "[recall] Auto-surfaced memories that may bear on this message (read the file if relevant):\n  - a (0.80) -- b  [a.md]\n";
+  const parsed = JSON.parse(hook.codexEnvelope(block));
+  assert.strictEqual(parsed.hookSpecificOutput.hookEventName, "UserPromptSubmit");
+  assert.strictEqual(parsed.hookSpecificOutput.additionalContext, block.trim());
+  assert.strictEqual(hook.codexEnvelope(""), "");
+  assert.strictEqual(hook.codexEnvelope("  \n"), "");
+});
+
 test("name and path excludes match the PowerShell predicates", async () => {
   assert.strictEqual(sources.excludedByName("MEMORY.md"), true);
   assert.strictEqual(sources.excludedByName("Memory.md"), true);
