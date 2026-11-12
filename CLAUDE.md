@@ -177,7 +177,7 @@ new golden case: `EVAL_REFRESH=1 npm run eval -- --store jsonl`. For a measureme
    associative graph (additive; never reorders the primary result). `RESONANCE_WARM_RANK`
    (default off) is an exploratory combiner that may reorder primary (`additive` by
    default; `RESONANCE_WARM_RANK_SHAPE` selects rrf / ranknorm / l1 / multiplicative
-   for Lane B research — see `combiner-research.md`); it is not the default and is
+   for Lane B research — see `docs/research/lanes/lane-b-combiner-research.md`); it is not the default and is
    not the Phase 2.2 promotion.
 3. **Edit/Delete**: `edit_memory` replaces text + re-embeds; `delete_memory` is a *soft*
    delete (`deleted: true`), compacted at next startup via `vacuum()`.
@@ -302,13 +302,13 @@ activation compute, default **on**; `0`/`false`/`no` opt-out — does not rank),
 `RESONANCE_WARM_RANK_WEIGHT` (combiner weight, default 0.3, same cap as Related:
 maxBonus), `RESONANCE_WARM_RANK_SHAPE` (`additive` default / `rrf` / `ranknorm` /
 `l1` / `multiplicative`; only consulted when rank is on; Lane B research, see
-`combiner-research.md`), `RESONANCE_WARM_RANK_RRF_K` (RRF k, default 60),
+`docs/research/lanes/lane-b-combiner-research.md`), `RESONANCE_WARM_RANK_RRF_K` (RRF k, default 60),
 `RESONANCE_SAVE_K` / `RESONANCE_SAVE_MIN_COS` (save-time bind; defaults 5 / 0.25;
 live-config `save_k` / `save_min_cos`; eval pins the constants),
 `RESONANCE_WARM_RECALL_BIND` (ephemeral seed-kNN unioned into spread at recall;
 default **off**; does not persist), `RESONANCE_WARM_RELATED` (exploratory H4:
 leftover spread-activation expands `Related:` only; default **off**; measured
-no — see `h4-related-discovery.md`), `RESONANCE_WARM_RELATED_FLOOR` (candidacy
+no — see `docs/research/lanes/h4-related-discovery.md`), `RESONANCE_WARM_RELATED_FLOOR` (candidacy
 floor, default 0.05), `RESONANCE_WARM_TRACE` (stderr `[warm-trace]` JSON, default
 off). The embedder is **not bundled**
 — we depend on the `/v1/embeddings` *interface*, not a specific model, so any
