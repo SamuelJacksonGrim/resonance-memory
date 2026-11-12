@@ -10,7 +10,7 @@ Pre-registration: [`s2v2-prereg.md`](s2v2-prereg.md) (method locked; cosine boun
 Driver: **stock qwen3.6-35B-A3B** (unsloth UD-Q4_K_M) served locally via llama.cpp on `:8080`,
 greedy (`temp=0 seed=7`), recall block **injected** (not a tool-call), neutral system prompt.
 Identity probed clean before scoring (plain Qwen, no baked persona). Full per-arm log committed at
-[`../../eval/s2v2-live-log.json`](../../eval/s2v2-live-log.json); `--replay` re-derives every number.
+[`../../eval/s2v2-live-log.json`](../../../eval/s2v2-live-log.json); `--replay` re-derives every number.
 
 ## Scoped verdict
 
@@ -85,5 +85,5 @@ the highest-risk case (`held-anaphora`) was reviewed and confirmed — the query
 the object, not the value, and the values are absent from all non-answer context.
 
 ---
-**Related:** part of the [activation & consumption campaign](../research/README.md) — the tree:
+**Related:** part of the [activation & consumption campaign](../README.md) — the tree:
 Lane A/B/C · [[h4-related-discovery|H4]] · [[h6-result|H6]] · **S2v2** (this result).

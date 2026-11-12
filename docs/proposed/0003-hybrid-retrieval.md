@@ -2,12 +2,11 @@
 
 **Status:** proposed · **Backlog:** `RM-05` · **Depends on:** `RM-00`
 
-> ## ⚠️ This proposal touches a ratified invariant
->
-> `DEVELOPERS.md` states: **"Ranking = cosine only."** Hybrid retrieval changes ranking.
-> This is a real conflict and must not be waved through. See [§5](#5-the-invariant-question)
-> for the resolution — the short version is: **ship behind a flag, promote only on a measured
-> A/B win, amend the invariant in the same PR with the measurement that earned it.**
+> **Design history — included in 0.2.0 (2026-09-10):** the problem statement and pseudocode
+> below describe the earlier implementation, not current function locations or defaults.
+> Current behavior and I2/I2b live in [ARCHITECTURE](../ARCHITECTURE.md#2-design-invariants-the-shape-is-load-bearing);
+> item acceptance belongs to [BACKLOG RM-05](../BACKLOG.md). Default promotion must satisfy
+> the full [Phase 2 gate](../phases/phase-2-retrieval-dynamics.md#fusion-promotion).
 
 ## Problem
 
@@ -147,35 +146,15 @@ ranking-quality question.
 
 ## 5. The invariant question
 
-The invariant exists for a good reason. `DEVELOPERS.md` records a **measured** finding:
-adding a durability weight (importance/access_count) to cosine **inverted rankings** and made
-results worse. The lesson learned was correct.
+I2 forbids unmeasured rank signals; I2b separately excludes access-frequency inputs.
+[ARCHITECTURE](../ARCHITECTURE.md#2-design-invariants-the-shape-is-load-bearing) owns both
+definitions and their measured rationale. This proposal does not amend them.
 
-But note precisely what was measured: *durability signals* — importance and access count —
-polluting relevance. That is a different claim from *"no second relevance signal may ever
-inform rank."* BM25 is not a durability signal; it is an independent **relevance** signal,
-measuring the same target quantity by another route.
-
-So the invariant's real content is:
-
-> **No unmeasured signal touches rank. Retention signals never touch rank.**
-
-Both survive this proposal intact. The process:
-
-1. Implement behind `RESONANCE_MEMORY_HYBRID`, **default off**.
-2. A/B on the `RM-00` golden set: cosine-only vs RRF, reporting `recall@5`, `MRR`, and
-   per-category deltas (the rare-noun/identifier/negation categories are where the win should
-   appear, if it exists).
-3. **If it wins:** flip the default, and in the *same PR* amend `DEVELOPERS.md` to
-   *"Ranking = cosine, plus any relevance signal that has beaten cosine-only on the golden
-   set. Retention signals (importance, access_count) never touch rank."* — with a link to the
-   measurement.
-4. **If it loses:** keep it flag-off for the endpoint-down robustness benefit, and write down
-   the negative result. **A negative result here is a real deliverable** — it converts a
-   folk-belief invariant into a measured one.
-
-Under no circumstances does the default flip without the measurement. That is the part of the
-invariant that actually matters.
+An implementation begins flag-off. A positive experiment alone does not authorize default
+promotion: the complete [Phase 2 gate](../phases/phase-2-retrieval-dynamics.md#fusion-promotion)
+owns the requirements, including competition, normalization, poisoning defense and the
+measurement/documentation obligations. A failed gate leaves the flag off and records the
+negative result.
 
 ---
 
@@ -183,7 +162,7 @@ invariant that actually matters.
 
 | Risk | Mitigation |
 |---|---|
-| BM25 index rebuild per query is O(N) | Cache and invalidate on write; deleted entirely by `RM-07`/FTS5 |
+| BM25 index rebuild per query is O(N) | Cache/invalidate on write; FTS5 retrieval follow-up belongs to RM-05, not completed RM-07 |
 | Keyword arm surfaces literal-but-irrelevant matches | RRF requires cross-arm agreement to rank highly |
 | Graph arm amplifies its own Hebbian feedback loop | Graph is a *fusion input*, not a multiplier; ledger stays provenance-discounted |
 | Fusion masks a broken dense arm | Per-arm ranks recorded and surfaced via `RM-19` |

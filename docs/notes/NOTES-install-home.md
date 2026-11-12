@@ -6,7 +6,7 @@ with no error that points at the cause. v0.3.1 left this out on
 purpose. This slice puts the packaged program in one folder and keeps
 every path we own pointed at that file.
 
-README, CHANGELOG, MEMORY-SYSTEM.md, the itch page, and the version
+README, CHANGELOG, docs/guides/MEMORY-SYSTEM.md, the itch page, and the version
 were left alone. Still 0.3.1. Still four MCP verbs.
 
 ## What was built

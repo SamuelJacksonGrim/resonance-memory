@@ -63,14 +63,14 @@ stable; sophistication grows in the substrate, not in the API.
 ## [0.3.0](https://github.com/SamuelJacksonGrim/resonance-memory/releases/tag/v0.3.0) - 2026-10-12
 
 ### Added
-- **Auto-recall for Claude Code** (`hooks/auto-recall.js` + [`AUTO-RECALL.md`](AUTO-RECALL.md)). A
+- **Auto-recall for Claude Code** (`hooks/auto-recall.js` + [`docs/guides/AUTO-RECALL.md`](docs/guides/AUTO-RECALL.md)). A
   `UserPromptSubmit` hook that runs RM's own `recall_memory` on every user message and injects the result, so
   recall no longer depends on the model choosing to call the tool. Talks to the existing binary over MCP stdio
   (works with v0.2.0, no new release needed); zero dependencies; fails silent; optional store argument for a
   custom `MEMORY_FILE_PATH`; `RM_RECALL_DEBUG=1` explains silence during setup. Measured ~0.1–0.2 s per message.
   Claude Code only (other MCP clients have no per-message hook). The guide is written so a user's own Claude
   can carry out the setup.
-- **The Resonance memory system, shipped whole** ([`MEMORY-SYSTEM.md`](MEMORY-SYSTEM.md)). The folder-and-files
+- **The Resonance memory system, shipped whole** ([`docs/guides/MEMORY-SYSTEM.md`](docs/guides/MEMORY-SYSTEM.md)). The folder-and-files
   memory system built and run daily with Claude, inside the exe. `--install-memory-system --memory-dir DIR` (dry run
   by default, `--apply` to do it) lays down the memory folder template (index, `memory-architecture.md` rules,
   `history/`, drawers, `cabinet.tsv`; never overwrites), merges two hooks into `~/.claude/settings.json` (keeps every
@@ -80,7 +80,7 @@ stable; sophistication grows in the substrate, not in the API.
   >= 0.70 with each memory's drawer, fails silent), `--rebuild-on-write` (PostToolUse: incremental re-embed of only
   the changed memories, detached). The recall engine is a Node port of the PowerShell original, verified to give
   the same results. Not an MCP tool: still the four verbs.
-- **Memory filing cabinet** (`hooks/cabinet/` + [`CABINET.md`](CABINET.md)), part of the memory system. Files a
+- **Memory filing cabinet** (`hooks/cabinet/` + [`docs/guides/CABINET.md`](docs/guides/CABINET.md)), part of the memory system. Files a
   markdown memory folder: the surface at the top (relationship-shaping memories are never filed away),
   `projects/` / `tools/` / `reference/` subject drawers, flat `history/`, a generated index card per drawer plus a
   skills index. Python 3.9+, standard library only. Commands: `init` (drawers + starter `cabinet.tsv`, nothing
@@ -166,7 +166,7 @@ First public release — Windows / macOS / Linux binaries on the
   pin the Phase 0.1 constants so a leftover user env cannot move the golden.
   Measured on the field-rescue leaves: reachability is already 3/3 at K=5;
   denser K raises degree, not E. Vegetarian bonus 0 is the combiner (rank-10
-  seed), not a missing wire. Report: `docs/edge-density.md`. Harness:
+  seed), not a missing wire. Report: `docs/research/lanes/lane-c-edge-density.md`. Harness:
   `node eval/edge-density.js`.
 - **Exploratory activation-in-rank (`RESONANCE_WARM_RANK`, default off).** Phase 1
   activation can enter primary rank behind a flag: `final = cosine + 0.3 ·
@@ -251,7 +251,7 @@ First public release — Windows / macOS / Linux binaries on the
   author-asserted channels, and an injected-recall harness with stub /
   replay / fail-loud driver-down. Live qwen3.6 generation is gated
   (`--live`) until the fixtures are audited. `kind: "h6"` is skipped by
-  RM-00 and `eval/measure.js`. See `eval/h6-build-notes.md`.
+  RM-00 and `eval/measure.js`. See `docs/research/h6/h6-build-notes.md`.
 - **PR-path CI.** `.github/workflows/ci.yml` runs the deterministic
   gate (`node test.js` + `node eval/run.js`) on every push to `main`
   and every pull request, so a regression is caught when it lands,
@@ -290,7 +290,7 @@ First public release — Windows / macOS / Linux binaries on the
   not require bumping the version string. `workflow_dispatch` builds
   without publishing. macOS is arm64-only (Node SEA CI skips x64).
   Binaries stay unsigned; Gatekeeper / SmartScreen guidance lives in
-  the Release body and `docs/BUILDING.md`. Actions pinned to
+  the Release body and `docs/guides/BUILDING.md`. Actions pinned to
   full-length SHAs; `gh release` rather than a third-party action.
 - **RM-17 panel import button.** Confirm modal shells `runImport()` — the
   same engine as `--import`, not a second writer. Path + Browse (native

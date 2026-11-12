@@ -336,4 +336,4 @@ nor inherently dangerous — **a secondary evidence channel whose behavioral wei
   9. **Harness must build pair-classification + validity accounting in from the start.**
 
 ---
-**Related:** part of the [activation & consumption campaign](../research/README.md) — the [research index](../research/README.md) holds the full tree (Lane A/B/C · [[H4]] · [[H6]] · [[S2v2]]).
+**Related:** part of the [activation & consumption campaign](../README.md) — the [research index](../README.md) holds the full tree (Lane A/B/C · [[H4]] · [[H6]] · [[S2v2]]).

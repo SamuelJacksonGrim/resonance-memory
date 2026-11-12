@@ -121,7 +121,7 @@ the anti-cheat so supersession cannot go over-eager), and the activation-pool me
 **`rank_hub_contamination`** (hub in top-k without the apex — not the Op B cluster
 metric), **`graph_bind_rate`** (labeled apex↔bridge pair present in the save-time
 edge table), **`related_rescue_rate`** (apex in Related: and not in primary). See
-[`testpool-design.md`](testpool-design.md). They are A/B numbers, not pass/fail —
+[`lane-a-testpool-design.md`](../docs/research/lanes/lane-a-testpool-design.md). They are A/B numbers, not pass/fail —
 `node eval/run.js` still gates only the contains/excludes scorecard, and measurement corpora
 (`kind: "duplicates"` / `"messy"`, `gate: false`, including the expanded contradiction cases)
 are skipped there so a new fixture cannot flip golden. The original four `contra-*` golden
@@ -157,9 +157,6 @@ eval/
   run.js                 the golden runner + regression gate
                          (sqlite default = two-sided parity; `--store jsonl` still testable)
   measure.js             reporting-metric runner (A/B; does not touch golden.json)
-  testpool-design.md     activation-pool contract: corpus shapes, carryover
-                         metric, hypothesis critique, two-sided decision
-                         criterion (Lanes B/C measure against this)
   golden.json            last accepted scorecard (written by --accept)
   save-time-cost.js      Phase 0.1 cost sweep (neighbor-scan + EdgeStore.save p50/p95/p99
                          at N=100/1k/10k/50k/100k). Pre-declares the p95 budget that
@@ -324,7 +321,7 @@ the leaf is caught.
 
 Not golden. Flag-off default preserved. Design, hypothesis critique, and
 the two-sided "earns rank / cut it" criterion:
-[`testpool-design.md`](testpool-design.md).
+[`lane-a-testpool-design.md`](../docs/research/lanes/lane-a-testpool-design.md).
 
 ```powershell
 node eval/measure.js --corpus cross-turn --warm-rank

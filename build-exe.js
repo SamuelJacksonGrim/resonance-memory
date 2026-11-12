@@ -33,7 +33,7 @@
  * cross-compiler. Node >= 22.5 is required (node:sqlite / SqliteStore).
  *
  * Signing: unsigned on purpose this slice (certs cost money). Windows
- * SmartScreen / macOS Gatekeeper will prompt; see docs/BUILDING.md.
+ * SmartScreen / macOS Gatekeeper will prompt; see docs/guides/BUILDING.md.
  * macOS still gets a free ad-hoc `codesign --sign -` AFTER postject —
  * without it the kernel kills the binary as "code signature invalid".
  * That is not Developer ID / notarization.
@@ -171,7 +171,7 @@ function assertCanBuild(targetId, hostPlatform) {
       "  Linux:  node build-exe.js --target linux   (WSL or a Linux box, Node >= 22.5)\n" +
       "  macOS:  node build-exe.js --target macos   (on a Mac; Node SEA CI tests arm64)\n" +
       "  Windows: node build-exe.js --target win\n" +
-      "See docs/BUILDING.md."
+      "See docs/guides/BUILDING.md."
     );
   }
 }
@@ -222,7 +222,7 @@ function usage() {
     "  --print-plan  Print the recipe for --target and exit (no inject).",
     "  --help        This text.",
     "",
-    "Node >= 22.5 required (node:sqlite). See docs/BUILDING.md.",
+    "Node >= 22.5 required (node:sqlite). See docs/guides/BUILDING.md.",
   ].join("\n");
 }
 
@@ -282,7 +282,7 @@ function distReadmeText(opts) {
   lines.push("");
   lines.push(firstRunBlurb(spec, artifact));
   lines.push("");
-  lines.push("Full build / Gatekeeper notes: docs/BUILDING.md");
+  lines.push("Full build / Gatekeeper notes: docs/guides/BUILDING.md");
   lines.push("Code signing / notarization is a named future item (RM-11 remainder).");
   lines.push("");
   return lines.join("\n") + "\n";
