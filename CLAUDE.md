@@ -32,7 +32,7 @@ roadmap, and per-repo backlog live in the companion repo
 - **CommonJS** (`"type": "commonjs"`), not ESM.
 - Runs on Windows, macOS, and Linux. The shipped binary is per-platform (SEA is per-platform;
   the macOS binary must be built on a Mac — a `macos-latest` CI runner counts, and is the
-  shipping path since this project has no Mac hardware). See `docs/BUILDING.md`.
+  shipping path since this project has no Mac hardware). See `docs/guides/BUILDING.md`.
 
 ## Repository layout
 
@@ -40,8 +40,8 @@ roadmap, and per-repo backlog live in the companion repo
 
 | File | Role |
 |---|---|
-| `entry.js` | Bundle entry point / mode dispatch: `--mcp` → server, `--install`/`--uninstall` → installer, `--dedup-existing` → RM-02.c backfill (dry-run default; `--apply` mutates), `--migrate` → RM-07 slice 2a JSONL→SQLite (opt-in), `--export` / `--export-jsonl` → RM-07 slice 2b sovereignty export (read-only), `--import` → RM-17 restore (dry-run default), `--install-memory-system` → the memory system installer (dry-run default; see `MEMORY-SYSTEM.md`), `--recall` / `--recall-hook` / `--rebuild-on-write` → the memory system's recall and its two Claude Code hooks, `--proxy` → auto-recall proxy for local models (`proxy.js`), else → panel. |
-| `proxy.js` | Auto-recall for local models. OpenAI-compatible HTTP proxy on `127.0.0.1:1240` in front of LM Studio / llama.cpp / Ollama: on a chat request whose last message is the user's, runs the store's `recall_memory` (one long-lived `--mcp` child) and the memory-system `recall-hook.js` preview, and prepends the block to that message. Everything else passes through; fail open (recall slow/broken/empty = byte-identical forward). Not an MCP tool. Guide: `AUTO-RECALL.md`. |
+| `entry.js` | Bundle entry point / mode dispatch: `--mcp` → server, `--install`/`--uninstall` → installer, `--dedup-existing` → RM-02.c backfill (dry-run default; `--apply` mutates), `--migrate` → RM-07 slice 2a JSONL→SQLite (opt-in), `--export` / `--export-jsonl` → RM-07 slice 2b sovereignty export (read-only), `--import` → RM-17 restore (dry-run default), `--install-memory-system` → the memory system installer (dry-run default; see `docs/guides/MEMORY-SYSTEM.md`), `--recall` / `--recall-hook` / `--rebuild-on-write` → the memory system's recall and its two Claude Code hooks, `--proxy` → auto-recall proxy for local models (`proxy.js`), else → panel. |
+| `proxy.js` | Auto-recall for local models. OpenAI-compatible HTTP proxy on `127.0.0.1:1240` in front of LM Studio / llama.cpp / Ollama: on a chat request whose last message is the user's, runs the store's `recall_memory` (one long-lived `--mcp` child) and the memory-system `recall-hook.js` preview, and prepends the block to that message. Everything else passes through; fail open (recall slow/broken/empty = byte-identical forward). Not an MCP tool. Guide: `docs/guides/AUTO-RECALL.md`. |
 | `dedup-existing.js` | RM-02.c CLI: scan a pre-02.b store, report (or apply) the same banded restatements/merges `save()` would have made. Thin wrapper over `dedupExisting()` in `memory-core.js` — no second decision. |
 | `server.js` | The MCP server. Declares the four verbs (tool schemas + descriptions), wires the environment (network embed, live field toggle, live extract toggle, lazy ledger) into the shared core, and runs the JSON-RPC stdio loop. Reads the version from `package.json` so `serverInfo` can't drift. Outbound MCP `sampling/createMessage` is the Tier 2 path when the client advertised sampling. |
 | `memory-core.js` | **The four cognitive verbs, as ONE implementation.** `createCore({ store, embed, fieldEnabled, getEdgeStore, dedupThresholds, fieldMinSim, extractEnabled, extract })` returns `{ save, recall, edit, remove }`. Also owns `dedupExisting` / `planDedupExisting` (RM-02.c) so the `--dedup-existing` backfill cannot fork the 02.b bands. Everything environment-specific is *injected*, nothing reached for — so `server.js` (network embedder) and `eval/pipeline.js` (cached embedder) build on the exact same code. This is deliberate: two copies of the recall path is the drift the RM-00 harness exists to catch. |
@@ -63,7 +63,7 @@ roadmap, and per-repo backlog live in the companion repo
 | `install.js` | Detect + wire into LM Studio / Claude Desktop MCP config. Preserves other configured servers, leaves a `.bak`. `mcpSnippet()` is the copy-paste launch for every other MCP client. |
 | `inspect_sidecar.js` | Dependency-free telemetry for the Hebbian ledger. |
 | `hooks/memory-system/` | The memory system (folders and files, not the SQLite store): `recall.js` (embed + incremental rebuild + query; live files are ~1800-character chunks with frontmatter stripped, a file scores by its best chunk; cosine when the embedder answers, BM25 fallback in `lexical.js` otherwise; milestones rank like any other file), `sources.js` (which files count as live), `recall-hook.js` (UserPromptSubmit: top 3 at cosine >= 0.70, or a gated keyword match labelled `(keyword match)` if the embedder is down; ignores `<task-notification>` prompts; fails silent), `rebuild-on-write.js` (PostToolUse, detached), `install-memory.js` (the installer). Template in `memory-system/template/`, CLAUDE block in `memory-system/CLAUDE-memory-block.md`. Tests: `node hooks/memory-system/test.js`. Not MCP tools. |
-| `hooks/cabinet/` | The filing cabinet (Python 3.9+, stdlib): init / migrate / index / relink / check / list / surface. Tests: `python -m unittest discover -s tests` there. Guide: `CABINET.md`. |
+| `hooks/cabinet/` | The filing cabinet (Python 3.9+, stdlib): init / migrate / index / relink / check / list / surface. Tests: `python -m unittest discover -s tests` there. Guide: `docs/guides/CABINET.md`. |
 
 ### Build & assets
 

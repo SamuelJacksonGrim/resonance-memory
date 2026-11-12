@@ -112,7 +112,7 @@ an opaque `id`.
 ## Build
 
 Per-OS instructions, Gatekeeper/SmartScreen, and the exact Mac steps:
-[`docs/BUILDING.md`](docs/BUILDING.md).
+[`docs/guides/BUILDING.md`](docs/guides/BUILDING.md).
 
 ```
 node build-exe.js                  # this machine

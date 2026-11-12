@@ -82,7 +82,7 @@ first) needs the fusion-arm numbers; the contradiction baseline is now computabl
 - [x] **Activation test pool** (cross-turn / weak-recall / hub-vs-apex) + reporting
       metrics `carryover_lift`, `rank_hub_contamination`, `graph_bind_rate`,
       `related_rescue_rate`. Not the 2.2 gate; the pool the gate has to win on.
-      Decision criterion: [`eval/testpool-design.md`](../../eval/testpool-design.md).
+      Decision criterion: [`eval/testpool-design.md`](../research/lanes/lane-a-testpool-design.md).
 - [x] **Corpus realism** (measured 2026-08-22): corpora were clean (4 within-scenario pairs > 0.75,
       top 0.818) — competition/normalization tuned here are not fitting duplicate bloat; the risk
       runs the other way (real stores carry duplicates until `RM-02`). Duplicate-heavy corpus:

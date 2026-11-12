@@ -15,7 +15,7 @@
 // DESIGN RULE: fail silent. Any problem (RM not found, slow, empty store, bad input) = exit 0 with no
 // output, so a broken hook can never block a message.
 //
-// Usage (in Claude Code settings.json, see AUTO-RECALL.md):
+// Usage (in Claude Code settings.json, see docs/guides/AUTO-RECALL.md):
 //   node /path/to/hooks/auto-recall.js "/path/to/resonance-memory(.exe)"
 //   node /path/to/hooks/auto-recall.js "/path/to/resonance-memory/entry.js"   (running RM from source)
 //   Optional 2nd argument: the store path, ONLY if your MCP config sets MEMORY_FILE_PATH (the hook must read

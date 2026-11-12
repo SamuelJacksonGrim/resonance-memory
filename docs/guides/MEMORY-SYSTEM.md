@@ -28,7 +28,7 @@ The AI files, corrects and recalls its own memories by the rules that come with 
   better supported, and move replaced text to `history/` with the date and the reason. When a memory surfaces, the AI
   checks it: leaves it, corrects it, or fades it.
 - **The filing cabinet tools** (`cabinet`): build the drawer indexes, fix links after a move, and check the folder is
-  sound. They refuse to move, rename or overwrite a surface memory. See [CABINET.md](CABINET.md).
+  sound. They refuse to move, rename or overwrite a surface memory. See [docs/guides/CABINET.md](CABINET.md).
 
 Claude Code's part is small: it loads `MEMORY.md` from the memory folder when a session starts and runs the hooks.
 The structure, the index tiers, the recall, the rules and the cabinet are this system.
@@ -56,7 +56,7 @@ No exe and no settings to edit. It uses each project's own Claude Code memory fo
 projects), lays the system down there without touching existing files, gives Claude the rules at every session start,
 and runs the same recall and rebuild hooks as the installs below. It finds LM Studio or Ollama on its own and uses
 keyword matching when neither is running. The cabinet tools aren't part of it; the rules work without them. See
-[plugin/README.md](plugin/README.md).
+[plugin/README.md](../../plugin/README.md).
 
 ## Install in Claude Code: one click
 
@@ -69,7 +69,7 @@ tells you the one sentence to say to Claude to merge them.
 
 ## Install in Claude Code: by hand (hand this file to Claude)
 
-Open Claude Code and say: *"Read MEMORY-SYSTEM.md from the resonance-memory repo and install the memory system for me."*
+Open Claude Code and say: *"Read docs/guides/MEMORY-SYSTEM.md from the resonance-memory repo and install the memory system for me."*
 These are the steps Claude carries out:
 
 1. **Find the memory folder.** Claude Code's memory folder is `~/.claude/projects/<project-folder>/memory/` for the
@@ -90,7 +90,7 @@ These are the steps Claude carries out:
      tools to `~/.resonance-memory/cabinet/`, and builds the recall index.
 4. **If `MEMORY.md` or `memory-architecture.md` already existed,** merge by hand: bring the template's rules and
    index header into the existing files rather than keeping two versions. If there are existing memories, file them
-   with the cabinet ([CABINET.md](CABINET.md)): when unsure, a memory stays on the surface.
+   with the cabinet ([docs/guides/CABINET.md](CABINET.md)): when unsure, a memory stays on the surface.
 5. **Check it works:** `resonance-memory --recall --query "who is the user"` returns results even with the
    embedder down (keyword match). The next message in a new session shows a `[recall]` block when something
    matches.

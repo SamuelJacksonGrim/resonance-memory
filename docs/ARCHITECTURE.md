@@ -279,7 +279,7 @@ argument is always the smallest possible thing (`content`, `query`, or `id`).
    thresholds are different jobs: 0.70 is a tight gate for what *surfaces*; 0.25 is a
    looser net for what's *worth persisting*. Do not unify them. Exploratory
    `RESONANCE_WARM_RECALL_BIND` (default off) unions an ephemeral seed-kNN into the
-   Phase 1 spread walk without persisting (Lane C, `docs/edge-density.md`).
+   Phase 1 spread walk without persisting (Lane C, `docs/research/lanes/lane-c-edge-density.md`).
 
 ### `recall_memory({ query })`
 
@@ -461,7 +461,7 @@ fails open to empty (bonus 0); recall still returns cosine (I3). The same bounda
 a measured *behavioral* result, not only a ranking identity: S2v2 (stock qwen3.6,
 injected-recall, matched phrasing) found PRIMARY-CHANNEL DOMINANT — a contradicting
 `Related:` does not overturn Primary once salience is matched
-([`phases/s2v2-result.md`](phases/s2v2-result.md)). One driver, one corpus, one format.
+([`phases/s2v2-result.md`](research/s2v2/s2v2-result.md)). One driver, one corpus, one format.
 
 - **Soft prune (Phase 0.4 / I8).** An explicit `pruneSweep()` (MCP startup or on
   demand — never `recall`/`save`) marks an edge `pruned_at` only when it is
@@ -685,7 +685,7 @@ fixed, and no unmeasured signal touches ranking.
 - What's done, in progress, and open → [`BACKLOG.md`](BACKLOG.md) (`RM-00`…`RM-20`).
 - Known defects and the watch list → [`BUGS.md`](BUGS.md).
 - Why the roadmap is ordered the way it is → [`COMPETITIVE-ANALYSIS.md`](COMPETITIVE-ANALYSIS.md).
-- Associative-layer research (activation in rank, H4, H6, S2v2) → [`research/`](research/) + [`phases/s2v2-result.md`](phases/s2v2-result.md).
+- Associative-layer research (activation in rank, H4, H6, S2v2) → [`research/`](research/) + [`phases/s2v2-result.md`](research/s2v2/s2v2-result.md).
 - Deep designs with pseudocode → [`proposed/`](proposed/).
 </content>
 </invoke>

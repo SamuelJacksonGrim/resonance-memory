@@ -67,7 +67,7 @@ every message. For local models, use the proxy above. Claude Desktop has neither
 base URL to point at; there, RM's `recall_memory` tool tells the model to recall at the start of a
 conversation and whenever you refer to earlier context.
 
-> **Easiest setup:** open Claude Code and say *"Read AUTO-RECALL.md from the resonance-memory repo and set up
+> **Easiest setup:** open Claude Code and say *"Read docs/guides/AUTO-RECALL.md from the resonance-memory repo and set up
 > auto-recall for me."* The steps below are written so Claude can follow them.
 
 ---
@@ -85,7 +85,7 @@ conversation and whenever you refer to earlier context.
 1. **Find the RM command** Claude Code already uses: run `claude mcp list` (or read the `resonance-memory`
    entry under `mcpServers` in `~/.claude.json`). Note the program path, and whether that entry sets an
    `env` with `MEMORY_FILE_PATH` (a custom store location).
-2. **Put the hook script somewhere stable.** Copy [`hooks/auto-recall.js`](hooks/auto-recall.js) from this repo
+2. **Put the hook script somewhere stable.** Copy [`hooks/auto-recall.js`](../../hooks/auto-recall.js) from this repo
    to a folder that won't move, e.g. `~/.resonance-memory/hooks/auto-recall.js`
    (raw file: `https://raw.githubusercontent.com/SamuelJacksonGrim/resonance-memory/main/hooks/auto-recall.js`).
 3. **Test it by hand** before wiring it in (use your real paths):

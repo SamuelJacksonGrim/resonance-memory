@@ -378,7 +378,7 @@ Pricing and product pages were re-fetched 2026-09-10.
 - [Hybrid search: BM25, vector & reranking reference 2026](https://www.digitalapplied.com/blog/hybrid-search-bm25-vector-reranking-reference-2026)
 - [Understanding reciprocal rank fusion](https://glaforge.dev/posts/2026/02/10/advanced-rag-understanding-reciprocal-rank-fusion-in-hybrid-search/)
 - [Memory MCP servers directory](https://mcpservers.org/category/memory)
-- RM facts in this repo: [`ARCHITECTURE.md`](ARCHITECTURE.md), [`eval/RESULTS.md`](../eval/RESULTS.md), [`phases/s2v2-result.md`](phases/s2v2-result.md), [`eval/substrate/entity-layer-results.md`](../eval/substrate/entity-layer-results.md)
+- RM facts in this repo: [`ARCHITECTURE.md`](ARCHITECTURE.md), [`eval/RESULTS.md`](../eval/RESULTS.md), [`phases/s2v2-result.md`](research/s2v2/s2v2-result.md), [`eval/substrate/entity-layer-results.md`](../eval/substrate/entity-layer-results.md)
 
 ---
 

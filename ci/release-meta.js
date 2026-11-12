@@ -243,7 +243,7 @@ function releaseNotes(opts) {
   lines.push("");
   lines.push("Your memories live on this machine at `~/.resonance-memory/resonance-memory.db` (Windows: `%USERPROFILE%\\.resonance-memory\\resonance-memory.db`). A leftover `~/.lmstudio/` store is copied here on first start (the original is left in place). Export in the app is the backup. Nothing is uploaded.");
   lines.push("");
-  lines.push("Full notes, including how to build from source: [`docs/BUILDING.md`](" + building + ").");
+  lines.push("Full notes, including how to build from source: [`docs/guides/BUILDING.md`](" + building + ").");
   lines.push("");
   lines.push("## What this is");
   lines.push("");
@@ -263,7 +263,7 @@ function releaseNotes(opts) {
   lines.push("");
   lines.push(
     "**Full setup walkthrough, what it can do, and the design:** " +
-    "[README](" + REPO_HOME + "#readme). Build from source: [`docs/BUILDING.md`](" + building + ")."
+    "[README](" + REPO_HOME + "#readme). Build from source: [`docs/guides/BUILDING.md`](" + building + ")."
   );
   lines.push("");
   return lines.join("\n") + "\n";

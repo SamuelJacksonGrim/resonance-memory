@@ -2,7 +2,7 @@
 
 One command lays the Claude Code memory system down from Resonance Memory.
 Dry-run is the default and writes nothing. `--apply` does it. Not an MCP tool
-(still the four verbs). README, CHANGELOG, CABINET.md, and the guide are
+(still the four verbs). README, CHANGELOG, docs/guides/CABINET.md, and the guide are
 Ember's; this file is the build note.
 
 ## What it does

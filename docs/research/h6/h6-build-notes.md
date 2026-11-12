@@ -6,8 +6,8 @@ Co-authored-by: Ember <emberkindled@gmail.com>
 
 # H6 build notes — what is proven vs what needs GPT
 
-Instrument for the locked prereg (`docs/phases/h6-prereg.md`) and the locked
-Stratum-1 contract (`docs/phases/h6-stratum1-contract.md`). **No live driver
+Instrument for the locked prereg (`docs/research/h6/h6-prereg.md`) and the locked
+Stratum-1 contract (`docs/research/h6/h6-stratum1-contract.md`). **No live driver
 was contacted.** Fixtures are frozen for GPT audit before any qwen token.
 
 ## Corpus

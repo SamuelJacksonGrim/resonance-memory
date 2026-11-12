@@ -4,7 +4,7 @@
 **Golden:** `node eval/run.js` → 27/31, no regressions (flag-off). **Suite:** `node test.js` → 520 passed, 0 failed.
 **Reproduce:** `node eval/combiner-research.js` (offline; `eval/embeddings.cache.json`).
 
-This is the follow-up to the activation-in-rank A/B in [`eval/RESULTS.md`](eval/RESULTS.md). That run locked `final = cosine + 0.3 · surplus-activation` *before* looking at numbers and measured a zero: at the safe weight the +0.06 bump could not reorder; at `w = 1.0` the list moved and promoted Friday/office **hubs**, not the diabetic **apex**. The question here is whether that failure is the *additive combiner*, and whether a different fusion shape can lift the right target without promoting hubs — at a weight that does not nuke cosine.
+This is the follow-up to the activation-in-rank A/B in [`eval/RESULTS.md`](../../../eval/RESULTS.md). That run locked `final = cosine + 0.3 · surplus-activation` *before* looking at numbers and measured a zero: at the safe weight the +0.06 bump could not reorder; at `w = 1.0` the list moved and promoted Friday/office **hubs**, not the diabetic **apex**. The question here is whether that failure is the *additive combiner*, and whether a different fusion shape can lift the right target without promoting hubs — at a weight that does not nuke cosine.
 
 It is exploratory, behind the flag, and **not** the Phase 2.2 promotion. Lane A's multi-turn/weak-recall corpus is the next validation; numbers here are "promising shape + why," not a ship.
 

@@ -83,16 +83,16 @@ measurable**, and Primary wins conflicts (consistent with I3).
 ### Consumption question — the Related: surface
 - [`lanes/h4-related-discovery.md`](lanes/h4-related-discovery.md) — cross-turn leftover activation
   into `Related:` fails: inverted selectivity, recency/hub bleed wearing an association costume.
-- [`phases/h6-prereg.md`](../phases/h6-prereg.md) — the LOCKED H6 pre-registration (ablation
+- [`phases/h6-prereg.md`](h6/h6-prereg.md) — the LOCKED H6 pre-registration (ablation
   A/B/D + N validity gate; paired-transition falsifier; derivation-prohibition).
-- [`phases/h6-stratum1-contract.md`](../phases/h6-stratum1-contract.md) — the fixture-construction
+- [`phases/h6-stratum1-contract.md`](h6/h6-stratum1-contract.md) — the fixture-construction
   contract (whole-set joint derivation audit + machine-checkable audit object).
-- [`phases/h6-result.md`](../phases/h6-result.md) — **the H6 result**: `Related:` is behaviorally
+- [`phases/h6-result.md`](h6/h6-result.md) — **the H6 result**: `Related:` is behaviorally
   load-bearing for stock qwen3.6; authority is ambiguous; the hijack magnitude is confounded.
-- [`phases/s2v2-prereg.md`](../phases/s2v2-prereg.md) — the S2v2 pre-registration: matched-phrasing
+- [`phases/s2v2-prereg.md`](s2v2/s2v2-prereg.md) — the S2v2 pre-registration: matched-phrasing
   + α/β counterbalancing + the pair-class 2×2 + A/A control, to measure channel preference without
   the salience confound.
-- [`phases/s2v2-result.md`](../phases/s2v2-result.md) — **the S2v2 result** (live, 2026-09-10):
+- [`phases/s2v2-result.md`](s2v2/s2v2-result.md) — **the S2v2 result** (live, 2026-09-10):
   PRIMARY-CHANNEL DOMINANT — with phrasing matched the H6 hijack disappears (RR=0); the driver
   weights Primary over a contradicting `Related:`.
 

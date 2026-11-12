@@ -344,7 +344,7 @@ function addCommandHook(settings, event, matcher, hook) {
 
 // The sentence the panel shows when MEMORY.md or memory-architecture.md
 // is left in place. The CLI plan still says "merge by hand".
-const HAND_MERGE_NEXT = "Read MEMORY-SYSTEM.md from the resonance-memory repo and merge the memory system into my memory folder";
+const HAND_MERGE_NEXT = "Read docs/guides/MEMORY-SYSTEM.md from the resonance-memory repo and merge the memory system into my memory folder";
 
 // Claude Code names a project by replacing every character outside
 // [A-Za-z0-9] with "-". Confirmed here: ~/.claude/projects contains

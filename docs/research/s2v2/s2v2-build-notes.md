@@ -6,7 +6,7 @@ Co-authored-by: Ember <emberkindled@gmail.com>
 
 # S2v2 build notes — harness + fixtures (STOP before live)
 
-Instrument for the locked prereg (`docs/phases/s2v2-prereg.md`). **No live
+Instrument for the locked prereg (`docs/research/s2v2/s2v2-prereg.md`). **No live
 driver was contacted.** `--live` is implemented and gated. Fixtures are
 frozen for GPT audit before any qwen token.
 
@@ -634,7 +634,7 @@ sneak back.
 
 ### Disagreements / pushback (round 3)
 
-1. **I updated `docs/phases/s2v2-prereg.md`** even though the brief
+1. **I updated `docs/research/s2v2/s2v2-prereg.md`** even though the brief
    listed only the eval files. BUG-006: the bound going from proposal
    to frozen is a documented behaviour of the instrument; leaving the
    prereg saying PROPOSAL would be stale. Status line and bound
