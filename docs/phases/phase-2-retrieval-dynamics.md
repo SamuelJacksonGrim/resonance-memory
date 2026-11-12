@@ -41,9 +41,16 @@ real gate rather than an argument.
       A/B alone. Scorecard: `eval/ab-warm-rank.js` / `eval/RESULTS.md` /
       `docs/research/lanes/lane-b-combiner-research.md`.
 
+<a id="fusion-promotion"></a>
+
 ### The promotion gate ⛔ — fusion becomes default **only when all four hold**
+
+This section owns the complete promotion contract. ROADMAP and BACKLOG link here rather than
+maintaining parallel copies.
+
 1. [ ] **A/B win on the golden set** — recall@k + MRR up, false-association + staleness not worse.
-       *(Those metrics don't exist yet — 2.5. Building them is a prerequisite of this gate.)*
+       *(Recall@k, MRR, duplicate rate, staleness and false supersession exist as reporting
+       metrics. Phase 2.5 still owes fusion-specific safety metrics and standing A/B evidence.)*
 2. [ ] **2.3 + 2.4 landed** — once learned weight enters rank, rank reinforces what ranked
        (rich-get-richer, hub formation). Competition + normalization are the damping; they exist
        **before** promotion.
@@ -66,6 +73,8 @@ A failed gate keeps the flag off and writes the negative result down. A measured
 - [ ] Bound **total** associative strength per neighborhood. *(Per-edge `maxBonus·tanh(w)` bounding
       is shipped; total is missing — per-edge does not prevent a hub with many edges. `RM-09`.)*
 - [ ] Ensure normalization does not erase genuinely strong learned relationships.
+
+<a id="retrieval-evaluation"></a>
 
 ### 2.5 Retrieval evaluation ✅ 🔀 — **this is `RM-00`; extend, don't rebuild**
 Already live: JSONL corpora, contains/excludes scorecard, superseded-surfacing, field ROC/TBR,
