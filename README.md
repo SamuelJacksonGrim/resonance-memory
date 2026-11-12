@@ -48,10 +48,11 @@ Real things, not buzzwords:
 ## Does it actually work? Measured
 
 Two separate test rigs, built independently on purpose so neither could be tuned to make Resonance win. A small local
-model chats across many sessions; the facts it will be asked about are planted early, then buried under ~120 turns of
-filler; the questions never repeat the planted wording; grading is blind, with pass/fail lines set before any run.
-The comparison isn't "no memory", it's what most apps do: stuff the most recent chat into the prompt, given *more* room
-than Resonance gets. Mean of 5 runs:
+model chats across many sessions. Most facts it's asked about are planted early and then buried under long stretches
+of filler; a few are planted late on purpose, as controls the recent-chat approach should get right. The questions
+never repeat the planted wording, and grading is blind, with pass/fail lines set before any run. The comparison isn't
+just "no memory": it's also what most apps do, stuff the most recent chat into the prompt, under the **same token
+budget** Resonance gets. Mean of 5 runs (token figures are the average actually injected, estimated):
 
 | Rig · model | No memory | Recent chat stuffed in (~690 tokens) | **Resonance (~330 tokens)** |
 |---|---|---|---|
@@ -60,14 +61,15 @@ than Resonance gets. Mean of 5 runs:
 | B · gpt-oss-20b | 6.7% | 25% | **91.7%** |
 | B · Qwythos-9B | 6.7% | 21.7% | **81.7%** |
 
-Roughly **three times** better than either alternative, on half the context. Rig B split the questions: recent-chat
-stuffing scored 100% on recent facts and **0%** on old, updated or same-name ones; Resonance scored high on both.
-Full write-up, raw answers and how to rerun it: [`eval/ab/RESULTS.md`](eval/ab/RESULTS.md) and
-[`eval/ab-grok/`](eval/ab-grok/README.md).
+About **three times** the accuracy of recent-chat stuffing (2.8–3.8× across the four rows) while injecting roughly
+half as much, and far above no memory at all. Rig B split the questions: recent-chat stuffing scored 100% on recent
+facts and **0%** on old, updated or same-name ones; Resonance scored high on both. The write-up and how to rerun it
+(a rerun saves every raw answer; it needs a local chat model and the embedder):
+[`eval/ab/RESULTS.md`](eval/ab/RESULTS.md) and [`eval/ab-grok/`](eval/ab-grok/README.md).
 
-Other measured numbers: out-of-date answers ("keeps hitting the old fact") dropped **82%** when updates retire the
-facts they replace (staleness 0.49 → 0.09); every change to recall must still pass the offline golden eval
-([`eval/RESULTS.md`](eval/RESULTS.md)).
+Also measured: on the contradiction test set, recalls that surfaced an outdated value ("keeps hitting the old fact")
+dropped **82%** once updates retire the facts they replace (0.49 → 0.09). Every change to recall must still pass the
+offline golden eval ([`eval/RESULTS.md`](eval/RESULTS.md)).
 
 ## What makes it different — the associative field
 
@@ -158,7 +160,7 @@ and ships only once it's measured to genuinely help.
 
 ## For the curious (and developers)
 
-Nothing here is a black box. **[The docs index](docs/README.md)** lists every doc by what it's for: the memory model, the association rules and the invariants are in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), the honest measured findings in [`eval/RESULTS.md`](eval/RESULTS.md) and [`docs/research/`](docs/research/README.md), and where to start contributing in [`DEVELOPERS.md`](DEVELOPERS.md). The evaluation harness (`eval/`) is offline, deterministic, and gates every change, and every number above can be rerun from it: Resonance competes on **reproducibility**, not leaderboard claims. Build from source with `node build-exe.js`.
+Nothing here is a black box. **[The docs index](docs/README.md)** lists every doc by what it's for: the memory model, the association rules and the invariants are in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), the honest measured findings in [`eval/RESULTS.md`](eval/RESULTS.md) and [`docs/research/`](docs/research/README.md), and where to start contributing in [`DEVELOPERS.md`](DEVELOPERS.md). The golden evaluation harness (`eval/`) is offline and deterministic and gates every change; the A/B above reruns from the same folder with a live local model: Resonance competes on **reproducibility**, not leaderboard claims. Build from source with `node build-exe.js`.
 
 ## Credits
 

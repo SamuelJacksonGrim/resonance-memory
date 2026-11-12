@@ -671,7 +671,7 @@ That two-turn corpus now exists: `eval/corpora/cross-turn.jsonl` plus
 `weak-recall.jsonl` / `hub-vs-apex.jsonl`, with `carryover_lift` and
 `rank_hub_contamination` as reporting metrics. It is not a re-run of
 this A/B; it is the pool a later attempt has to win on. Decision
-criterion (two-sided, including "cut it"): `eval/testpool-design.md`.
+criterion (two-sided, including "cut it"): `docs/research/lanes/lane-a-testpool-design.md`.
 `node eval/ab-warm-rank.js` includes the new files.
 
 Sanity that the pool is not vacuous (`node eval/measure.js --corpus

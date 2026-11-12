@@ -1681,7 +1681,7 @@ function carryoverLiftStats(results, corpus, opts) {
   // This is a diagnostic of RANK ORDER, not of windowed recall@k. A
   // mean lift of +3 that still misses top-5 is not "activation earns
   // rank"; recall_at_k on the same probes is the product number. See
-  // eval/testpool-design.md.
+  // docs/research/lanes/lane-a-testpool-design.md.
   const queries = asQueryList(results).filter((q) => {
     if (!isProbeQuery(q)) return false;
     if (!asIds(q.relevant_ids || q.relevant).length) return false;

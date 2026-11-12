@@ -4423,7 +4423,7 @@ test("release notes: unsigned + Gatekeeper/SmartScreen; rc banner on prerelease"
   assert.ok(/SmartScreen/i.test(stable));
   assert.ok(/Gatekeeper/i.test(stable));
   assert.ok(/unsigned/i.test(stable));
-  assert.ok(stable.includes("docs/guides/BUILDING.md"));
+  assert.ok(stable.includes("/blob/v0.2.0/docs/guides/BUILDING.md)"), "the BUILDING link targets the guide's real path, not just its label");
   assert.ok(!/notariz/i.test(stable) || /future/i.test(stable));
   // The release page is the storefront: it must explain what RM is and route to the
   // README, not just dump a download table (product call 2026-09-07).

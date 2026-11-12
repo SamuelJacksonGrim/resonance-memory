@@ -184,7 +184,7 @@ function releaseNotes(opts) {
   const tag = opts.tag;
   const meta = opts.meta || assertTagMatchesPackage(tag, opts.pkgVersion);
   const blob = REPO_BLOB + "/" + encodeURIComponent(tag);
-  const building = blob + "/docs/BUILDING.md";
+  const building = blob + "/docs/guides/BUILDING.md";
   const lines = [];
   lines.push("# Resonance Memory " + meta.version);
   lines.push("");

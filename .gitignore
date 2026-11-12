@@ -48,3 +48,7 @@ eval/soak/last-run.json
 AGENTS.md
 grok-*.txt
 *.task-output
+
+# Python caches (the cabinet)
+__pycache__/
+*.pyc
