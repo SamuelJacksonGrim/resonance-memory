@@ -189,4 +189,4 @@ the paired-transition falsifier and the Stratum-1 derivation-prohibition are the
 make a small-corpus result and a possible false-null auditable.*
 
 ---
-**Related:** part of the [activation & consumption campaign](../research/README.md) — the [research index](../research/README.md) holds the full tree (Lane A/B/C · [[H4]] · [[H6]] · [[S2v2]]).
+**Related:** part of the [activation & consumption campaign](../README.md) — the [research index](../README.md) holds the full tree (Lane A/B/C · [[H4]] · [[H6]] · [[S2v2]]).

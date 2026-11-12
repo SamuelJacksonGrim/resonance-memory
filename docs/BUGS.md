@@ -5,8 +5,9 @@ so related ones read together — check the status line on each rather than the 
 leaves this list only when it is *fixed*, not when it is understood; if it's understood but
 unfixed, it stays here with an owner in the backlog.
 
-**Current:** 7 fixed (`BUG-001`, `002`, `003`, `004`, `006`, `007`, `008`) · 1 open (`BUG-005`) ·
-2 on the watch list (`W-03`, `W-04`; `W-01` was dismissed, `W-02` was fixed).
+BUG-005 signing remains open; W-03/W-04 record unresolved scaling/concurrency exposure.
+Use the individual status lines rather than a copied count. The fixed-defect narratives below
+are history from the work included in 0.2.0 (2026-09-10), not new defects on the docs branch.
 
 **Severity:** `critical` data loss / corruption · `high` user-visible breakage ·
 `medium` degradation at scale · `low` cosmetic
@@ -14,7 +15,7 @@ unfixed, it stays here with an owner in the backlog.
 ---
 
 ## `BUG-001` — Non-atomic store writes could truncate the entire memory file
-**Severity:** critical · **Status:** ✅ **fixed** (this branch) · **Found:** July 2026
+**Severity:** critical · **Status:** ✅ **fixed** · **Found:** July 2026
 
 ### What
 `JsonlStore._writeAll()` replaced the live store with `fs.writeFileSync(this.file, data)`.
@@ -41,13 +42,13 @@ Same-directory placement is deliberate: `os.tmpdir()` is frequently a different 
 rename is still atomic without it. Failing the whole write because `fsync` is unsupported
 would be worse than the durability gap it closes.
 
-**Tests:** `test.js` → "durable writes" (9 tests), incl. a 5,000-record write verified
-complete and parseable line-by-line.
+**Regression evidence:** `test.js` → "durable writes", including complete/parseable large writes.
+Run `npm test` for current results. Release provenance: [0.2.0](../CHANGELOG.md#020---2026-09-10).
 
 ---
 
 ## `BUG-002` — Every recall rewrote the entire store file
-**Severity:** critical (with `BUG-001`) / high alone · **Status:** ✅ **fixed** (this branch)
+**Severity:** critical (with `BUG-001`) / high alone · **Status:** ✅ **fixed**
 
 ### What
 `applyRecall()` was called on **every** `recall_memory`, and it:
@@ -69,9 +70,11 @@ placed on the critical path of producing the answer.
 Moved to a sidecar: `record.js: AccessLog`, persisted at `<store>.access.json`, folded onto
 records at read time. Same pattern `ledger.js` already used for Hebbian weights.
 
-**Recall now performs zero writes to the memory store in steady state.** The only remaining
-store write on a read path is embedding backfill, which fires only for legacy rows or after an
-embedder outage, and is now durable.
+**JSONL steady-state recall does not rewrite the memory file**; retention updates use its
+AccessLog sidecar. **SQLite recall updates retention columns in a bounded transaction.**
+Legacy/outage vector backfill is the separate named I4/I5 exception, including a full JSONL
+rewrite when needed; [ARCHITECTURE §2](ARCHITECTURE.md#2-design-invariants-the-shape-is-load-bearing)
+owns that limitation. Release provenance: [0.2.0](../CHANGELOG.md#020---2026-09-10).
 
 Losing the tail of the sidecar to a crash costs a few access counts — which govern nothing
 that affects an answer. That is the correct thing to make cheap.
@@ -83,19 +86,16 @@ mtime are unchanged across `applyRecall`, while the access bump still lands.
 after recall, only retention columns changed on those rows, row count unchanged,
 no other column touched.
 
-### Still open (tracked, not a bandaid)
-`all()` still parses the full store on every call, and mutations (`save`/`edit`/`delete`)
-still rewrite the whole file. That is inherent to a flat JSONL backend. **`RM-07` slice 1**
-ships `SqliteStore` (`store-sqlite.js`, `node:sqlite`, BLOB + JS cosine, no sqlite-vec —
-see [`proposed/0010`](proposed/0010-sqlite-backend.md)) as the default backend (slice 4);
-`RESONANCE_STORE=jsonl` pins JSONL. Conformance + golden parity are green
-(`eval/run.js` sqlite default and `--store jsonl` both 27/31 case-for-case). JSONL's load wall
-(50k cannot `readFileSync`) is the reason it exists.
+### Backend scope
+
+The full-file parsing/rewrite limitation remains specific to JsonlStore. RM-07 storage work
+is complete; SQLite is the default. Current backend selection and migration behavior live in
+[ARCHITECTURE §6](ARCHITECTURE.md#6-storage-and-the-sidecars). Remaining field graph scaling is W-03.
 
 ---
 
 ## `BUG-003` — `HISTORICAL_RE` missed "previous"
-**Severity:** low · **Status:** ✅ **fixed** (this branch) · **Found:** by its own test
+**Severity:** low · **Status:** ✅ **fixed** · **Found:** by its own test
 
 The historical-query regex matched `previously` but not `previous`, so "what was my previous
 address" was treated as a present-tense question and superseded memories were filtered out of
@@ -112,14 +112,9 @@ they don't have installed. Cosmetic, but the fix touches user data, so the mover
 load-bearing part.
 
 ### Fix
-Default store is `~/.resonance-memory/resonance-memory.jsonl` (SQLite sibling `.db`), same
-home-dotdir convention the rest of the codebase already used on every OS. On startup, if
-`MEMORY_FILE_PATH` is unset, the old `~/.lmstudio/` store exists, and the new location
-does not, `resolveStorePath()` copies the store files (jsonl / sqlite + wal + sidecars +
-config) with a staging dir + in-flight marker, verifies, and leaves the original in place
-as a backup. Both-exist: new wins, old untouched. A failed copy wipes dest artifacts and
-fail-opens to the legacy path (retry next start). Env `MEMORY_FILE_PATH` still wins
-outright — no relocate.
+The default location is RM-owned and legacy-location migration preserves user data.
+`store.js` owns the resolver/mover; [ARCHITECTURE storage](ARCHITECTURE.md#6-storage-and-the-sidecars)
+owns the current path, copy/verify/fail-open behavior and overrides.
 
 **Tests:** `test.js` → "BUG-004 default store location + legacy ~/.lmstudio/ relocate".
 
@@ -130,16 +125,15 @@ outright — no relocate.
 
 First launch shows a scary OS warning. For a product whose core pitch is "trust this with your
 private memories," an "unknown publisher" dialog is a real adoption tax. The RM-11 release
-matrix now *ships* the unsigned binaries. RM-20 put the click-path in the 60-second
-docs (README / `READ ME FIRST.txt` / Release notes: Windows **More info → Run anyway**,
-macOS right-click **Open** / `xattr`) so a stranger is not surprised; it still cannot
-silence the OS. Signing / notarization is the remainder of `RM-11`.
+matrix ships unsigned binaries. RM-20 first-run guidance is complete as scoped; it cannot
+silence the OS warning. [BUILDING](guides/BUILDING.md) and the user entry guides own the
+platform click-path. Signing/notarization is the open remainder of RM-11.
 
 ---
 
 ## `BUG-007` — Access counts doubled on every store mutation
 **Severity:** high (silent data corruption) · **Status:** ✅ **fixed** · **Introduced by:** the
-`BUG-002` fix in this same branch
+`BUG-002` fix before the 0.2.0 release
 
 ### What
 `all()` folds sidecar counts onto records. `_writeAll()` then persisted those *folded* values
@@ -154,15 +148,16 @@ into the store — while the sidecar kept its own copy. The next read added them
 It compounds without bound, and every `update()` / `delete()` / `vacuum()` triggers it.
 
 ### Why it mattered
-`importance = access_count` is the retention signal. Nothing consumes it *yet*, so the damage
-was latent — but `RM-08` pruning decides what to **delete** based on it. A frequently-edited
-memory would have looked far more important than it was, and the corruption is invisible
-until something acts on it.
+History: the access-derived importance proposal made this latent corruption look like a future
+retention hazard. A frequently edited memory appeared more important without any user intent.
+Current I2b forbids access-frequency input to decay/pruning; RM-08 must resolve its older
+access-refreshed retention proposal before implementation. Corrupt telemetry is still wrong,
+but no shipped record-pruning consumer is claimed here.
 
 ### Fix
 `AccessLog.consolidate()` — after a full rewrite persists the folded totals, clear the
 sidecar. A rewrite is the natural checkpoint: the store file becomes the authority, the
-sidecar restarts from zero. Four regression tests, each failing without the fix.
+sidecar restarts from zero. Regression evidence is in `test.js` under access-count consolidation.
 
 ### How it was found
 **Adversarial audit prompted by the reviewer**, not by the tests. The original test suite
@@ -207,7 +202,7 @@ Omit `embedding` from the patch entirely when embedding fails, so the null can n
 only the vector is left behind. A stale vector beats no vector: the record still ranks
 semantically, and the next successful edit repairs it.
 
-Guarded by four tests in `test.js` (`edit() embedding safety`), including one asserting a
+Guarded by `test.js` (`edit() embedding safety`), including a case asserting a
 *successful* re-embed still replaces the vector — so the fix can't regress into never updating
 embeddings at all. Verified failing before the fix, passing after.
 
@@ -215,17 +210,18 @@ embeddings at all. Verified failing before the fix, passing after.
 
 ## `BUG-001` addendum — the durability fix has a measured cost
 
-Not a defect, but it was claimed as a strict improvement without measurement, so:
+**Historical measurement — before the 0.2.0 release (2026-09-10):** a JSONL rewrite benchmark,
+not a current SQLite mutation or general recall-latency measurement.
 
 ```
 20 × rewrite of a 5.9 MB store:  plain 138ms | durable 494ms  (3.58×)
 ```
 
 `fsync` is the expensive part, and that is the point of it — the guarantee is that the bytes
-are on disk before anything references them. The cost lands only on **mutations** (save / edit
-/ delete / vacuum), never on recall, and ~25ms for a save that cannot corrupt the user's entire
-memory is the right trade. But it is a real cost and it was previously unstated. If it ever
-matters, the answer is `RM-07` (incremental writes), not dropping the fsync.
+are on disk before anything references them, subject to the unsupported-fsync caveat above.
+The measured full-file cost applies to JSONL mutations and the legacy/outage recall-backfill
+exception, not ordinary steady-state recall. RM-07 incremental SQLite writes are shipped;
+[ARCHITECTURE storage](ARCHITECTURE.md#6-storage-and-the-sidecars) owns current durability.
 
 ---
 
@@ -249,7 +245,7 @@ The mechanism the document proposed building was already built, and the built ve
 The files had been read earlier in the same session; reading is not checking.
 
 **(b) Shipped a change, left the docs describing the old state.** Six claims went stale this
-way, every one of them from work in this same branch:
+way, every one of them from work on that implementation branch before 0.2.0:
 
 | Doc | Claim | Reality |
 |---|---|---|
@@ -265,37 +261,31 @@ Every one of these feeds a build decision. `0006` alone would have had someone i
 static domain model to replace a dynamic one that already exists and is better. A stale
 capability matrix distorts the roadmap it was written to justify.
 
-### Rules going forward
-1. **Any sentence describing current behaviour must cite the file and be re-read at the time
-   of writing.** Not "I read this earlier" — open it.
-2. **A behaviour change is not done until the docs describing that behaviour are updated in
-   the same commit.** Grep for the thing you changed before pushing.
-3. **Where a doc describes a pre-change state deliberately, say so in a status banner** (see
-   the ones now at the top of `0002` and in `0005`'s "urgent part") rather than leaving the
-   reader to guess.
-4. **Prefer "unverified" to a confident guess.** Every claim in this repo that turned out
-   wrong was stated confidently; none was hedged.
+### Ongoing workflow
+
+The current [development/documentation rules](../CONTRIBUTING.md#development-and-documentation)
+own this lesson. Preserve the past-tense incident and old function names above as historical
+evidence; they are not a second description of the live call graph.
 
 ---
 
-## Watch list — suspected, not yet confirmed
+## Watch list — unresolved defects and risks
 
-| | Concern | Next step |
+| ID | Status / exposure | Owner and evidence |
 |---|---|---|
-| ~~`W-01`~~ | ~~`nextId()` collisions within a millisecond~~ | ✅ **dismissed** — `nextId()` returns `max + 1` when the clock hasn't advanced, so it is correct by construction and monotonic even if the clock jumps backwards. Verified by two tests (200 rapid saves, all distinct) |
-| ~~`W-02`~~ | ~~Panel binds `127.0.0.1` with no CSRF token — any local process, or a malicious web page via DNS rebinding, could drive the API~~ | ✅ **fixed** — Host must be loopback (DNS rebinding arrives as `Host: evil.example`); Origin, when present, must be this panel; mutating POSTs require a per-process `X-Resonance-Token` baked into the page (a form from another origin cannot set a custom header). Residual: a local process that GETs the page can steal the token — same class as binding `127.0.0.1` at all. No `Access-Control-Allow-Origin`. Tests in `test.js` "W-02". `RM-12` SDKs still wait on documenting the surface. |
-| `W-03` | `field.buildEdges()` is O(n²) per recall when the field is on | ✅ **confirmed (S1)** — field-on `recall()` p95 **90.8 s at N=10k**, 724 ms at N=1k. ANN rides with `RM-07`. Curve in [`eval/RESULTS.md`](../eval/RESULTS.md) "S1". |
-| `W-04` | A concurrent panel + MCP server write could interleave (last-writer-wins) | Real risk once the panel gains write features; needs a lock or single-writer discipline. Phase 0.3's MCP request-ID dedup is **orthogonal**: it makes one JSON-RPC retry one mutation *inside a single process*, it does not serialize two writers. Last-writer-wins on the sidecar remains. |
+| W-01 | Dismissed: same-millisecond id allocation is monotonic. | `test.js` rapid-save/id tests. |
+| W-02 | Fixed: panel Host/Origin and mutating-request token protection. A local process that reads the page can obtain its token. | Current contract: [ARCHITECTURE §11](ARCHITECTURE.md#11-configuration-surface); regression tests: `test.js`, W-02. RM-12 stable API remains open. |
+| W-03 | Confirmed scaling defect: field-on recall still constructs all-pairs kNN. | RM-05 owns graph-scaling follow-up. The **2026-09-05 S1** field-on measurements are p95 90.8 s at N=10k and 724 ms at N=1k; [results](../eval/RESULTS.md) own the dated curve. SQLite storage does not remove graph construction cost. |
+| W-04 | Current concurrency risk: the panel already imports/merges into the live store while an MCP process can be running. No concurrent-writer stress result establishes safety. | JSONL has competing whole-file/sidecar writers. SQLite has transactional writes but independent in-process memory/edge snapshots; transaction atomicity does not establish cache coherence. `panel.js` POST `/api/import`, `store-sqlite.js` cache, `edges.js` persistence. Needs a backend-specific concurrent-writer test and a lock/coherence/single-writer decision. MCP request-ID retry dedup is orthogonal and does not serialize processes. |
 
 ---
 
 ## Conventions
 
-- **Encode the bug as a test.** Every fix above ships with a test that fails without it, so no
-  future backend reintroduces it (see the conformance suite planned in `proposed/0005`).
-- **No bandaids.** If the correct fix is a rewrite, do the rewrite or write the bug down
-  honestly with its real owner — don't wrap it in a mitigation that adds a layer without
-  removing the failure.
+[CONTRIBUTING](../CONTRIBUTING.md#development-and-documentation) owns the ongoing fix/test workflow.
+Both-backend conformance tests are implemented (`test.js` Store conformance and shared-core
+sections); they are not merely planned in proposed/0005. Run the [developer checks](../DEVELOPERS.md#checks).
+An unresolved defect stays here with an owner, even when its mechanism is understood.
 
 ---
 

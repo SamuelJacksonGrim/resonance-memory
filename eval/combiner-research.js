@@ -179,7 +179,7 @@ function rankedTexts(fused, k) {
 /*
  * Build the constructed store, inject the apex-vs-hub graph, snapshot
  * cosine + activation. Tests and the CLI share this so the numbers in
- * combiner-research.md cannot drift from the gate.
+ * docs/research/lanes/lane-b-combiner-research.md cannot drift from the gate.
  *
  * Graph (why these edges): a cosine seed (lemon bars) 1-hops to the
  * isolated apex; a different cosine seed 1-hops into a 8-node Friday

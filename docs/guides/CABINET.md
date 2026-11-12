@@ -24,7 +24,7 @@ It works on any memory folder of markdown files. It's independent of Resonance M
 with the memory system's auto-recall, which shows the drawer each surfaced memory lives in.
 
 > **Easiest setup:** run the [memory system installer](MEMORY-SYSTEM.md). If the folder already has memories, then
-> say to Claude *"Read CABINET.md from the resonance-memory repo and file my memory folder."* The steps below are
+> say to Claude *"Read docs/guides/CABINET.md from the resonance-memory repo and file my memory folder."* The steps below are
 > written so Claude can follow them.
 
 ---
@@ -33,7 +33,7 @@ with the memory system's auto-recall, which shows the drawer each surfaced memor
 
 - **Python 3.9 or newer** (`python --version`). The scripts use only the standard library.
 - The cabinet scripts. The installer copies them to `~/.resonance-memory/cabinet/`; from the repo they're
-  [`hooks/cabinet/`](hooks/cabinet/).
+  [`hooks/cabinet/`](../../hooks/cabinet/).
 
 ## Setup (steps for Claude to carry out)
 

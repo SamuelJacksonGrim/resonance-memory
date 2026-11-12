@@ -3,7 +3,7 @@
 A double-clicked exe walked through Connect and the meaning engine and never
 mentioned the memory system. The panel now sets that up the same way, when
 Claude Code is present. Still not an MCP tool. README, CHANGELOG,
-MEMORY-SYSTEM.md, and the version were left alone (still 0.3.0).
+docs/guides/MEMORY-SYSTEM.md, and the version were left alone (still 0.3.0).
 `NOTES-install.md` was left alone too; the two places it is now stale are
 called out below.
 
@@ -128,7 +128,7 @@ An existing `MEMORY.md` or `memory-architecture.md` is still left in place.
 The CLI plan still says "; merge by hand", so the old tests keep passing.
 The panel strips that substring and shows this, as text, not as HTML:
 
-> Read MEMORY-SYSTEM.md from the resonance-memory repo and merge the memory system into my memory folder
+> Read docs/guides/MEMORY-SYSTEM.md from the resonance-memory repo and merge the memory system into my memory folder
 
 It shows in the confirm modal and, after install, on the card. Only when
 the file exists and differs from the template (`state === "keep"`). A file

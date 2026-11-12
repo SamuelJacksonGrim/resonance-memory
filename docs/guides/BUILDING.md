@@ -102,7 +102,7 @@ and `chmod +x`. Node is only needed to *build*.
 ## GitHub Actions release matrix (how a stranger gets a binary)
 
 Pushing a `v*` tag (for example `v0.2.0`, or `v0.2.0-rc1` to prove the
-pipeline) runs [`.github/workflows/release.yml`](../.github/workflows/release.yml):
+pipeline) runs [`.github/workflows/release.yml`](../../.github/workflows/release.yml):
 
 1. **Gate** on `ubuntu-latest` (Node 24): `node test.js` and
    `node eval/run.js`. A red tree cannot cut a Release. The tag's core
@@ -145,7 +145,7 @@ escape hatch — artifacts sit on the Actions run, no Release is created.
 
 The release matrix above only runs on a tag. Between releases, a
 regression on `main` would sit unnoticed until someone cut the next
-`v*`. [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) closes
+`v*`. [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) closes
 that: every push to `main` and every pull request runs the same
 `node test.js` + `node eval/run.js` gate on `ubuntu-latest` (Node 24).
 The checks UI shows **`CI / gate`**. A red check is a stop.
@@ -299,4 +299,4 @@ the store between machines.
 
 ## Related
 
-[`DEVELOPERS.md`](../DEVELOPERS.md) · [`README.md`](../README.md) · [`BACKLOG.md`](BACKLOG.md) (`RM-11`)
+[`DEVELOPERS.md`](../../DEVELOPERS.md) · [`README.md`](../../README.md) · [`BACKLOG.md`](../BACKLOG.md) (`RM-11`)

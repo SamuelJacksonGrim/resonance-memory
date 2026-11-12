@@ -1,22 +1,13 @@
 # Competitive analysis — the AI memory layer market
 
-*Compiled July 2026; **market + repo-state refreshed September 2026** (`v0.2.0`).
-Every claim here is sourced; re-verify before quoting numbers publicly, because this
-market's published benchmarks are actively disputed (see §4). Pricing was checked
-against vendor pages on 2026-09-10.*
+**Market verification note — 2026-11-12:** vendor prices, features, licenses, benchmarks and
+competitive absence/uniqueness claims below were last checked **2026-09-10** and **need a fresh
+check before quoting**. They remain the dated September market snapshot; this documentation
+pass does not verify or revise them.
 
-> **What moved since the August refresh** (details in the matrix and §6): Resonance's
-> column caught up to what has actually shipped. **624 unit tests** + a **27/31**
-> golden eval gate. **RM-03 v2** silent exclusive-slot / polarity / numeric
-> supersession (`staleness_rate` 0.4889 → 0.0889). **Entity-id + polarity
-> disambiguation** (`entity.js`) — sister-Naima vs coworker-Naima, incompatible vs
-> synergistic — feeds Related: and Hebbian `pairScale` only, never primary cosine.
-> **S2v2** pre-registered a behavioral test of the discovery-not-ordering boundary
-> and got PRIMARY-CHANNEL DOMINANT (stock qwen3.6; `RR = 0`). **SQLite is the
-> default**; JSONL auto-migrates on first open. **Lossless `--export` and `--import`**
-> (CLI + panel). Cross-platform SEA + CI. The write path (Tier 0/1 always-on, Tier 2
-> opt-in) and cosine-banded dedup were already in.
->
+RM capability status is maintained against the local architecture/backlog. Run the
+[developer checks](../DEVELOPERS.md#checks) for current tests and golden results.
+
 > **What moved in the market:** Mem0 retired the $79 Growth tier, restoring the
 > $19 → $249 cliff, and **removed graph memory from the OSS SDK** (v3). Zep's $25
 > Flex is gone; self-serve Flex is **$125/month** billed monthly (annual ~$104).
@@ -207,29 +198,29 @@ Two takeaways:
 - **Do compete on reproducibility.** Ship the harness, the corpus, the seeds, and a one-command
   reproduce script. "Run it yourself in 30 seconds on your own machine" is a *better* claim
   than a number, and it's one the hosted vendors structurally cannot match — their eval needs
-  their cloud. **This is now real, not aspirational:** `npm test` is 624 tests, 0 failed;
-  `npm run eval` runs offline and deterministic (cached embeddings committed, no network, no
-  API key), gates against a golden scorecard (**27/31**), and finishes in well under a
-  minute. The reproduce-it-yourself claim is earned.
+  their cloud. RM supplies offline main tests and a cached-embedding golden gate. The
+  [developer checks](../DEVELOPERS.md#checks) print current results; [eval](../eval/README.md)
+  owns the instrument and reproduction conditions.
 
 Also note: **neither LOCOMO nor LongMemEval systematically tests contradictory memories**,
 even though conflict resolution is where production systems rot ("memory poisoning"). The
 `Supersede` paper (arXiv 2606.27472) exists specifically to diagnose this *memory-update gap*.
 That's an under-served evaluation axis where we can lead rather than follow — and where
-`eval/corpora/contradictions.jsonl` (69 cases, `staleness_rate` / `false_supersession`)
-already lives.
+the [contradiction instrument and results](../eval/RESULTS.md#rm-03-measurement-seed--staleness_rate-false_supersession-50-contradiction-cases)
+already live.
 
 The associative field itself is not a leaderboard claim. RM-00's honest verdict: the
 field **does not beat cosine in general**; it earns its keep on **typed-constraint
-rescue** (ROC 4/4 after the field experiments; one locked polysemy fail,
-`adv-height-homonym`). That is in `eval/RESULTS.md`. We do not market "learns which
+rescue**, with a retained polysemy failure. [Eval results](../eval/RESULTS.md) own that
+measurement and the scorecard. We do not market "learns which
 memories belong together" past what that scorecard shows.
 
 ---
 
 ## 5. Capability gap matrix
 
-Honest scoring of Resonance Memory **today** (`v0.2.0`, September 2026) against the field.
+Competitor columns preserve the **September 2026 market snapshot** above. The RM column
+summarizes scoped shipped work; [BACKLOG](BACKLOG.md) owns acceptance and residual work.
 ✅ have it · 🟡 partial · ❌ absent.
 
 | Capability | Mem0 | Zep | Letta | **Resonance (today)** | Backlog item |
@@ -238,20 +229,20 @@ Honest scoring of Resonance Memory **today** (`v0.2.0`, September 2026) against 
 | Embed-once-on-save | ✅ | ✅ | ✅ | ✅ | — |
 | Automatic fact extraction on write | ✅ | ✅ | ✅ | ✅ *(Tier 0/1 always-on; Tier 2 LLM opt-in, off by default)* | `RM-01` ✅ |
 | Deduplication | ✅ | ✅ | 🟡 | ✅ *(cosine-banded at save + `--dedup-existing` backfill)* | `RM-02` ✅ |
-| Contradiction / supersession | 🟡 | ✅ | 🟡 | ✅ *(v2: cue-gated + silent exclusive-slot / polarity / numeric; residual named below)* | `RM-03` v2 ✅ |
+| Contradiction / supersession | 🟡 | ✅ | 🟡 | ✅ *(scoped v2 detection; residuals in BACKLOG RM-03)* | `RM-03` v2 ✅ |
 | Temporal metadata (valid-from/to) | 🟡 | ✅ | ❌ | ✅ | `RM-04` ✅ |
 | **Entity-id + polarity disambiguation** | 🟡 *(Platform entity linking; OSS graph gone)* | ✅ | ❌ | ✅ *(server-assigned; Related: + Hebbian only — never primary cosine)* | — |
 | Hybrid retrieval (semantic+keyword) | ✅ | ✅ | 🟡 | 🟡 *(keyword only as fallback)* | `RM-05` |
 | Graph retrieval | 💰 Pro *view*; retrieval-boost docs say all-plans; **OSS ❌** | ✅ | ❌ | ✅ **free** | — |
 | **Hebbian / co-activation reshaping** | ❌ | ❌ | ❌ | ✅ **unique** | `RM-09` |
-| **Discovery-not-ordering, behaviorally validated** | ❌ | ❌ | ❌ | ✅ **unique** *(S2v2: Primary wins conflicts, `RR = 0`)* | — |
+| **Discovery-not-ordering, behaviorally validated** | ❌ | ❌ | ❌ | ✅ **unique** *([scoped S2v2 evidence](research/s2v2/s2v2-result.md))* | — |
 | Importance decay / pruning | 🟡 | ✅ | 🟡 | 🟡 *(retention signal only; edges have wall-clock half-life + soft prune)* | `RM-08` |
 | Multi-user / agent scoping | ✅ | ✅ | ✅ | ❌ | `RM-06` |
 | Session vs long-term separation | ✅ | ✅ | ✅ | ❌ | `RM-06` |
 | Idle/sleep-time consolidation | 🟡 *(Dream @ Pro)* | ✅ | ✅ | ❌ | `RM-10` |
 | Pluggable store backend | ✅ | ✅ | ✅ | ✅ *(SQLite default, JSONL pin / fail-open / export)* | `RM-07` ✅ |
 | Lossless export / anti-lock-in | 🟡 | 🟡 | 🟡 | ✅ *(`--export` zip + `--export-jsonl` + `--import`; a competitor reads `memories.jsonl` without our exe)* | `RM-07` 2b + `RM-17` ✅ |
-| Eval harness / regression suite | ✅ | ✅ | ✅ | ✅ *(624 unit tests; offline golden 27/31)* | `RM-00` ✅ |
+| Eval harness / regression suite | ✅ | ✅ | ✅ | ✅ *([run the checks](../DEVELOPERS.md#checks))* | `RM-00` ✅ |
 | Provenance on records (poisoning defense) | 🟡 | 🟡 | 🟡 | 🟡 *(`source` field seeded; recall-weighting + filter open)* | `RM-16` |
 | SDKs | ✅ | ✅ | ✅ | ❌ | `RM-12` |
 | Hosted option | ✅ | ✅ | ✅ | ❌ *(deliberate)* | — |
@@ -259,33 +250,13 @@ Honest scoring of Resonance Memory **today** (`v0.2.0`, September 2026) against 
 | Runs with no API key / no cloud | 🟡 | ❌ | 🟡 | ✅ | — |
 | Copyleft (forks stay open) | ❌ | ❌ | ❌ | ✅ *(AGPL; commercial license available)* | — |
 
-**Reading the matrix (September 2026):** we are competitive on *substrate* and
-*distribution UX*, and the **evaluation** gap has closed — `RM-00` shipped, so every
-claim from here on is measurable and the regression gate is live. Temporal metadata
-(`RM-04`) is in. `RM-03` v2 detects silent same-slot swaps, polarity flips, and
-numeric/date changes as well as explicit cues. **Entity-id + polarity** is the
-discrimination solve the old matrix was missing: "sister Naima the chemist" and
-"call my sister Naima on Sunday" share E1; coworker-Naima is E2; a polarity clash
-drops the Related: edge and zeros Hebbian `pairScale` without reordering primary
-cosine (I2/I3). **S2v2** is the other missing row: the discovery-not-ordering
-boundary is not only a ranking identity (byte-identical field on/off) — a live
-driver, with phrasing matched, follows Primary over a contradicting `Related:`
-(`primary_following` 100%, `RR = 0`, N-gate 29/29). Scoped: one driver, one
-corpus, one injected-recall format.
-
-What remains behind is first-class hybrid retrieval (`RM-05`, keyword is still
-fallback-only), multi-user scoping (`RM-06`), idle consolidation (`RM-10`), SDKs
-(`RM-12`), and single-author maturity. Automatic fact extraction (`RM-01`) is done:
-Tier 0/1 met the 0.9 precision bar on `eval/messy`; Tier 2 is opt-in, off by
-default, degrade-safe, and measured on `eval/messy-hard`. Cosine-banded dedup
-(`RM-02`) is done: save-time bands plus `--dedup-existing` backfill both take
-`duplicate_rate` 0.3182 → 0.0000 on `eval/duplicates` with `recall@5` held at 1.0.
-SQLite default (`RM-07` slice 4) loads 50k/100k (field-off p95 49.6 / 96.4 ms);
-JSONL cannot. Sovereignty is a round trip: `--export` and `--import`.
-
-That is exactly the ordering the roadmap encodes: measurement first (done), then the
-write path (done), then the substrate tuning our moat depends on (Phase 0/1 done;
-Phase 2 gated).
+The remaining RM gaps are itemized in [BACKLOG](BACKLOG.md), including first-class hybrid
+retrieval, scoping, consolidation and SDKs. ARCHITECTURE owns the [two runtime representations](ARCHITECTURE.md#1-runtime-overview)
+and current defaults; [eval results](../eval/RESULTS.md) and [research](research/) own
+measurement scope and residual failures. The [shipped product-track index](ROADMAP.md#shipped-product-tracks)
+also covers the memory folder/cabinet/installer, Claude Code plugin and keyword fallback,
+and auto-recall proxy/chunked folder recall. Competitor support for those later dimensions
+is not assessed by the preserved September matrix.
 
 ---
 
@@ -294,17 +265,20 @@ Phase 2 gated).
 > **Resonance Memory is the memory layer that costs nothing, sends nothing, and remembers
 > like a mind instead of a filing cabinet.**
 
-Three claims we can defend, and should lead with:
+RM positioning, subject to the dated market verification note:
 
-1. **$0 forever, graph included.** Everything Mem0 gates behind $249 — and everything
-   Zep now meters at $125/month Flex — is in the free download.
+1. **Free local memory, graph included.** The download includes semantic recall and
+   associative discovery, shipped write-path features and lossless store export/import.
+   [BACKLOG](BACKLOG.md) names the remaining capabilities; this is not a claim to include
+   every feature in a paid vendor plan.
 2. **Nothing leaves the machine.** Not a privacy policy — an architecture. No API key exists to leak.
 3. **Association, not just retrieval.** The Hebbian field is genuinely not in any competitor.
    Memories reinforce each other through use; recall surfaces a *neighborhood*, not a list.
-   The neighborhood is **discovery, not ordering** (I3/I9), and that boundary is now
-   behaviorally validated (S2v2), not just asserted.
-4. **Reproducible, not benchmarked.** The eval harness ships in the repo: 624 unit tests
-   and an offline golden gate in under a minute — no cloud, no API key. "Verify our
+   The neighborhood is **discovery, not ordering** (I3/I9).
+   [S2v2](research/s2v2/s2v2-result.md) supplies scoped behavioral evidence for one driver,
+   corpus and injected-recall format; it is not a universal driver guarantee.
+4. **Reproducible, not benchmarked.** The eval harness ships with offline checks and a
+   cached-embedding golden gate; [DEVELOPERS](../DEVELOPERS.md#checks) owns the commands. "Verify our
    claims on your own machine" is a claim the hosted vendors structurally cannot match,
    and it sidesteps the LOCOMO number war entirely (§4).
 5. **You can leave.** The working copy is SQLite for speed; the interchange format is
@@ -318,22 +292,11 @@ Three claims we can defend, and should lead with:
    anti-hoarding claim, and it is a CLI + panel path on purpose (four verbs stay four
    — a model that can dump the store is an exfil path). We do not sanitize the export.
 
-Claims we must **not** make until earned (updated September 2026):
-- ❌ "Beats Mem0 on LOCOMO" — still don't enter the number war (§4). `RM-00` has landed, so we
-  *can* now say "here's a harness, run it yourself" — but not "we score X," which invites the
-  same credibility spiral.
-- 🟡 "Handles contradictions" — **mostly earned.** `RM-03` v2 detects silent same-slot
-  swaps, polarity flips, and numeric/date changes as well as explicit cues;
-  `staleness_rate` 0.4889 → 0.0889 with `false_supersession` 0 on the guard/ambiguous
-  keep-set. Residual is cue-below-floor paraphrases ("I switched to Neovim", "we
-  renamed her Nova") and narrative blobs. Unqualified "handles contradictions" still
-  waits on those paraphrases (and optional Tier 2 adjudication, off by default).
-- 🟡 "Production ready at scale" — **moved.** The default store is SQLite: S1 loads
-  50k/100k, field-off p95 49.6 / 96.4 ms. Recall is a bounded `UPDATE` of the returned
-  ids, not a full-corpus rewrite. The JSONL pin still rewrites the whole file on every
-  *mutation* and `all()` parses it per call — that path is fail-open / interchange,
-  not the product default. Unqualified "production at 100k with the field on" is still
-  not a claim we make.
+Claims remain bounded by evidence: no cross-vendor leaderboard win is established here.
+Unqualified contradiction handling or field-on production readiness at large scale exceeds
+the named residuals and graph-scaling limits in [BACKLOG](BACKLOG.md), [BUGS](BUGS.md) and
+[eval results](../eval/RESULTS.md). Default SQLite changes the storage limitation, not every
+retrieval or long-term coherence question.
 
 ---
 
@@ -378,7 +341,7 @@ Pricing and product pages were re-fetched 2026-09-10.
 - [Hybrid search: BM25, vector & reranking reference 2026](https://www.digitalapplied.com/blog/hybrid-search-bm25-vector-reranking-reference-2026)
 - [Understanding reciprocal rank fusion](https://glaforge.dev/posts/2026/02/10/advanced-rag-understanding-reciprocal-rank-fusion-in-hybrid-search/)
 - [Memory MCP servers directory](https://mcpservers.org/category/memory)
-- RM facts in this repo: [`ARCHITECTURE.md`](ARCHITECTURE.md), [`eval/RESULTS.md`](../eval/RESULTS.md), [`phases/s2v2-result.md`](phases/s2v2-result.md), [`eval/substrate/entity-layer-results.md`](../eval/substrate/entity-layer-results.md)
+- RM facts in this repo: [`ARCHITECTURE.md`](ARCHITECTURE.md), [`eval/RESULTS.md`](../eval/RESULTS.md), [`phases/s2v2-result.md`](research/s2v2/s2v2-result.md), [`eval/substrate/entity-layer-results.md`](../eval/substrate/entity-layer-results.md)
 
 ---
 

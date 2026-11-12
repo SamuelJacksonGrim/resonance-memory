@@ -33,17 +33,24 @@ real gate rather than an argument.
       An **exploratory** combiner (`RESONANCE_WARM_RANK`, default shape
       `cosine + 0.3 · spread-activation`) exists so the question "does
       activation-in-rank help at all?" can be measured without building 2.3/2.4
-      first. Lane B (`combiner-research.md`, `eval/combiner-research.js`) compared
+      first. Lane B (`docs/research/lanes/lane-b-combiner-research.md`, `eval/combiner-research.js`) compared
       additive / RRF / rank-normalize / L1-share / multiplicative: additive is
       confirmed hub-promoting at `w = 1`; L1 is the only shape that inverts
       apex-vs-hub on a constructed discriminator; nothing closes diabetic at the
       locked `w = 0.3`. It is **not** this gate and must not be promoted on that
       A/B alone. Scorecard: `eval/ab-warm-rank.js` / `eval/RESULTS.md` /
-      `combiner-research.md`.
+      `docs/research/lanes/lane-b-combiner-research.md`.
+
+<a id="fusion-promotion"></a>
 
 ### The promotion gate ⛔ — fusion becomes default **only when all four hold**
+
+This section owns the complete promotion contract. ROADMAP and BACKLOG link here rather than
+maintaining parallel copies.
+
 1. [ ] **A/B win on the golden set** — recall@k + MRR up, false-association + staleness not worse.
-       *(Those metrics don't exist yet — 2.5. Building them is a prerequisite of this gate.)*
+       *(Recall@k, MRR, duplicate rate, staleness and false supersession exist as reporting
+       metrics. Phase 2.5 still owes fusion-specific safety metrics and standing A/B evidence.)*
 2. [ ] **2.3 + 2.4 landed** — once learned weight enters rank, rank reinforces what ranked
        (rich-get-richer, hub formation). Competition + normalization are the damping; they exist
        **before** promotion.
@@ -67,6 +74,8 @@ A failed gate keeps the flag off and writes the negative result down. A measured
       is shipped; total is missing — per-edge does not prevent a hub with many edges. `RM-09`.)*
 - [ ] Ensure normalization does not erase genuinely strong learned relationships.
 
+<a id="retrieval-evaluation"></a>
+
 ### 2.5 Retrieval evaluation ✅ 🔀 — **this is `RM-00`; extend, don't rebuild**
 Already live: JSONL corpora, contains/excludes scorecard, superseded-surfacing, field ROC/TBR,
 golden-set gate, offline/deterministic. Reporting-metric registry (RM-02.a + S1 + RM-03 measurement
@@ -82,7 +91,7 @@ first) needs the fusion-arm numbers; the contradiction baseline is now computabl
 - [x] **Activation test pool** (cross-turn / weak-recall / hub-vs-apex) + reporting
       metrics `carryover_lift`, `rank_hub_contamination`, `graph_bind_rate`,
       `related_rescue_rate`. Not the 2.2 gate; the pool the gate has to win on.
-      Decision criterion: [`eval/testpool-design.md`](../../eval/testpool-design.md).
+      Decision criterion: [`eval/testpool-design.md`](../research/lanes/lane-a-testpool-design.md).
 - [x] **Corpus realism** (measured 2026-08-22): corpora were clean (4 within-scenario pairs > 0.75,
       top 0.818) — competition/normalization tuned here are not fitting duplicate bloat; the risk
       runs the other way (real stores carry duplicates until `RM-02`). Duplicate-heavy corpus:

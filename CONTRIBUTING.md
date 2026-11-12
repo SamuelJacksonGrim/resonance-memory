@@ -65,6 +65,22 @@ Signed-off-by: Your Name <your.email@example.com>
 - Keep changes focused; explain the "why" in the PR description.
 - Match the style of the surrounding code.
 
+## Development and documentation
+
+- Re-open the code that owns a behavior before describing or changing it. Prefer an explicit
+  uncertainty to an unsupported assertion.
+- A behavior change includes the documentation that describes it. Search affected docs in
+  the same change; [BUG-006](docs/BUGS.md) preserves the incident behind this rule.
+- Keep each fact in its owner: runtime/invariants in [ARCHITECTURE](docs/ARCHITECTURE.md),
+  scope/acceptance in [BACKLOG](docs/BACKLOG.md), route/status in [ROADMAP](docs/ROADMAP.md),
+  measurements in eval/research, usage in guides and release chronology in CHANGELOG.
+- Label historical behavior with its date or release. Do not leave a pre-change mechanism
+  written as current behavior. Current state uses plain present tense.
+- Encode a defect as a regression check and run the [checks relevant to the changed surface](DEVELOPERS.md#checks).
+  Both-backend conformance exists; keep it passing when storage changes.
+- Keep unresolved defects visible with an owner. Understanding a failure is not a fix;
+  do not wrap it in a mitigation that leaves the underlying exposure unexplained.
+
 ## Reporting security issues
 
 Please don't file public issues for security problems. Email

@@ -10,7 +10,7 @@
 [![MCP server](https://img.shields.io/badge/MCP-server-111111)](https://modelcontextprotocol.io/)
 [![platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20Linux%20x64%20%7C%20macOS%20arm64-lightgrey)](https://github.com/SamuelJacksonGrim/resonance-memory/releases/latest)
 [![downloads](https://img.shields.io/github/downloads/SamuelJacksonGrim/resonance-memory/total)](https://github.com/SamuelJacksonGrim/resonance-memory/releases/latest)
-[![memory system](https://img.shields.io/badge/memory%20system-folders%20%2B%20auto--recall-orange)](MEMORY-SYSTEM.md)
+[![memory system](https://img.shields.io/badge/memory%20system-folders%20%2B%20auto--recall-orange)](docs/guides/MEMORY-SYSTEM.md)
 
 ## License
 
@@ -44,6 +44,32 @@ Real things, not buzzwords:
 - **It finds things by meaning, not keywords.** You saved *"the dog needs his heartworm pill on the 1st."* Months later: *"what was that pet medication thing?"* — no shared words, and it still finds it.
 - **It learns which memories go together.** Turn on the associative field and it notices — through repeated use — which of your memories keep coming up together, surfacing related things you didn't think to ask for.
 - **It's yours to carry.** One click exports your whole memory to a single file you own; import it back on any machine. No account, no lock-in, no one can take it away.
+
+## Does it actually work? Measured
+
+Two separate test rigs, built independently on purpose so neither could be tuned to make Resonance win. A small local
+model chats across many sessions. Most facts it's asked about are planted early and then buried under long stretches
+of filler; a few are planted late on purpose, as controls the recent-chat approach should get right. The questions
+never repeat the planted wording, and grading is blind, with pass/fail lines set before any run. The comparison isn't
+just "no memory": it's also what most apps do, stuff the most recent chat into the prompt, under the **same token
+budget** Resonance gets. Mean of 5 runs (token figures are the average actually injected, estimated):
+
+| Rig · model | No memory | Recent chat stuffed in (~690 tokens) | **Resonance (~330 tokens)** |
+|---|---|---|---|
+| A · gpt-oss-20b | 30% | 32% | **90%** |
+| A · Qwythos-9B | 24% | 22% | **74%** |
+| B · gpt-oss-20b | 6.7% | 25% | **91.7%** |
+| B · Qwythos-9B | 6.7% | 21.7% | **81.7%** |
+
+About **three times** the accuracy of recent-chat stuffing (2.8–3.8× across the four rows) while injecting roughly
+half as much, and far above no memory at all. Rig B split the questions: recent-chat stuffing scored 100% on recent
+facts and **0%** on old, updated or same-name ones; Resonance scored high on both. The write-up and how to rerun it
+(a rerun saves every raw answer; it needs a local chat model and the embedder):
+[`eval/ab/RESULTS.md`](eval/ab/RESULTS.md) and [`eval/ab-grok/`](eval/ab-grok/README.md).
+
+Also measured: on the contradiction test set, recalls that surfaced an outdated value ("keeps hitting the old fact")
+dropped **82%** once updates retire the facts they replace (0.49 → 0.09). Every change to recall must still pass the
+offline golden eval ([`eval/RESULTS.md`](eval/RESULTS.md)).
 
 ## What makes it different — the associative field
 
@@ -98,13 +124,13 @@ Done. Your AI can save and recall memories on its own. Click **Show demo graph**
 ## Good to know
 
 - **Four abilities, that's the whole interface** — save, recall, edit, delete. It never gets more complicated than that; a small model can't misuse it.
-- **Auto-recall, so the model never has to remember to look.** On *every* message you send, RM recalls what it knows and hands it to the model before it answers. **Local models:** run `resonance-memory --proxy` and point your app (Hermes, Open WebUI, SillyTavern, Continue, anything with an OpenAI base URL) at `http://127.0.0.1:1240/v1`; it works in front of LM Studio, llama.cpp or Ollama. **Claude Code:** one hook (hand it [AUTO-RECALL.md](AUTO-RECALL.md) and it sets it up). Both are in [AUTO-RECALL.md](AUTO-RECALL.md).
+- **Auto-recall, so the model never has to remember to look.** On *every* message you send, RM recalls what it knows and hands it to the model before it answers. **Local models:** run `resonance-memory --proxy` and point your app (Hermes, Open WebUI, SillyTavern, Continue, anything with an OpenAI base URL) at `http://127.0.0.1:1240/v1`; it works in front of LM Studio, llama.cpp or Ollama. **Claude Code:** one hook (hand it [docs/guides/AUTO-RECALL.md](docs/guides/AUTO-RECALL.md) and it sets it up). Both are in [docs/guides/AUTO-RECALL.md](docs/guides/AUTO-RECALL.md).
 - **The whole memory system, in one command.** The memory system we built and run every day ships inside the exe:
   a memory folder with an index, the surface (who you are, how you work together) at the top and everything else
   filed in subject drawers, auto-recall on every message, a recall index that rebuilds itself after every memory
   write, and the rules that keep memory honest over time. Plain folders and files on your computer; the AI keeps
   them, you just talk. One click in the app sets it up for Claude Code (or `--install-memory-system`); any other agent can be pointed at the
-  folder. Hand [MEMORY-SYSTEM.md](MEMORY-SYSTEM.md) to Claude Code and it installs it.
+  folder. Hand [docs/guides/MEMORY-SYSTEM.md](docs/guides/MEMORY-SYSTEM.md) to Claude Code and it installs it.
 - **Completely private.** Everything — memories, meaning-fingerprints, the graph — lives in a file on your machine. Default: `%USERPROFILE%\.resonance-memory\resonance-memory.db` (Windows) or `~/.resonance-memory/resonance-memory.db` (macOS/Linux). An older build that stored this under `~/.lmstudio/` copies it here on first start (the original is left in place as a backup). Export in the app is the backup; to move the store, copy that file (and `resonance-memory.config.json` beside it) or use Export / Import. No servers, no telemetry, no account.
 - **It scales.** Everything sits in a fast local database (SQLite), so recall stays quick whether you've saved a hundred things or a hundred thousand. An older text-file store upgrades itself safely on first open, keeping a backup.
 - **Take your memory anywhere.** **Export my memories** in the app (or `--export`) writes a `.zip` you own — including a plain `memories.jsonl` any other tool can read. **Import memories** brings it back on any machine (a button in the app, or `--import`). Your learned associations only travel when you explicitly ask them to. The control panel's **Terminal commands** list has the rest (`--migrate`, `--dedup-existing`, `--export-jsonl`, …) — exact command, what it does, and when.
@@ -120,9 +146,9 @@ is already here:
 
 - **Every memory knows when it was true.** Memories are dated, and when something changes ("I moved to Denver") the
   old fact is retired, not deleted: it stays in the history, marked as replaced. Nothing is thrown away.
-- **The memory system** ([MEMORY-SYSTEM.md](MEMORY-SYSTEM.md)): plain folders and files on your computer. Who you
+- **The memory system** ([docs/guides/MEMORY-SYSTEM.md](docs/guides/MEMORY-SYSTEM.md)): plain folders and files on your computer. Who you
   are and how you work together stays on the surface; everything else is filed into subject drawers, each with an
-  index card ([CABINET.md](CABINET.md)); replaced text fades into a dated history instead of being lost; recall
+  index card ([docs/guides/CABINET.md](docs/guides/CABINET.md)); replaced text fades into a dated history instead of being lost; recall
   surfaces the right memories on every message. Built and tested daily with Claude over months, and it ships whole:
   one command installs it.
 
@@ -134,7 +160,7 @@ and ships only once it's measured to genuinely help.
 
 ## For the curious (and developers)
 
-Nothing here is a black box. The memory model, the association rules, the invariants, and the honest measured findings are in **`DEVELOPERS.md`**, `docs/ARCHITECTURE.md`, and the RFCs in `docs/proposed/`. The evaluation harness (`eval/`) is offline, deterministic, and gates every change — Resonance competes on **reproducibility**, not leaderboard numbers. Build from source with `node build-exe.js`.
+Nothing here is a black box. **[The docs index](docs/README.md)** lists every doc by what it's for: the memory model, the association rules and the invariants are in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), the honest measured findings in [`eval/RESULTS.md`](eval/RESULTS.md) and [`docs/research/`](docs/research/README.md), and where to start contributing in [`DEVELOPERS.md`](DEVELOPERS.md). The golden evaluation harness (`eval/`) is offline and deterministic and gates every change; the A/B above reruns from the same folder with a live local model: Resonance competes on **reproducibility**, not leaderboard claims. Build from source with `node build-exe.js`.
 
 ## Credits
 

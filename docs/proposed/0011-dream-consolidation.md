@@ -9,9 +9,10 @@
 > Grimoire write, no `--dreamer` mutation until those numbers are in.
 >
 > Where this note and the shipping files disagree, **the files are the
-> present** and this file is the future. Architecture §1, I8, and the
-> `INVARIANTS.md` one-liner amend when the corresponding slice ships
-> (`BUG-006` — docs change in the same commit as the behaviour).
+> present** and this file is a proposed future. This repository's
+> [ARCHITECTURE](../ARCHITECTURE.md) owns the current invariants. Any future accepted
+> amendment belongs there with the corresponding shipping behavior and measurement;
+> the earlier companion-stack plan is historical, not a required authority/sync target.
 
 Grounded in: `memory-core.js` (the one write path a crystal must enter),
 `record.js` (`detectNearDuplicate` / `pickMergeSurvivor` / RM-04 timestamps),
@@ -113,8 +114,8 @@ That is not rank. The Grimoire walk (§4) is the same kind of thing.
 
 ### 1.4 The governing invariant (new)
 
-Adopt verbatim as the one-liner (and later into `INVARIANTS.md` in the
-stack repo, same commit as the field-split ships):
+Proposed one-liner for a future accepted field-split change in this repository's
+[ARCHITECTURE](../ARCHITECTURE.md). It is not an amendment to the current I1–I9 definitions:
 
 > **Learning is a property of the memory substrate. Presentation is a
 > consumer of learned structure. No presentation-layer cost may disable
