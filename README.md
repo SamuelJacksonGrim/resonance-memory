@@ -45,6 +45,30 @@ Real things, not buzzwords:
 - **It learns which memories go together.** Turn on the associative field and it notices — through repeated use — which of your memories keep coming up together, surfacing related things you didn't think to ask for.
 - **It's yours to carry.** One click exports your whole memory to a single file you own; import it back on any machine. No account, no lock-in, no one can take it away.
 
+## Does it actually work? Measured
+
+Two separate test rigs, built independently on purpose so neither could be tuned to make Resonance win. A small local
+model chats across many sessions; the facts it will be asked about are planted early, then buried under ~120 turns of
+filler; the questions never repeat the planted wording; grading is blind, with pass/fail lines set before any run.
+The comparison isn't "no memory", it's what most apps do: stuff the most recent chat into the prompt, given *more* room
+than Resonance gets. Mean of 5 runs:
+
+| Rig · model | No memory | Recent chat stuffed in (~690 tokens) | **Resonance (~330 tokens)** |
+|---|---|---|---|
+| A · gpt-oss-20b | 30% | 32% | **90%** |
+| A · Qwythos-9B | 24% | 22% | **74%** |
+| B · gpt-oss-20b | 6.7% | 25% | **91.7%** |
+| B · Qwythos-9B | 6.7% | 21.7% | **81.7%** |
+
+Roughly **three times** better than either alternative, on half the context. Rig B split the questions: recent-chat
+stuffing scored 100% on recent facts and **0%** on old, updated or same-name ones; Resonance scored high on both.
+Full write-up, raw answers and how to rerun it: [`eval/ab/RESULTS.md`](eval/ab/RESULTS.md) and
+[`eval/ab-grok/`](eval/ab-grok/README.md).
+
+Other measured numbers: out-of-date answers ("keeps hitting the old fact") dropped **82%** when updates retire the
+facts they replace (staleness 0.49 → 0.09); every change to recall must still pass the offline golden eval
+([`eval/RESULTS.md`](eval/RESULTS.md)).
+
 ## What makes it different — the associative field
 
 Most memory tools *retrieve* memories. Resonance is a memory *substrate* that learns the **topology** of what you remember — which things belong together — from how you actually use it. Memories that keep coming up together wire together (a "fire together, wire together" idea borrowed from how your own brain works); connections you stop walking quietly fade. The glowing graph in the app is that structure, made visible.
@@ -134,7 +158,7 @@ and ships only once it's measured to genuinely help.
 
 ## For the curious (and developers)
 
-Nothing here is a black box. The memory model, the association rules, the invariants, and the honest measured findings are in **`DEVELOPERS.md`**, `docs/ARCHITECTURE.md`, and the RFCs in `docs/proposed/`. The evaluation harness (`eval/`) is offline, deterministic, and gates every change — Resonance competes on **reproducibility**, not leaderboard numbers. Build from source with `node build-exe.js`.
+Nothing here is a black box. The memory model, the association rules, the invariants, and the honest measured findings are in **`DEVELOPERS.md`**, `docs/ARCHITECTURE.md`, and the RFCs in `docs/proposed/`. The evaluation harness (`eval/`) is offline, deterministic, and gates every change, and every number above can be rerun from it: Resonance competes on **reproducibility**, not leaderboard claims. Build from source with `node build-exe.js`.
 
 ## Credits
 
