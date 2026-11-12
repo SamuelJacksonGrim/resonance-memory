@@ -158,7 +158,7 @@ and ships only once it's measured to genuinely help.
 
 ## For the curious (and developers)
 
-Nothing here is a black box. The memory model, the association rules, the invariants, and the honest measured findings are in **`DEVELOPERS.md`**, `docs/ARCHITECTURE.md`, and the RFCs in `docs/proposed/`. The evaluation harness (`eval/`) is offline, deterministic, and gates every change, and every number above can be rerun from it: Resonance competes on **reproducibility**, not leaderboard claims. Build from source with `node build-exe.js`.
+Nothing here is a black box. **[The docs index](docs/README.md)** lists every doc by what it's for: the memory model, the association rules and the invariants are in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), the honest measured findings in [`eval/RESULTS.md`](eval/RESULTS.md) and [`docs/research/`](docs/research/README.md), and where to start contributing in [`DEVELOPERS.md`](DEVELOPERS.md). The evaluation harness (`eval/`) is offline, deterministic, and gates every change, and every number above can be rerun from it: Resonance competes on **reproducibility**, not leaderboard claims. Build from source with `node build-exe.js`.
 
 ## Credits
 
