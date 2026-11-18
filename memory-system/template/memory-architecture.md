@@ -46,6 +46,28 @@ since a milestone that points at a faded memory is broken.
   --memory <this folder>` (`relink --apply` if files moved). The scripts won't move, rename, delete or rewrite surface
   files; that restrains the scripts only, never your own edits in conversation.
 
+## Writing so recall finds it
+
+Recall can only surface what was written down, in words it can match. Each rule below comes from a failure measured
+on a real memory folder (124 files, 15 test questions, 2026-11-16). Filing by these rules, with no code change,
+raised the questions answered by auto-recall from 5 of 15 to 11 of 15. That's one folder, not a general benchmark.
+
+1. **If it matters, write it down with where it came from.** Most misses were facts that were never filed, or were
+   filed without the source that made them useful ("measured on X", "the user said so on <date>").
+2. **Give a key fact its own short file.** A fact written as one line inside a long file about something else gets
+   drowned out: a ~1800-character chunk is matched by what it's mostly about, and other files take the three places
+   auto-recall shows. Write the finding as its own file and link it from the bigger one.
+3. **The description steers recall.** The file's name and description are attached to every chunk. Name the
+   concrete things in it (people, tools, places, numbers), and update it whenever the file changes: a stale
+   description hides a fresh file.
+4. **Put facts in the body, not only in frontmatter.** Frontmatter is stripped before embedding, so tags, lists and
+   links there don't help a file get found. Say the connection in a sentence and link it with a double-bracketed name.
+5. **Concrete words beat abstract ones.** A file written in general terms ("decisions", "lessons", "evidence")
+   matches every vague question and crowds out the file that holds the answer. Write "chose SQLite because the plain
+   scan was faster at 100k", not "a storage decision based on evidence". Keep `surfaces-when:` to words the user
+   would actually say.
+6. **Don't file small talk.** "Long day" isn't a memory, and a folder full of chatter makes recall fire on chatter.
+
 ## Upkeep: the part that actually matters
 
 **Before writing a new memory, look for the one it belongs inside.** The default operation is *merge*, not *append*.
